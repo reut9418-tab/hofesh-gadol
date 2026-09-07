@@ -1,6 +1,8 @@
-import axios from 'axios';
+﻿import axios from 'axios';
 
-const api = axios.create({ baseURL: 'http://localhost:3101/api' });
+// בפיתוח: שרת מקומי; בענן (build): אותו דומיין
+export const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:3101/api';
+const api = axios.create({ baseURL: API_BASE });
 
 export type Health = {
   bucket: 'open' | 'near' | 'blocked' | 'ready' | 'submitted';
@@ -136,7 +138,7 @@ export const getReportPrep = (reportId: number): Promise<PrepData> =>
   api.get(`/reports/${reportId}/prep`).then((r) => r.data);
 export const saveReportPrep = (reportId: number, assignments: Record<string, Assignment>) =>
   api.put(`/reports/${reportId}/prep`, { assignments }).then((r) => r.data);
-export const exportReportUrl = (reportId: number) => `http://localhost:3101/api/reports/${reportId}/export`;
+export const exportReportUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/export`;
 
 /* ---------- כרטסות + התאמה (צעד 6) ---------- */
 export type LedgerCard = {
@@ -169,7 +171,7 @@ export const setLedgerCardBasket = (cardId: number, basket_type: string | null) 
 export const deleteLedgerFile = (fileId: number) => api.delete(`/ledger-files/${fileId}`).then((r) => r.data);
 
 /* ---------- מסמך שלב 1 + החלטת לקוח על ניוד ---------- */
-export const stage1DocUrl = (reportId: number) => `http://localhost:3101/api/reports/${reportId}/stage1-doc`;
+export const stage1DocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/stage1-doc`;
 export const applyMove = (reportId: number, rowId: number, decision: 'move' | 'decline', toSymbol?: string) =>
   api.post(`/reports/${reportId}/apply-move`, { rowId, decision, toSymbol }).then((r) => r.data);
 
