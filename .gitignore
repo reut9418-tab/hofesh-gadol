@@ -1,0 +1,19 @@
+# תלויות
+node_modules/
+
+# נתונים מקומיים — לא עולים לגיט (הנתונים בענן/מקומית, לא בקוד)
+backend/chofesh.db
+backend/uploads/
+
+# סודות
+.env
+backend/.env
+
+# תוצרי בנייה
+frontend/dist/
+
+# מערכת
+Thumbs.db
+Desktop.ini
+
+backend/*.log

@@ -1,0 +1,10 @@
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: 'Assistant', 'Heebo', 'Segoe UI', Tahoma, Arial, sans-serif;
+  background: #F5F7F6;
+  color: #182A33;
+}
+button { font-family: inherit; }
+input, select { font-family: inherit; }
+a { color: inherit; }
