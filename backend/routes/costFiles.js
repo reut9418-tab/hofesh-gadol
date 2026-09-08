@@ -5,6 +5,7 @@ const { z } = require('zod');
 const { getDB } = require('../db');
 const { parseCostFile, norm } = require('../lib/ingest');
 const { reportLabel } = require('../lib/domain');
+const { staffFromRoleText } = require('../lib/salaryCheck');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -93,11 +94,14 @@ router.post('/clients/:clientId/cost-files', upload.single('file'), ah(async (re
   const fileId = fileRow.lastInsertRowid;
 
   for (const r of parsed.records) {
+    // אם דוח השכר כולל עמודת "תפקיד" — איש הצוות והתפקיד נגזרים ממנה אוטומטית
+    const staff = staffFromRoleText(r.roleText);
     await db.prepare(
-      `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept, inst_symbol, component_names, gross, cost, hours)
-       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept, inst_symbol, component_names, gross, cost, hours, staff_type, role)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(fileId, clientId, r.id, r.name || null, r.firstName, r.lastName, r.dept,
-      r.instSymbol, JSON.stringify(r.componentNames || []), r.gross, r.cost, r.hours);
+      r.instSymbol, JSON.stringify(r.componentNames || []), r.gross, r.cost, r.hours,
+      staff ? staff.staffType : null, staff ? staff.role : null);
   }
 
   // הצעת ניתוב לפי מה שנלמד; ברירת מחדל — הדוח היחיד אם ללקוח דוח אחד בלבד

@@ -15,7 +15,8 @@ const FIELD_DEFS = [
   { key: 'dept', label: 'מחלקה / סעיף', syn: ['תאור סעיף', 'תיאור סעיף', 'מחלקה', 'סעיף', 'שלוחה', 'כרטיס', 'שם מחלקה', 'פרויקט', 'תמחיר'] },
   { key: 'instSymbol', label: 'סמל מוסד (בדוח השכר)', syn: ['סמל מוסד', 'סמל מקום פעילות', 'סמל גן', 'סמל בית ספר', 'סמל מוסד לימוד', 'קוד מוסד', 'סמל'] },
   { key: 'component', label: 'שם רכיב שכר', syn: ['שם רכיב שכר', 'רכיב שכר', 'שם רכיב', 'תאור רכיב', 'תיאור רכיב', 'סוג רכיב', 'קוד רכיב', 'רכיב תשלום', 'רכיב'] },
-  { key: 'gross', label: 'סה"כ ברוטו', syn: ['סה"כ ברוטו', 'סהכ ברוטו', 'ברוטו', 'שכר ברוטו', 'ריכוז תשלומים', 'ריכוז  תשלומים'] },
+  { key: 'roleText', label: 'תפקיד (בדוח השכר)', syn: ['תפקיד'] },
+  { key: 'gross', label: 'סה"כ ברוטו', syn: ['סה"כ ברוטו', 'סהכ ברוטו', 'סה"כ סכום', 'סהכ סכום', 'ברוטו', 'שכר ברוטו', 'ריכוז תשלומים', 'ריכוז  תשלומים'] },
   { key: 'cost', label: 'עלות מעביד', syn: ['עלות עובד', 'עלות מעביד', 'סה"כ עלות', 'סהכ עלות', 'עלות שכר', 'עלות כוללת', 'עלות'] },
   { key: 'hours', label: 'שעות עבודה', syn: ['שעות עבודה', 'סך שעות', 'כמות שעות', 'שעות', 'סה"כ שעות', 'ש.עבודה'] },
 ];
@@ -25,6 +26,7 @@ const norm = (s) => String(s ?? '').replace(/["'״׳]/g, '').replace(/\s+/g, ' '
 /* חתימות של תוכנות שכר מוכרות */
 const SOFTWARE_SIGNATURES = [
   { name: 'דוח 66 — מל"ם / חשבשבת שכר', must: ['מספר זהות', 'עלות עובד', 'שעות עבודה', 'תאור סעיף'] },
+  { name: 'דוח רכיבי שכר (לשונית לכל עיר)', must: ['מספר עובד', 'סה"כ סכום', 'ברוטו לשעה', 'תפקיד'] },
   { name: 'שקלולית', must: ['עלות מעביד', 'שם עובד'] },
   { name: 'עוקץ / מיכפל', must: ['עלות כוללת', "מס' זהות"] },
 ];
@@ -102,6 +104,38 @@ function detectStructure(rows, learned = {}) {
       if (scored.length) best.mapping.dept = scored[0].c;
     }
   }
+  if (best.rowIdx >= 0) {
+    const headerRowN = (rows[best.rowIdx] || []).map(norm);
+    // פורמט "המשכיל" וכדומה: אין עמודת ת.ז, אבל "מספר עובד" מכיל בפועל ת.ז
+    if (best.mapping.id === undefined) {
+      const c = headerRowN.findIndex((h) => h === 'מספר עובד');
+      if (c >= 0) best.mapping.id = c;
+    }
+    // עמודת סמל בשם "מוסד" בלבד (התאמה מדויקת — לא "שם מוסד")
+    if (best.mapping.instSymbol === undefined) {
+      const c = headerRowN.findIndex((h) => h === 'מוסד');
+      if (c >= 0) best.mapping.instSymbol = c;
+    }
+    // סכומים: עדיפות לעמודות "סה"כ" על פני תעריפי "לשעה" ("סכום 100"/"ברוטו לשעה")
+    for (const key of ['gross', 'cost', 'hours']) {
+      const f = FIELD_DEFS.find((x) => x.key === key);
+      const cands = [];
+      headerRowN.forEach((h, c) => {
+        if (h && f.syn.some((s) => h === norm(s) || h.includes(norm(s)))) cands.push(c);
+      });
+      if (cands.length > 1) {
+        const score = (c) => {
+          const h = headerRowN[c];
+          let s = 0;
+          if (/סהכ/.test(h)) s += 2;
+          if (/לשעה|שעתי/.test(h)) s -= 3; // תעריף, לא סכום
+          return s;
+        };
+        const bestCol = cands.map((c) => ({ c, s: score(c) })).sort((a, b) => b.s - a.s || a.c - b.c)[0];
+        best.mapping[key] = bestCol.c;
+      }
+    }
+  }
   let software = 'מבנה לא מוכר — זוהה לפי מילון עמודות';
   if (best.rowIdx >= 0) {
     const headerCells = (rows[best.rowIdx] || []).map(norm);
@@ -112,8 +146,9 @@ function detectStructure(rows, learned = {}) {
   return { ...best, software };
 }
 
-/* ---------- נרמול שורות ---------- */
-function normalizeRows(rows, headerIdx, mapping) {
+/* ---------- נרמול שורות ----------
+   defaultDept: כשאין עמודת מחלקה, שם הלשונית משמש כמחלקה (פורמט לשונית-לכל-עיר) */
+function normalizeRows(rows, headerIdx, mapping, defaultDept) {
   const out = [];
   const num = (v) => {
     if (v === null || v === undefined || v === '') return null;
@@ -138,8 +173,9 @@ function normalizeRows(rows, headerIdx, mapping) {
       firstName: norm(get('firstName')) || null,
       lastName: norm(get('lastName')) || null,
       component: norm(get('component')) || null,
+      roleText: norm(get('roleText')) || null, // תפקיד כפי שמופיע בדוח השכר (אם קיים)
       instSymbol: String(get('instSymbol') ?? '').replace(/\D/g, '') || null,
-      dept: norm(get('dept')) || 'ללא מחלקה',
+      dept: norm(get('dept')) || norm(defaultDept) || 'ללא מחלקה',
       gross, cost, hours,
     });
   }
@@ -254,7 +290,7 @@ function parseCostFile(buf, learned = {}) {
     if (s.det.rowIdx < 0) return;
     sheetsUsed.push(s.sheetName);
     if (!software && s.det.software && !s.det.software.startsWith('מבנה לא מוכר')) software = s.det.software;
-    records.push(...normalizeRows(s.rows, s.det.rowIdx, s.det.mapping));
+    records.push(...normalizeRows(s.rows, s.det.rowIdx, s.det.mapping, s.sheetName));
   });
   const aggregated = aggregateComponents(records);
   return { software: software || 'מבנה לא מוכר', sheetsUsed, records: aggregated };

@@ -16,6 +16,19 @@ function suggestRole(dept) {
   return { staffType: null, role: null };
 }
 
+/* תפקיד כפי שמופיע בדוח השכר עצמו (עמודת "תפקיד") → איש צוות + תפקיד לפי רשימות המשרד */
+function staffFromRoleText(text) {
+  const t = String(text || '');
+  if (!t) return null;
+  if (/סייע/.test(t)) return { staffType: 'סייעת ממשיכה', role: 'סייעת' };
+  if (/מוביל|גננת/.test(t)) return { staffType: 'גננת', role: 'גננת של הגן' };
+  if (/סגן/.test(t)) return { staffType: 'סגנית רכזת מעל 150', role: 'סגנ/ית רכז/ת>150' };
+  if (/רכזת גן/.test(t)) return { staffType: 'רכזת גן', role: 'רכז/ת גן' };
+  if (/מורה/.test(t)) return { staffType: 'מורה', role: 'מורה' };
+  if (/מדצ|מד"צ/.test(t)) return { staffType: 'מדצ', role: 'מדצ/ית' };
+  return null;
+}
+
 /* איש צוות → סל השכר שאליו העלות שלו נזקפת */
 function basketForStaff(staffType) {
   const st = String(staffType || '');
@@ -85,4 +98,4 @@ async function salaryCheck(db, report) {
   };
 }
 
-module.exports = { salaryCheck, suggestRole, basketForStaff };
+module.exports = { salaryCheck, suggestRole, basketForStaff, staffFromRoleText };
