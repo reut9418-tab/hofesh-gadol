@@ -50,7 +50,10 @@ async function stage1Data(db, report, client, authority) {
   const deptSymbol = report.framework !== 'gardens' && insts.length
     ? matchDeptsToInstitutions(insts, [...new Set(rows.map((r) => r.dept))])
     : {};
-  const rowSymbol = (r) => r.symbol_override || deptSymbol[r.dept] || null;
+  const nameSymbol = insts.length
+    ? matchDeptsToInstitutions(insts, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))])
+    : {};
+  const rowSymbol = (r) => r.symbol_override || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null;
 
   const mkUnit = (name, symbol, baskets, salaryNet, children, salaryByPayer) => {
     // מול התקציב משווים את הניצול המוכר (כולל מע"מ ללקוח חייב);

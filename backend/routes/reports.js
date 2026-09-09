@@ -115,7 +115,8 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
     const reasons = [];
     if (parsed.institutions.some((i) => i.staffingInvalid))
       reasons.push('גיליון "איוש משרות" לא מולא — המשרד מסמן "לא תקין" ומאפס את הזכאות');
-    if (parsed.institutions.some((i) => !(i.days > 0)))
+    // רק כשבקובץ רשום במפורש 0 ימים (null = בתבנית הזו אין שדה כזה — לא מציפים סתם)
+    if (parsed.institutions.some((i) => i.days === 0))
       reasons.push('ימי הפעילות לא מולאו (0 ימים)');
     if (parsed.institutions.some((i) => i.reported > 0 && !(i.eligibleReg > 0 || i.eligibleSpec > 0)))
       reasons.push('כמות הילדים דווחה אך הזכאים לאחר בקרה = 0');
@@ -203,14 +204,18 @@ router.get('/:id/prep', ah(async (req, res) => {
 
   const rawRows = await db.prepare(
     `SELECT cr.id, cr.emp_id, cr.emp_name, cr.first_name, cr.last_name, cr.dept,
-            cr.inst_symbol, cr.symbol_override, cr.staff_type, cr.role, cr.gross, cr.cost, cr.hours
+            cr.inst_symbol, cr.inst_name, cr.symbol_override, cr.staff_type, cr.role, cr.gross, cr.cost, cr.hours
      FROM cost_rows cr WHERE cr.report_id = ? ORDER BY cr.dept, cr.emp_name`
   ).all(id);
 
-  // בתי"ס: הצעת סמל לפי המילה המשותפת בין שם המחלקה לשם ביה"ס בלשונית ההרשמה
+  // הצעת סמל: שם הגן/בי"ס שבשורת העובד מול לשונית ההרשמה, ובבתי"ס גם לפי שם המחלקה
   let deptSymbol = {};
-  if (report.framework !== 'gardens' && institutions.length) {
-    deptSymbol = matchDeptsToInstitutions(institutions, [...new Set(rawRows.map((r) => r.dept))]);
+  let nameSymbol = {};
+  if (institutions.length) {
+    nameSymbol = matchDeptsToInstitutions(institutions, [...new Set(rawRows.map((r) => r.inst_name).filter(Boolean))]);
+    if (report.framework !== 'gardens') {
+      deptSymbol = matchDeptsToInstitutions(institutions, [...new Set(rawRows.map((r) => r.dept))]);
+    }
   }
 
   const rows = rawRows.map((r) => {
@@ -218,8 +223,8 @@ router.get('/:id/prep', ah(async (req, res) => {
     const fileSymbol = r.inst_symbol && validSymbols.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null;
     return {
       rowId: r.id, empId: r.emp_id, name: r.emp_name,
-      firstName: r.first_name, lastName: r.last_name, dept: r.dept,
-      symbol: r.symbol_override || fileSymbol || deptSymbol[r.dept] || null,
+      firstName: r.first_name, lastName: r.last_name, dept: r.dept, instName: r.inst_name,
+      symbol: r.symbol_override || fileSymbol || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null,
       staffType: r.staff_type || sug.staffType,
       role: r.role || sug.role,
       saved: !!(r.symbol_override || r.staff_type || r.role),
@@ -422,6 +427,22 @@ router.get('/:id/export', ah(async (req, res) => {
   ).all(id);
   if (!rows.length) return res.status(422).json({ error: 'אין שורות שכר מנותבות לדוח זה.' });
 
+  // שיוך סמל אוטומטי גם בייצוא: שם הגן/בי"ס שבשורה מול לשונית ההרשמה
+  const srcBufEarly = fs.readFileSync(report.budget_file_path);
+  let exInstitutions = [];
+  try { exInstitutions = extractInstitutions(srcBufEarly); } catch { /* בלי רשימה */ }
+  const exValid = new Set(exInstitutions.map((i) => i.symbol));
+  const exNameSymbol = exInstitutions.length
+    ? matchDeptsToInstitutions(exInstitutions, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))]) : {};
+  const exDeptSymbol = exInstitutions.length && report.framework !== 'gardens'
+    ? matchDeptsToInstitutions(exInstitutions, [...new Set(rows.map((r) => r.dept))]) : {};
+  const resolveSymbol = (r) =>
+    r.symbol_override
+    || (r.inst_symbol && exValid.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
+    || (r.inst_name && exNameSymbol[r.inst_name])
+    || exDeptSymbol[r.dept]
+    || null;
+
   const round2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
   // ללקוח חייב מע"מ — העלות השעתית המדווחת למשרד כוללת מע"מ (הברוטו נשאר כפי שהוא)
   const vatFactor = client && client.has_vat ? 1.18 : 1;
@@ -430,7 +451,7 @@ router.get('/:id/export', ah(async (req, res) => {
     const hourlyCost = r.cost != null && r.hours ? (r.cost / r.hours) * vatFactor : null;
     const sug = suggestRole(r.dept);
     return [
-      r.symbol_override || null, null, r.emp_id,
+      resolveSymbol(r), null, r.emp_id,
       r.first_name || (r.emp_name || '').split(' ')[0] || '',
       r.last_name || (r.emp_name || '').split(' ').slice(1).join(' ') || '',
       r.payer || employer, // "הועסק ע"י" — המשלם של הקובץ (מתנ"ס/רשות), אם הוגדר

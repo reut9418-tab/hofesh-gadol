@@ -58,6 +58,7 @@ function parseAggregateSheet(rows, sheetName) {
   let authority = '', symbol = '';
   let reg = null, afterControl = null, spec = null, gardens = null, coordinators = null;
   let cols = null, total = 0, totalNet = null, totalActual = 0, netActual = null, totalUnused = 0;
+  let totalNormative = 0; // גיבוי: "סה"כ תקציב נורמטיבי" ממקטע העלויות
   let flexMode = false, flexCols = null; // מקטע "בדיקת ניצול תקציב סל גמיש"
   const baskets = {}, actual = {}, unused = {};
 
@@ -72,6 +73,8 @@ function parseAggregateSheet(rows, sheetName) {
     if (reg == null && (k = li('תלמידים ח.רגיל')) >= 0) reg = firstNumAfter(row, k);
     if (spec == null && (k = li('תלמידים ח.מיוחד')) >= 0) spec = firstNumAfter(row, k);
     if (afterControl == null && (k = li('תלמידים לתקצוב')) >= 0) afterControl = firstNumAfter(row, k);
+    // מקור גיבוי לתקציב: "סה"כ תקציב נורמטיבי" ממקטע העלויות הנורמטיביות
+    if ((k = li('סהכ תקציב נורמטיבי')) >= 0) { const v = firstNumAfter(row, k); if (v > 0 && !totalNormative) totalNormative = v; }
     if (gardens == null && (k = li('מספר מוסדות שפעלו')) >= 0) gardens = firstNumAfter(row, k);
     if (coordinators == null && (k = li('זכאות לרכזת')) >= 0) coordinators = firstNumAfter(row, k);
 
@@ -120,9 +123,11 @@ function parseAggregateSheet(rows, sheetName) {
     }
   }
 
-  // "סה"כ תקצוב" של הגנים = סה"כ נטו (אחרי השתתפות הורים) — זה המספר שמופיע בשורת הסיכום של המשרד
-  const budget = totalNet != null ? totalNet : total;
-  const kids = afterControl ?? reg;
+  // "סה"כ תקצוב" של הגנים = סה"כ נטו (אחרי השתתפות הורים); גיבוי: התקציב הנורמטיבי
+  const budget = (totalNet != null && totalNet > 0 ? totalNet : 0) || total || totalNormative;
+  // "לאחר בקרת איוש" יכול להיות 0 (אין רכזות מאוישות) בעוד המשרד מתקצב לפי ההרשמה —
+  // לכן מעדיפים אותו רק כשהוא חיובי
+  const kids = (afterControl > 0 ? afterControl : null) ?? reg;
   const inst = {
     symbol: symbol || '0', name: authority ? `גני ${authority}` : 'גני הרשות',
     size: 'small', days: null,

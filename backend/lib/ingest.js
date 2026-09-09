@@ -16,6 +16,7 @@ const FIELD_DEFS = [
   { key: 'instSymbol', label: 'סמל מוסד (בדוח השכר)', syn: ['סמל מוסד', 'סמל מקום פעילות', 'סמל גן', 'סמל בית ספר', 'סמל מוסד לימוד', 'קוד מוסד', 'סמל'] },
   { key: 'component', label: 'שם רכיב שכר', syn: ['שם רכיב שכר', 'רכיב שכר', 'שם רכיב', 'תאור רכיב', 'תיאור רכיב', 'סוג רכיב', 'קוד רכיב', 'רכיב תשלום', 'רכיב'] },
   { key: 'roleText', label: 'תפקיד (בדוח השכר)', syn: ['תפקיד'] },
+  { key: 'instName', label: 'שם גן/מוסד (בדוח השכר)', syn: ['שם מוסד', 'שם הגן', 'שם גן', 'שם בית ספר', 'שם מקום פעילות'] },
   { key: 'gross', label: 'סה"כ ברוטו', syn: ['סה"כ ברוטו', 'סהכ ברוטו', 'סה"כ סכום', 'סהכ סכום', 'ברוטו', 'שכר ברוטו', 'ריכוז תשלומים', 'ריכוז  תשלומים'] },
   { key: 'cost', label: 'עלות מעביד', syn: ['עלות עובד', 'עלות מעביד', 'סה"כ עלות', 'סהכ עלות', 'עלות שכר', 'עלות כוללת', 'עלות'] },
   { key: 'hours', label: 'שעות עבודה', syn: ['שעות עבודה', 'סך שעות', 'כמות שעות', 'שעות', 'סה"כ שעות', 'ש.עבודה'] },
@@ -174,6 +175,7 @@ function normalizeRows(rows, headerIdx, mapping, defaultDept) {
       lastName: norm(get('lastName')) || null,
       component: norm(get('component')) || null,
       roleText: norm(get('roleText')) || null, // תפקיד כפי שמופיע בדוח השכר (אם קיים)
+      instName: norm(get('instName')) || null, // שם הגן/בי"ס בשורה — לשיוך סמל מול ההרשמה
       instSymbol: String(get('instSymbol') ?? '').replace(/\D/g, '') || null,
       dept: norm(get('dept')) || norm(defaultDept) || 'ללא מחלקה',
       gross, cost, hours,

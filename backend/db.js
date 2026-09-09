@@ -179,6 +179,8 @@ async function migrate(db) {
   await add('clients', 'manage_notes TEXT');
   // צ'ק-ליסט הניהול המלא (JSON): הצעת מחיר/חשבון/מייל/חומר/מי מטפל/אנשי קשר...
   await add('clients', 'manage_data TEXT');
+  // שם הגן/בי"ס כפי שמופיע בשורת העובד בדוח העלות — לשיוך סמל אוטומטי מול ההרשמה
+  await add('cost_rows', 'inst_name TEXT');
 }
 
 /* זריעת דמו קלה — רק במסד SQLite מקומי ריק (הענן מתמלא ממיגרציית הנתונים) */
