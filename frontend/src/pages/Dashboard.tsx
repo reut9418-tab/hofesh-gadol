@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { T, BUCKET_COLOR } from '../theme';
+import { T, BUCKET_COLOR, STAGE_COLOR } from '../theme';
 import { btn, card, input, Metric } from '../ui';
 import { getTree, getDashboard, createClient, deleteClient, ClientNode, Dashboard as Dash, Report } from '../api';
 import type { Nav } from '../App';
@@ -68,7 +68,15 @@ export default function Dashboard({ go }: { go: (n: Nav) => void }) {
     <div style={{ display: 'grid', gap: 18 }}>
       {err && <div style={{ background: T.redBg, color: T.red, borderRadius: 8, padding: '12px 16px', fontSize: 13 }}>{err}</div>}
 
-      {/* דליי סטטוס נגזרים (§13) */}
+      {/* צנרת הלקוחות: מי הביא חומר, מי בטיפול, מי סיים */}
+      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12 }}>
+        <Metric label="טרם הביאו חומר" value={dash?.status?.pipeline?.counts?.no_material ?? '—'} color={T.red} />
+        <Metric label="הביאו חומר — טרם טופל" value={dash?.status?.pipeline?.counts?.material ?? 0} color={T.amber} />
+        <Metric label="בטיפול" value={dash?.status?.pipeline?.counts?.in_treatment ?? 0} color={T.teal} />
+        <Metric label="סיימו טיפול" value={dash?.status?.pipeline?.counts?.done ?? 0} color={T.green} />
+      </section>
+
+      {/* סטטוס הדוחות */}
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12 }}>
         <Metric label="דוחות פתוחים" value={dash?.status?.buckets?.open ?? '—'} />
         <Metric label="לקראת סיום" value={dash?.status?.buckets?.near ?? 0} color={T.teal} />
@@ -76,32 +84,6 @@ export default function Dashboard({ go }: { go: (n: Nav) => void }) {
         <Metric label="מוכנים להגשה" value={dash?.status?.buckets?.ready ?? 0} color={T.green} />
         <Metric label="כסף על השולחן" value={dash?.status?.moneyOnTable ? `₪${fmt(Math.round(dash.status.moneyOnTable))}` : '—'} color={T.amber} />
       </section>
-
-      {/* התראות ממוינות לפי דחיפות (§13) */}
-      {dash?.status?.alerts && dash.status.alerts.length > 0 && (
-        <section style={card}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <span style={{ fontWeight: 700, fontSize: 15 }}>התראות</span>
-            <span style={{ fontSize: 11.5, color: T.inkSoft }}>ממוינות לפי דחיפות</span>
-            {dash.status.alertsTotal > dash.status.alerts.length &&
-              <span style={{ fontSize: 11.5, color: T.inkSoft, marginInlineStart: 'auto' }}>מוצגות {dash.status.alerts.length} מתוך {dash.status.alertsTotal}</span>}
-          </div>
-          <div style={{ display: 'grid', gap: 6 }}>
-            {dash.status.alerts.map((a, i) => {
-              const c = a.level === 'err' ? T.red : a.level === 'ok' ? T.green : T.amber;
-              const bg = a.level === 'err' ? T.redBg : a.level === 'ok' ? T.greenBg : T.amberBg;
-              return (
-                <button key={i} onClick={() => go({ view: 'report', reportId: a.reportId, clientId: a.clientId })}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, textAlign: 'right', width: '100%', cursor: 'pointer',
-                    border: `1px solid ${T.line}`, borderRight: `3px solid ${c}`, background: bg, borderRadius: 8, padding: '8px 12px', fontFamily: 'inherit', fontSize: 12.5, color: T.ink }}>
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: c }} />
-                  {a.text}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      )}
 
       <section style={card}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -141,6 +123,11 @@ export default function Dashboard({ go }: { go: (n: Nav) => void }) {
                 style={{ border: 'none', background: 'transparent', color: T.teal, fontWeight: 700, fontSize: 16, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}>
                 {c.name}
               </button>
+              {c.stage && (
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: '#fff', background: STAGE_COLOR[c.stage] || T.inkSoft, borderRadius: 5, padding: '2px 8px' }}>
+                  {c.stageLabel}
+                </span>
+              )}
               {c.has_vat && <span style={{ fontSize: 10.5, fontWeight: 700, color: T.amber, background: T.amberBg, borderRadius: 5, padding: '2px 7px' }}>חייב מע"מ</span>}
               <span style={{ fontSize: 11.5, color: T.inkSoft }}>
                 {c.authorities.length ? `${c.authorities.length} רשויות · ` : ''}{total} דוחות

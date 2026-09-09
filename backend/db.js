@@ -174,6 +174,11 @@ async function migrate(db) {
     'moved_from_dept TEXT', 'moved_from_symbol TEXT', 'move_declined INTEGER DEFAULT 0']) await add('cost_rows', c);
   await add('cost_files', 'payer TEXT');
   await add('ledger_files', 'payer TEXT');
+  // לשונית ניהול הלקוח: דריסת שלב ידנית + הערות (NULL = שלב אוטומטי)
+  await add('clients', 'manage_status TEXT');
+  await add('clients', 'manage_notes TEXT');
+  // צ'ק-ליסט הניהול המלא (JSON): הצעת מחיר/חשבון/מייל/חומר/מי מטפל/אנשי קשר...
+  await add('clients', 'manage_data TEXT');
 }
 
 /* זריעת דמו קלה — רק במסד SQLite מקומי ריק (הענן מתמלא ממיגרציית הנתונים) */

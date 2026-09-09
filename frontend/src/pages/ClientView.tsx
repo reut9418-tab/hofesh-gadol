@@ -6,6 +6,7 @@ import {
   createReport, deleteReport,
 } from '../api';
 import CostReportsPanel from './CostReports';
+import ManagePanel from './ManagePanel';
 import type { Nav } from '../App';
 
 const FRAMEWORKS = [
@@ -125,6 +126,9 @@ export default function ClientView({ clientId, go }: { clientId: number; go: (n:
           </label>
         </div>
       </section>
+
+      {/* לשונית הניהול: שלב, צ'ק-ליסט, הערות והתראות הלקוח */}
+      <ManagePanel client={client} onSaved={load} go={go} />
 
       {/* דוחות עלות שכר — ניתוב חוצה-פרויקטים (צעד 3) */}
       <CostReportsPanel clientId={clientId} onRouted={load} />

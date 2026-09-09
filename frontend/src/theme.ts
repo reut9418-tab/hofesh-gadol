@@ -40,3 +40,11 @@ export const BUCKET_COLOR: Record<string, string> = {
   ready: T.green,
   submitted: T.ink,
 };
+
+// שלבי הטיפול בלקוח (לוח הלקוחות + לשונית הניהול)
+export const STAGE_COLOR: Record<string, string> = {
+  no_material: T.red,
+  material: T.amber,
+  in_treatment: T.teal,
+  done: T.green,
+};

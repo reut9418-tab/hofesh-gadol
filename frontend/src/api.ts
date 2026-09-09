@@ -40,9 +40,23 @@ export type DashStatus = {
   alertsTotal: number;
   moneyOnTable: number;
   totalReports: number;
+  pipeline?: {
+    counts: Record<string, number>;
+    labels: Record<string, string>;
+    clients: { id: number; name: string; stage: string; stageLabel: string; manual: boolean }[];
+  };
 };
 
 export type Authority = { id: number; client_id: number; name: string; reports: Report[] };
+
+export type ManageData = {
+  quote_sent?: boolean; quote_signed?: boolean; budget_built?: boolean; invoice_sent?: boolean;
+  docs_mail_sent?: boolean; material_arrived?: boolean; material_date?: string;
+  got_exec_reports?: boolean; got_cost_reports?: boolean;
+  handler?: string; price?: string;
+  email1?: string; phone1?: string; email2?: string; phone2?: string;
+  [k: string]: any;
+};
 
 export type ClientNode = {
   id: number;
@@ -50,6 +64,13 @@ export type ClientNode = {
   has_vat: boolean;
   cluster_number: number | null;
   notes: string | null;
+  stage?: string;
+  stageLabel?: string;
+  stageLabels?: Record<string, string>;
+  manage_status?: string | null;
+  manage_notes?: string | null;
+  manageData?: ManageData;
+  alerts?: Alert[];
   directReports: Report[];
   authorities: Authority[];
 };

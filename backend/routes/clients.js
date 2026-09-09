@@ -3,13 +3,16 @@ const router = express.Router();
 const { z } = require('zod');
 const { getDB } = require('../db');
 const { shapeReport } = require('../lib/reportShape');
-const { reportHealth, dashboardStatus } = require('../lib/status');
+const { reportHealth, reportAlerts, dashboardStatus, deriveClientStage, CLIENT_STAGES } = require('../lib/status');
 
 const clientSchema = z.object({
   name: z.string().min(1, 'שם לקוח נדרש'),
   has_vat: z.boolean().optional(),
   cluster_number: z.number().int().min(1).max(10).nullable().optional(),
   notes: z.string().optional(),
+  manage_status: z.enum(['no_material', 'material', 'in_treatment', 'done']).nullable().optional(),
+  manage_notes: z.string().nullable().optional(),
+  manage_data: z.record(z.string(), z.any()).nullable().optional(), // צ'ק-ליסט הניהול (JSON)
 });
 
 function validate(schema, body) {
@@ -33,14 +36,20 @@ async function buildTree(db) {
   const rawReports = await db.prepare('SELECT * FROM reports ORDER BY id').all();
   const reports = [];
   for (const r of rawReports) reports.push(await withHealth(db, r));
-  return clients.map((c) => ({
-    ...c,
-    has_vat: !!c.has_vat,
-    directReports: reports.filter((r) => r.client_id === c.id && !r.authority_id),
-    authorities: authorities
-      .filter((a) => a.client_id === c.id)
-      .map((a) => ({ ...a, reports: reports.filter((r) => r.authority_id === a.id) })),
-  }));
+  return clients.map((c) => {
+    const clientReports = reports.filter((r) => r.client_id === c.id);
+    const stage = deriveClientStage(c, clientReports.map((r) => r.health));
+    return {
+      ...c,
+      has_vat: !!c.has_vat,
+      stage,
+      stageLabel: CLIENT_STAGES[stage],
+      directReports: clientReports.filter((r) => !r.authority_id),
+      authorities: authorities
+        .filter((a) => a.client_id === c.id)
+        .map((a) => ({ ...a, reports: clientReports.filter((r) => r.authority_id === a.id) })),
+    };
+  });
 }
 
 router.get('/tree', ah(async (req, res) => res.json(await buildTree(getDB()))));
@@ -75,14 +84,32 @@ router.get('/:id', ah(async (req, res) => {
   const id = parseInt(req.params.id);
   const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(id);
   if (!client) return res.status(404).json({ error: 'לקוח לא נמצא' });
+  const auths = {};
+  (await db.prepare('SELECT id, name FROM authorities WHERE client_id = ?').all(id)).forEach((a) => { auths[a.id] = a.name; });
   const rawReports = await db.prepare('SELECT * FROM reports WHERE client_id = ? ORDER BY id').all(id);
   const reports = [];
-  for (const r of rawReports) reports.push(await withHealth(db, r));
+  let alerts = [];
+  for (const r of rawReports) {
+    const shaped = await withHealth(db, r);
+    reports.push(shaped);
+    // ההתראות של הלקוח (עברו לכאן מהמסך הראשי)
+    r._authorityName = r.authority_id ? auths[r.authority_id] : null;
+    alerts = alerts.concat(reportAlerts(r, shaped.health));
+  }
+  alerts.sort((a, b) => b.urgency - a.urgency);
   const authorities = (await db.prepare('SELECT * FROM authorities WHERE client_id = ? ORDER BY name').all(id))
     .map((a) => ({ ...a, reports: reports.filter((r) => r.authority_id === a.id) }));
+  const stage = deriveClientStage(client, reports.map((r) => r.health));
+  let manageData = {};
+  try { manageData = client.manage_data ? JSON.parse(client.manage_data) : {}; } catch { /* ריק */ }
   res.json({
     ...client,
     has_vat: !!client.has_vat,
+    stage,
+    stageLabel: CLIENT_STAGES[stage],
+    stageLabels: CLIENT_STAGES,
+    manageData,
+    alerts,
     directReports: reports.filter((r) => !r.authority_id),
     authorities,
   });
@@ -102,8 +129,19 @@ router.put('/:id', ah(async (req, res) => {
   if (error) return res.status(400).json({ error });
   const db = getDB();
   const id = parseInt(req.params.id);
-  await db.prepare('UPDATE clients SET name = ?, has_vat = ?, cluster_number = ?, notes = ? WHERE id = ?')
-    .run(data.name, data.has_vat ? 1 : 0, data.cluster_number ?? null, data.notes ?? null, id);
+  const cur = await db.prepare('SELECT * FROM clients WHERE id = ?').get(id);
+  if (!cur) return res.status(404).json({ error: 'לקוח לא נמצא' });
+  await db.prepare('UPDATE clients SET name = ?, has_vat = ?, cluster_number = ?, notes = ?, manage_status = ?, manage_notes = ?, manage_data = ? WHERE id = ?')
+    .run(
+      data.name,
+      data.has_vat != null ? (data.has_vat ? 1 : 0) : cur.has_vat,
+      data.cluster_number !== undefined ? data.cluster_number : cur.cluster_number,
+      data.notes !== undefined ? data.notes : cur.notes,
+      data.manage_status !== undefined ? data.manage_status : cur.manage_status,
+      data.manage_notes !== undefined ? data.manage_notes : cur.manage_notes,
+      data.manage_data !== undefined ? (data.manage_data ? JSON.stringify(data.manage_data) : null) : cur.manage_data,
+      id
+    );
   res.json(await db.prepare('SELECT * FROM clients WHERE id = ?').get(id));
 }));
 

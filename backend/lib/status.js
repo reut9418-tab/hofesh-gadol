@@ -86,26 +86,56 @@ function reportAlerts(report, health) {
   return out;
 }
 
+/* ---------- שלב הטיפול בלקוח (לשונית הניהול + לוח הלקוחות הראשי) ---------- */
+const CLIENT_STAGES = {
+  no_material: 'טרם הביא חומר',
+  material: 'הביא חומר — טרם טופל',
+  in_treatment: 'בטיפול',
+  done: 'הטיפול הסתיים',
+};
+
+/* גזירת שלב אוטומטית מבריאות הדוחות + צ'ק-ליסט הניהול; דריסה ידנית גוברת */
+function deriveClientStage(client, healths) {
+  if (client && client.manage_status && CLIENT_STAGES[client.manage_status]) return client.manage_status;
+  let md = {};
+  try { md = client && client.manage_data ? JSON.parse(client.manage_data) : {}; } catch { /* ריק */ }
+  if (healths.length && healths.every((h) => h.bucket === 'submitted')) return 'done';
+  if (healths.some((h) => h.present >= 2 || h.completion >= 50)) return 'in_treatment';
+  if (healths.some((h) => h.present >= 1) || md.material_arrived || md.got_exec_reports || md.got_cost_reports) return 'material';
+  return 'no_material';
+}
+
 /* אגרגציה ללוח הראשי על פני כל הדוחות */
 async function dashboardStatus(db) {
   const reports = await db.prepare('SELECT * FROM reports').all();
+  const clientRows = await db.prepare('SELECT * FROM clients ORDER BY name').all();
   const clients = {};
-  (await db.prepare('SELECT id, name FROM clients').all()).forEach((c) => { clients[c.id] = c.name; });
+  clientRows.forEach((c) => { clients[c.id] = c.name; });
   const auths = {};
   (await db.prepare('SELECT id, name FROM authorities').all()).forEach((a) => { auths[a.id] = a.name; });
 
   const buckets = { open: 0, near: 0, blocked: 0, ready: 0, submitted: 0 };
+  const healthsByClient = {};
   let alerts = [];
   let moneyOnTable = 0;
 
   for (const r of reports) {
     const health = await reportHealth(db, r);
     buckets[health.bucket] = (buckets[health.bucket] || 0) + 1;
+    (healthsByClient[r.client_id] = healthsByClient[r.client_id] || []).push(health);
     r._clientName = clients[r.client_id];
     r._authorityName = r.authority_id ? auths[r.authority_id] : null;
     alerts = alerts.concat(reportAlerts(r, health));
     if (health.underUtilization) moneyOnTable += health.underUtilization;
   }
+
+  // צנרת הלקוחות: מי הביא חומר, מי בטיפול, מי סיים
+  const stageCounts = { no_material: 0, material: 0, in_treatment: 0, done: 0 };
+  const pipelineClients = clientRows.map((c) => {
+    const stage = deriveClientStage(c, healthsByClient[c.id] || []);
+    stageCounts[stage]++;
+    return { id: c.id, name: c.name, stage, stageLabel: CLIENT_STAGES[stage], manual: !!c.manage_status };
+  });
 
   alerts.sort((a, b) => b.urgency - a.urgency);
   return {
@@ -114,7 +144,8 @@ async function dashboardStatus(db) {
     alertsTotal: alerts.length,
     moneyOnTable,
     totalReports: reports.length,
+    pipeline: { counts: stageCounts, labels: CLIENT_STAGES, clients: pipelineClients },
   };
 }
 
-module.exports = { reportHealth, dashboardStatus, BUCKETS };
+module.exports = { reportHealth, reportAlerts, dashboardStatus, deriveClientStage, BUCKETS, CLIENT_STAGES };
