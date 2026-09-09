@@ -21,7 +21,7 @@ async function stage1Data(db, report, client, authority) {
   const collect = (re) => cost.rows
     .filter((r) => r.flags.some((f) => re.test(f.text)))
     .map((r) => ({ name: r.name || '—', id: r.id, dept: r.dept, issues: r.flags.filter((f) => re.test(f.text)).map((f) => f.text) }));
-  const rateIssues = collect(/ברוטו שעתי מעל|עלות מעביד שעתית מעל|עלות מעביד נמוכה/);
+  const rateIssues = collect(/ברוטו שעתי מעל|עלות מעביד שעתית מעל|עלות מעביד נמוכה|מעל תקרת 140%/);
   const hoursIssues = collect(/שעות מעל|חסרות שעות/);
   const idIssues = collect(/ת\.ז לא תקינה/);
 
@@ -65,24 +65,32 @@ async function stage1Data(db, report, client, authority) {
     const breakfastB = baskets.breakfast || 0;
     const salaryUnused = Math.max(0, salaryBudget - salaryActual);
     const overflow = Math.max(0, salaryActual - salaryBudget);
+    // דוח הביצוע של המשרד בולע חריגת שכר בסל הגמיש אוטומטית — היתרה הזמינה
+    // באמת לניצול (ארוחות בוקר/מלגות/גמיש) היא מה שנשאר אחרי הבליעה
+    const flexConsumed = Math.min(overflow, flexB);
+    const flexAvailable = Math.max(0, flexB - flexConsumed);
     // אופציה א: הסל הגמיש לארוחות בוקר/מלגות → תוספת העשרה = הנמוך מבין
     // 25% מתקציב ההעשרה לבין יתרת השכר שטרם נוצלה
     const enrichBonus = salaryUnused > 0 ? Math.min(0.25 * enrichB, salaryUnused) : 0;
+    // יעדי הכרטסת רשומים תמיד נטו: התקציבים של המשרד מוכרים כולל מע"מ ללקוח
+    // חייב, ולכן ההוצאה נטו בכרטסת = התקציב חלקי 1.18 (השכר ממילא נטו מהדוח)
+    const net = (v) => Math.round((v / vatFactor) * 100) / 100;
     return {
       name, symbol, children: children || 0,
       salaryBudget, salaryActual, salaryUnused, overflow,
       enrichBudget: enrichB, flexBudget: flexB, breakfastBudget: breakfastB,
+      flexConsumed, flexAvailable,
       management: baskets.management || 0,
-      optionA: { enrich: enrichB + enrichBonus, enrichBonus, flexForFood: flexB },
-      optionB: { enrich: enrichB, flexRemaining: Math.max(0, flexB - Math.min(overflow, flexB)) },
-      // יעדי הכרטסות (הטבלה המסכמת): שכר = דוח העלות; ארוחת בוקר = תקציב + הסל
-      // הגמיש (בהנחת אופציה א'); העשרה = כולל התוספת; הכנסות = ילדים × תעריף
-      // (ללקוח חייב מע"מ הכרטסת נטו — חלקי 1.18)
+      optionA: { enrich: enrichB + enrichBonus, enrichBonus, flexForFood: flexAvailable },
+      optionB: { enrich: enrichB, flexRemaining: flexAvailable },
+      // יעדי הכרטסות (הטבלה המסכמת): שכר = דוח העלות (נטו); ארוחת בוקר = תקציב +
+      // יתרת הסל הגמיש שנותרה אחרי בליעת חריגת השכר (בהנחת אופציה א');
+      // העשרה = כולל התוספת; הכנסות = ילדים × תעריף. ללקוח חייב מע"מ — הכול נטו.
       targets: {
         salary: salaryNet, // יעד הכרטסת = העלות נטו (הכרטסת מתנהלת בלי מע"מ)
         salaryByPayer: salaryByPayer || {}, // הפרדה בין משלמים (מתנ"ס/רשות) כשקיימים שניים
-        breakfast: breakfastB + flexB,
-        enrichment: enrichB + enrichBonus,
+        breakfast: net(breakfastB + flexAvailable),
+        enrichment: net(enrichB + enrichBonus),
         income: children && tariff ? Math.round((children * tariff / vatFactor) * 100) / 100 : 0,
       },
     };
@@ -136,7 +144,7 @@ function renderStage1Html(d) {
 
   /* --- נקודות חשובות (תמצית) --- */
   const highlights = [];
-  if (d.rateIssues.length) highlights.push(`נמצאו <b>${d.rateIssues.length} עובדים</b> עם שכר לשעה מעל תקרת המשרד — יש לתקן לפני ההגשה (פירוט בסעיף 1).`);
+  if (d.rateIssues.length) highlights.push(`נמצאו <b>${d.rateIssues.length} עובדים</b> החורגים מבקרות השכר של המשרד — ברוטו לשעה, עלות לשעה או עלות מעל 140% מהברוטו — יש לתקן לפני ההגשה (פירוט בסעיף 1).`);
   if (d.hoursIssues.length) highlights.push(`נמצאו <b>${d.hoursIssues.length} עובדים</b> עם כמות שעות הדורשת בדיקה (פירוט בסעיף 2).`);
   if (d.idIssues.length) highlights.push(`נמצאו <b>${d.idIssues.length} עובדים</b> עם תעודת זהות שאינה תקינה (פירוט בסעיף 1).`);
   const hasOverflow = d.units.some((u) => u.overflow > 0) || (d.recs && d.recs.relevant && (d.recs.moves || []).length > 0);
@@ -172,17 +180,24 @@ function renderStage1Html(d) {
   const unitOptions = d.units.map((u) => {
     const title = u.symbol ? `${esc(u.name)} — סמל ${esc(u.symbol)}` : esc(u.name);
     const salaryLine = u.overflow > 0
-      ? `בשכר נוצלו <b>₪${fmt(u.salaryActual)}</b> מתוך תקציב של ₪${fmt(u.salaryBudget)} — <span class="red">חריגה של ₪${fmt(u.overflow)}</span> (נבלעת בסל הגמיש עד גובהו).`
+      ? `בשכר נוצלו <b>₪${fmt(u.salaryActual)}</b> מתוך תקציב של ₪${fmt(u.salaryBudget)} — <span class="red">חריגה של ₪${fmt(u.overflow)}</span>${u.flexConsumed > 0 ? `, ממנה ₪${fmt(u.flexConsumed)} נבלעים אוטומטית בסל הגמיש` : ''}${u.overflow > u.flexConsumed ? ` <span class="red">(₪${fmt(u.overflow - u.flexConsumed)} נותרים ללא כיסוי ולא יוכרו)</span>` : ''}.`
       : u.salaryUnused > 0
         ? `בשכר נוצלו <b>₪${fmt(u.salaryActual)}</b> מתוך תקציב של ₪${fmt(u.salaryBudget)} — נותרה יתרה של <b class="green">₪${fmt(u.salaryUnused)}</b>.`
         : `השכר נוצל במלואו: ₪${fmt(u.salaryActual)} מתוך ₪${fmt(u.salaryBudget)}.`;
-    return `<h3>${title}</h3>
-    <p class="salaryline">${salaryLine}</p>
-    <div class="opts">
+    // כשהסל הגמיש נבלע כולו בחריגת השכר — אין שתי אופציות, רק מצב נתון
+    const optionsBlock = u.flexAvailable <= 0 && u.overflow > 0
+      ? `<div class="opt" style="flex:none">
+          <div class="opt-title">הסל הגמיש נוצל במלואו</div>
+          <ul>
+            <li>הסל הגמיש (₪${fmt(u.flexBudget)}) נוצל <b>כולו</b> לכיסוי חריגת השכר — לא נותרה יתרה לארוחות בוקר או מלגות.</li>
+            <li>העשרה: עד <b>₪${fmt(u.optionB.enrich)}</b> <span class="soft">(לפי התקציב)</span></li>
+          </ul>
+        </div>`
+      : `<div class="opts">
       <div class="opt">
         <div class="opt-title">אופציה א' — הסל הגמיש ינוצל לארוחות בוקר ומלגות</div>
         <ul>
-          <li>ארוחות בוקר ומלגות: עד <b>₪${fmt(u.optionA.flexForFood)}</b> (מלוא הסל הגמיש)</li>
+          <li>ארוחות בוקר ומלגות: עד <b>₪${fmt(u.optionA.flexForFood)}</b> ${u.flexConsumed > 0 ? `<span class="soft">(יתרת הסל הגמיש אחרי כיסוי חריגת השכר)</span>` : '(מלוא הסל הגמיש)'}</li>
           <li>העשרה: עד <b>₪${fmt(u.optionA.enrich)}</b>${u.optionA.enrichBonus > 0
             ? `<br><span class="soft">(תקציב ₪${fmt(u.enrichBudget)} + תוספת 25% בסך ₪${fmt(u.optionA.enrichBonus)}, המתאפשרת בזכות יתרת השכר)</span>`
             : ` <span class="soft">(לפי התקציב)</span>`}</li>
@@ -192,10 +207,13 @@ function renderStage1Html(d) {
         <div class="opt-title">אופציה ב' — הסל הגמיש יישאר גמיש</div>
         <ul>
           <li>העשרה: עד <b>₪${fmt(u.optionB.enrich)}</b> <span class="soft">(לפי התקציב)</span></li>
-          <li>יתרת סל גמיש זמינה: <b>₪${fmt(u.optionB.flexRemaining)}</b>${u.overflow > 0 ? ` <span class="soft">(אחרי כיסוי חריגת השכר)</span>` : ''}</li>
+          <li>יתרת סל גמיש זמינה: <b>₪${fmt(u.optionB.flexRemaining)}</b>${u.flexConsumed > 0 ? ` <span class="soft">(אחרי כיסוי חריגת השכר)</span>` : ''}</li>
         </ul>
       </div>
     </div>`;
+    return `<h3>${title}</h3>
+    <p class="salaryline">${salaryLine}</p>
+    ${optionsBlock}`;
   }).join('');
 
   /* --- סעיף 5: טבלת יעדי הכרטסות --- */
@@ -237,7 +255,7 @@ function renderStage1Html(d) {
     <thead><tr><th>${d.units.length > 1 ? 'בית ספר' : 'מסגרת'}</th>${headCols.map((h) => `<th class="num">${h}</th>`).join('')}</tr></thead>
     <tbody>${d.units.map(unitRow).join('')}${totalsRow}</tbody>
   </table>
-  <p class="note">שכר — בהתאם לדוח עלות השכר שנבדק${multiPayer ? ', בהפרדה לפי המשלם (כרטסת נפרדת בספרי כל משלם)' : ''}. ארוחת בוקר — בהנחה שהסל הגמיש מנוצל לארוחות בוקר ומלגות (אופציה א'); אם יוחלט אחרת, ראו סעיף 4. העשרה — כולל תוספת 25% היכן שקיימת יתרת שכר. הכנסות משתתפים — כמות הילדים בדוח הביצוע × תעריף המשרד${d.tariff ? ` (₪${fmt(d.tariff)} לילד)` : ''}${d.hasVat ? ', בניכוי מע"מ 18% (הרישום בכרטסת נטו)' : ''}.</p>`;
+  <p class="note">שכר — בהתאם לדוח עלות השכר שנבדק${multiPayer ? ', בהפרדה לפי המשלם (כרטסת נפרדת בספרי כל משלם)' : ''}. ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש שנותרה אחרי בליעת חריגת השכר (בהנחת אופציה א'); אם יוחלט אחרת, ראו סעיף 4. העשרה — כולל תוספת 25% היכן שקיימת יתרת שכר. הכנסות משתתפים — כמות הילדים בדוח הביצוע × תעריף המשרד${d.tariff ? ` (₪${fmt(d.tariff)} לילד)` : ''}.${d.hasVat ? ' <b>כל היעדים בטבלה רשומים נטו, ללא מע"מ</b> — כפי שנרשם בכרטסת; בדוח הביצוע למשרד הסכומים מדווחים בתוספת מע"מ 18%.' : ''}</p>`;
 
   return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
 <title>מכתב שלב 1 — ${esc(to)} — ${esc(d.label)}</title>
@@ -293,7 +311,7 @@ ${sec2}
 ${sec3}
 
 <h2>4. יתרות לניצול — העשרה והסל הגמיש</h2>
-<p>לכל מוסד שתי אופציות לניצול הסל הגמיש; ההעשרה מותאמת בהתאם:</p>
+<p>להלן מצב הסל הגמיש וההעשרה בכל מוסד (כשקיימת יתרה בסל הגמיש — שתי אופציות לניצולה):</p>
 ${unitOptions}
 
 <h2>5. יעדי הכרטסות — על כמה צריכה לעמוד כל כרטסת</h2>
