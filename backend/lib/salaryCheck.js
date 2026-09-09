@@ -55,12 +55,14 @@ async function salaryCheck(db, report) {
      WHERE i.report_id = ? GROUP BY b.basket_type`
   ).all(report.id)).forEach((r) => { budgets[r.t] = Number(r.a); });
 
-  // עלות בפועל מפוצלת לפי תפקיד (שיוך שמור, ואם אין — ברירת המחדל לפי המחלקה)
+  // עלות בפועל מפוצלת לפי תפקיד (שיוך שמור, ואם אין — ברירת המחדל לפי המחלקה);
+  // הניצול המוכר מוגבל פר-עובד לתקרת ה-140% מהברוטו — כמו בדיווח בפועל
+  const { recognizedRowCost } = require('./ingest');
   const actual = { instruction: 0, coordinator: 0, deputy: 0 };
-  const rows = await db.prepare('SELECT dept, staff_type, cost FROM cost_rows WHERE report_id = ?').all(report.id);
+  const rows = await db.prepare('SELECT dept, staff_type, cost, gross FROM cost_rows WHERE report_id = ?').all(report.id);
   rows.forEach((r) => {
     const st = r.staff_type || suggestRole(r.dept).staffType;
-    actual[basketForStaff(st)] += (r.cost || 0) * vatFactor;
+    actual[basketForStaff(st)] += recognizedRowCost(r, vatFactor);
   });
 
   const labels = BASKET_LABELS[report.framework] || BASKET_LABELS.schools;

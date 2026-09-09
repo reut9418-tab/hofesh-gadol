@@ -8,6 +8,7 @@ const { salaryCheck } = require('./salaryCheck');
 const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions } = require('./nameMatch');
 const { reportLabel } = require('./domain');
+const { recognizedRowCost } = require('./ingest');
 
 const fmt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -55,10 +56,11 @@ async function stage1Data(db, report, client, authority) {
     : {};
   const rowSymbol = (r) => r.symbol_override || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null;
 
-  const mkUnit = (name, symbol, baskets, salaryNet, children, salaryByPayer) => {
-    // מול התקציב משווים את הניצול המוכר (כולל מע"מ ללקוח חייב);
-    // יעד הכרטסת נשאר נטו — כך נרשם בהנהלת החשבונות
-    const salaryActual = salaryNet * vatFactor;
+  const mkUnit = (name, symbol, baskets, salaryNet, salaryRecognized, children, salaryByPayer) => {
+    // מול התקציב משווים את הניצול המוכר: עלות + מע"מ ללקוח חייב, מוגבל
+    // פר-עובד לתקרת 140% מהברוטו (כמו בדיווח בפועל);
+    // יעד הכרטסת נשאר נטו מלא — כך נרשם בהנהלת החשבונות
+    const salaryActual = salaryRecognized;
     const salaryBudget = (baskets.instruction || 0) + (baskets.coordinator || 0) + (baskets.deputy || 0);
     const enrichB = baskets.enrichment || 0;
     const flexB = baskets.flexible || 0;
@@ -121,12 +123,14 @@ async function stage1Data(db, report, client, authority) {
       const b = await basketsOf(i.id);
       Object.entries(b).forEach(([k, v]) => { baskets[k] = (baskets[k] || 0) + v; });
     }
-    units = [mkUnit('כל הגנים (במרוכז)', null, baskets, cost.summary.totalCost, kids, payerSplit(rows))];
+    const recognized = rows.reduce((s, r) => s + recognizedRowCost(r, vatFactor), 0);
+    units = [mkUnit('כל הגנים (במרוכז)', null, baskets, cost.summary.totalCost, recognized, kids, payerSplit(rows))];
   } else {
     for (const i of insts) {
       const unitRows = rows.filter((r) => rowSymbol(r) === String(i.symbol));
       const actual = unitRows.reduce((s, r) => s + (r.cost || 0), 0);
-      units.push(mkUnit(i.name || i.symbol, String(i.symbol), await basketsOf(i.id), actual, i.children_count || 0, payerSplit(unitRows)));
+      const recognized = unitRows.reduce((s, r) => s + recognizedRowCost(r, vatFactor), 0);
+      units.push(mkUnit(i.name || i.symbol, String(i.symbol), await basketsOf(i.id), actual, recognized, i.children_count || 0, payerSplit(unitRows)));
     }
   }
 

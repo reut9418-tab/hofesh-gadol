@@ -215,6 +215,15 @@ function aggregateComponents(recs) {
    vatFactor: 1.18 ללקוח חייב מע"מ — העלות המוכרת = עלות מעביד + מע"מ.
    כלל ה-40%: העלות השעתית המוכרת לא תחרוג מ-140% מהברוטו השעתי. */
 const COST_MARKUP_LIMIT = 1.4;
+
+/* העלות המוכרת של שורת עלות: עלות מעביד × מע"מ (ללקוח חייב), מוגבלת לתקרת
+   ההכרה של המשרד — ברוטו × 140% (זהה להגבלה השעתית: השעות מצטמצמות).
+   משמש בכל השוואת "ביצוע מוכר" מול תקציב: מכתב, בקרת שכר, המלצות, ייצוא. */
+function recognizedRowCost(row, vatFactor = 1) {
+  if (row.cost == null) return 0;
+  const full = row.cost * vatFactor;
+  return row.gross > 0 ? Math.min(full, row.gross * COST_MARKUP_LIMIT) : full;
+}
 function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOURS_CAP, vatFactor = 1 } = {}) {
   const costCap = grossCap * EMPLOYER_FACTOR;
   const seen = new Map();
@@ -313,5 +322,5 @@ function parseCostFile(buf, learned = {}) {
 module.exports = {
   FIELD_DEFS, SOFTWARE_SIGNATURES, norm, isValidIsraeliId,
   detectStructure, normalizeRows, aggregateComponents, runChecks,
-  readWorkbookSheets, parseCostFile, EMPLOYER_FACTOR, HOURS_CAP, COST_MARKUP_LIMIT,
+  readWorkbookSheets, parseCostFile, EMPLOYER_FACTOR, HOURS_CAP, COST_MARKUP_LIMIT, recognizedRowCost,
 };

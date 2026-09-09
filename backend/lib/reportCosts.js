@@ -2,7 +2,7 @@
    מרוכז כאן כדי שגם ראוט ה-/costs וגם מנוע הסטטוס ישתמשו באותו מקור. */
 
 const { GROSS_CAP, programType } = require('./domain');
-const { aggregateComponents, runChecks } = require('./ingest');
+const { aggregateComponents, runChecks, recognizedRowCost } = require('./ingest');
 
 async function costDataForReport(db, report) {
   // לקוח חייב מע"מ: העלות המוכרת (מול תקציב/דוח ביצוע) = עלות מעביד × 1.18
@@ -29,7 +29,8 @@ async function costDataForReport(db, report) {
     rows: rows.length,
     totalCost,
     vatFactor,
-    totalCostRecognized: totalCost * vatFactor, // העלות המוכרת מול המשרד (כולל מע"מ ללקוח חייב)
+    // העלות המוכרת מול המשרד: כולל מע"מ ללקוח חייב, מוגבלת פר-עובד ל-140% מהברוטו
+    totalCostRecognized: rows.reduce((s, r) => s + recognizedRowCost(r, vatFactor), 0),
     totalGross: rows.reduce((s, r) => s + (r.gross || 0), 0),
     totalHours: rows.reduce((s, r) => s + (r.hours || 0), 0),
     errors: rows.reduce((s, r) => s + r.flags.filter((f) => f.level === 'err').length, 0),
