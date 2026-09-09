@@ -1,6 +1,6 @@
 # פריסה אוטומטית ל-Cloudflare Workers בכל push ל-main
 # דורש שני Secrets בריפו (Settings ← Secrets and variables ← Actions):
-#   CLOUDFLARE_API_TOKEN  — טוקן מחשבון ה-Cloudflare של gebmpro.co.il (הרשאות: Workers Scripts:Edit + Zone)
+#   CLOUDFLARE_API_TOKEN  — טוקן מחשבון ה-Cloudflare של gebmgroup.com (הרשאות: Workers Scripts:Edit + Zone)
 #   CLOUDFLARE_ACCOUNT_ID — מזהה החשבון (Cloudflare Dashboard ← Overview, בצד ימין)
 name: Deploy to Cloudflare Workers
 
@@ -32,3 +32,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # ברירת המחדל של ה-action היא wrangler 3 שלא קורא wrangler.jsonc
+          wranglerVersion: "4.130.0"
