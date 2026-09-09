@@ -224,6 +224,7 @@ export const deleteLedgerFile = (fileId: number) => api.delete(`/ledger-files/${
 
 /* ---------- מסמך שלב 1 + החלטת לקוח על ניוד ---------- */
 export const stage1DocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/stage1-doc`;
+export const costMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/cost-match-doc`;
 export const applyMove = (reportId: number, rowId: number, decision: 'move' | 'decline', toSymbol?: string) =>
   api.post(`/reports/${reportId}/apply-move`, { rowId, decision, toSymbol }).then((r) => r.data);
 

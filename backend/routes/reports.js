@@ -13,6 +13,8 @@ const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff } = require('../lib/budgetFile');
 const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, STAFF_TYPES } = require('../lib/fillMinistry');
 const { salaryCheck, suggestRole } = require('../lib/salaryCheck');
+const { COST_MARKUP_LIMIT } = require('../lib/ingest');
+const { renderCostMatchHtml } = require('../lib/costMatch');
 const { recommendations } = require('../lib/recommend');
 const { matchDeptsToInstitutions } = require('../lib/nameMatch');
 const { stage1Data, renderStage1Html } = require('../lib/stage1');
@@ -409,6 +411,24 @@ router.post('/:id/apply-move', ah(async (req, res) => {
   res.json({ ok: true, moved: true, dept: targetDept, symbol: toSymbol });
 }));
 
+/* ---------- דוח התאמה לדוח עלות (להצגה למשרד החינוך) ---------- */
+router.get('/:id/cost-match-doc', ah(async (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+  if (!report) return res.status(404).send('דוח לא נמצא');
+  const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(report.client_id);
+  const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  const rows = await db.prepare(
+    'SELECT * FROM cost_rows WHERE report_id = ? ORDER BY emp_name'
+  ).all(id);
+  if (!rows.length) return res.status(422).send('אין שורות שכר מנותבות לדוח זה.');
+  const { reportLabel } = require('../lib/domain');
+  const html = renderCostMatchHtml({ report, client, authority, rows, label: reportLabel(report.framework, report.program) });
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+}));
+
 /* ---------- ייצוא: מילוי קובץ המשרד (כח אדם + רכזות + הוצאות + הכנסות) ---------- */
 router.get('/:id/export', ah(async (req, res) => {
   const db = getDB();
@@ -446,11 +466,15 @@ router.get('/:id/export', ah(async (req, res) => {
     || null;
 
   const round2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
-  // ללקוח חייב מע"מ — העלות השעתית המדווחת למשרד כוללת מע"מ (הברוטו נשאר כפי שהוא)
+  // ללקוח חייב מע"מ — העלות השעתית המדווחת למשרד כוללת מע"מ (הברוטו נשאר כפי שהוא).
+  // העלות המדווחת מוגבלת לנמוך מבין עלות×מע"מ לבין ברוטו שעתי×140% (תקרת המשרד);
+  // ההפרש מול דוח העלות מוסבר ב"דוח ההתאמה לדוח עלות".
   const vatFactor = client && client.has_vat ? 1.18 : 1;
   const execRows = rows.map((r) => {
     const hourlyGross = r.gross != null && r.hours ? r.gross / r.hours : null;
-    const hourlyCost = r.cost != null && r.hours ? (r.cost / r.hours) * vatFactor : null;
+    const rawHourlyCost = r.cost != null && r.hours ? (r.cost / r.hours) * vatFactor : null;
+    const cap140 = hourlyGross != null && hourlyGross > 0 ? hourlyGross * COST_MARKUP_LIMIT : null;
+    const hourlyCost = rawHourlyCost != null && cap140 != null ? Math.min(rawHourlyCost, cap140) : rawHourlyCost;
     const sug = suggestRole(r.dept);
     return [
       resolveSymbol(r), null, r.emp_id,

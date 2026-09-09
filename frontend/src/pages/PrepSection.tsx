@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { T } from '../theme';
 import { btn, card, input } from '../ui';
-import { getReportPrep, saveReportPrep, exportReportUrl, stage1DocUrl, applyMove, PrepData, Assignment } from '../api';
+import { getReportPrep, saveReportPrep, exportReportUrl, stage1DocUrl, costMatchDocUrl, applyMove, PrepData, Assignment } from '../api';
 
 const fmt = (n: number | null, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -82,6 +82,8 @@ export default function PrepSection({ reportId }: { reportId: number }) {
         <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 8 }}>
           <button onClick={() => window.open(stage1DocUrl(reportId), '_blank')} style={btn('ghost')}
             title="סיכום הבדיקות ללקוח — להדפסה או שמירה כ-PDF">📄 מסמך שלב 1 ללקוח</button>
+          <button onClick={() => window.open(costMatchDocUrl(reportId), '_blank')} style={btn('ghost')}
+            title="הסבר למשרד החינוך: העלות השעתית שדווחה = הנמוך מבין עלות + מע&quot;מ לבין ברוטו + 40%">🧾 דוח התאמה לדוח עלות</button>
           <button onClick={save} disabled={busy} style={btn('ghost')}>{busy ? 'שומר…' : 'שמירת שיוכים'}</button>
           <button onClick={doExport} disabled={busy || !data.hasBudgetFile}
             title={data.hasBudgetFile ? '' : 'קודם מעלים דוח ביצוע של המשרד (בסקשן התקציב)'}
