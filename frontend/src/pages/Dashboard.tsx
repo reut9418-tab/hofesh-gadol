@@ -82,7 +82,6 @@ export default function Dashboard({ go }: { go: (n: Nav) => void }) {
         <Metric label="לקראת סיום" value={dash?.status?.buckets?.near ?? 0} color={T.teal} />
         <Metric label="תקועים על חוסר" value={dash?.status?.buckets?.blocked ?? 0} color={T.amber} />
         <Metric label="מוכנים להגשה" value={dash?.status?.buckets?.ready ?? 0} color={T.green} />
-        <Metric label="כסף על השולחן" value={dash?.status?.moneyOnTable ? `₪${fmt(Math.round(dash.status.moneyOnTable))}` : '—'} color={T.amber} />
       </section>
 
       <section style={card}>
