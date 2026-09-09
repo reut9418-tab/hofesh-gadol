@@ -181,6 +181,11 @@ async function migrate(db) {
   await add('clients', 'manage_data TEXT');
   // שם הגן/בי"ס כפי שמופיע בשורת העובד בדוח העלות — לשיוך סמל אוטומטי מול ההרשמה
   await add('cost_rows', 'inst_name TEXT');
+  // קובץ דוח הביצוע של המשרד נשמר גם במסד (טבלה נפרדת — לא מכבידה על שליפות
+  // הדוחות) — הדיסק של Render מתאפס בכל פריסה והקובץ חיוני לייצוא
+  await db.exec(`CREATE TABLE IF NOT EXISTS report_files (
+    report_id INTEGER PRIMARY KEY, data ${pg ? 'BYTEA' : 'BLOB'}
+  )`);
 }
 
 /* זריעת דמו קלה — רק במסד SQLite מקומי ריק (הענן מתמלא ממיגרציית הנתונים) */

@@ -23,6 +23,24 @@ const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+/* קובץ המשרד השמור של הדוח: מהדיסק אם קיים, אחרת מהמסד (הדיסק בענן מתאפס
+   בכל פריסה — העותק במסד הוא הקבוע). כשמשחזרים מהמסד כותבים גם לדיסק. */
+async function budgetFileBuf(db, report) {
+  if (report.budget_file_path && fs.existsSync(report.budget_file_path)) {
+    return fs.readFileSync(report.budget_file_path);
+  }
+  const row = await db.prepare('SELECT data FROM report_files WHERE report_id = ?').get(report.id);
+  if (!row || !row.data) return null;
+  const buf = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
+  try {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    const p = path.join(UPLOADS_DIR, `report_${report.id}_budget.xlsx`);
+    fs.writeFileSync(p, buf);
+    await db.prepare('UPDATE reports SET budget_file_path = ? WHERE id = ?').run(p, report.id);
+  } catch { /* נמשיך מהזיכרון */ }
+  return buf;
+}
+
 const VALID_PROGRAMS = ['base15', 'extension', 'base'];
 const VALID_STATUS = ['draft', 'in_progress', 'blocked', 'ready', 'submitted'];
 
@@ -160,6 +178,9 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   const tariff = extractTariff(req.file.buffer) || 0;
   await db.prepare('UPDATE reports SET has_participants = 1, budget_file_name = ?, budget_file_path = ?, parent_tariff = ? WHERE id = ?')
     .run(originalName, savedPath, tariff, id);
+  // עותק קבוע במסד — שורד את איפוס הדיסק של הענן בכל פריסה
+  await db.prepare('DELETE FROM report_files WHERE report_id = ?').run(id);
+  await db.prepare('INSERT INTO report_files (report_id, data) VALUES (?, ?)').run(id, req.file.buffer);
 
   const totalBudget = parsed.institutions.reduce((s, i) => s + (i.total || 0), 0);
   res.status(201).json({
@@ -201,8 +222,9 @@ router.get('/:id/prep', ah(async (req, res) => {
 
   // רשימת המוסדות מקובץ המשרד השמור (מצבת והרשמה) — לבחירת סמל מקום פעילות
   let institutions = [];
-  if (report.budget_file_path && fs.existsSync(report.budget_file_path)) {
-    try { institutions = extractInstitutions(fs.readFileSync(report.budget_file_path)); } catch { /* בלי רשימה */ }
+  const prepBuf = await budgetFileBuf(db, report);
+  if (prepBuf) {
+    try { institutions = extractInstitutions(prepBuf); } catch { /* בלי רשימה */ }
   }
   const validSymbols = new Set(institutions.map((i) => i.symbol));
 
@@ -243,7 +265,7 @@ router.get('/:id/prep', ah(async (req, res) => {
   res.json({
     rows, institutions, staffTypes: STAFF_TYPES,
     employer: (authority && authority.name) || (client && client.name) || '',
-    hasBudgetFile: !!(report.budget_file_path && fs.existsSync(report.budget_file_path)),
+    hasBudgetFile: !!prepBuf,
     budgetFileName: report.budget_file_name || null,
     salary: await salaryCheck(db, report),
     framework: report.framework,
@@ -435,7 +457,8 @@ router.get('/:id/export', ah(async (req, res) => {
   const id = parseInt(req.params.id);
   const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
   if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
-  if (!report.budget_file_path || !fs.existsSync(report.budget_file_path)) {
+  const ministryBuf = await budgetFileBuf(db, report);
+  if (!ministryBuf) {
     return res.status(422).json({ error: 'אין קובץ דוח ביצוע שמור לדוח זה — יש להעלות קודם את קובץ המשרד.' });
   }
 
@@ -450,7 +473,7 @@ router.get('/:id/export', ah(async (req, res) => {
   if (!rows.length) return res.status(422).json({ error: 'אין שורות שכר מנותבות לדוח זה.' });
 
   // שיוך סמל אוטומטי גם בייצוא: שם הגן/בי"ס שבשורה מול לשונית ההרשמה
-  const srcBufEarly = fs.readFileSync(report.budget_file_path);
+  const srcBufEarly = ministryBuf;
   let exInstitutions = [];
   try { exInstitutions = extractInstitutions(srcBufEarly); } catch { /* בלי רשימה */ }
   const exValid = new Set(exInstitutions.map((i) => i.symbol));
@@ -488,7 +511,7 @@ router.get('/:id/export', ah(async (req, res) => {
     ];
   });
 
-  const srcBuf = fs.readFileSync(report.budget_file_path);
+  const srcBuf = ministryBuf;
   let coordRows = null;
   if (report.framework === 'gardens') {
     const gardens = extractCoordinatorGardens(srcBuf);
