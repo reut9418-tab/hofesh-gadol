@@ -22,13 +22,13 @@ export const input: React.CSSProperties = {
 
 /* תגית פסטל רכה: רקע בהיר בגוון הצבע + טקסט צבעוני (במקום רקע מלא וטקסט לבן) */
 export const pill = (color: string): React.CSSProperties => ({
-  fontSize: 10.5, fontWeight: 700, color, background: `${color}1C`,
-  border: `1px solid ${color}33`, borderRadius: 999, padding: '2px 10px',
+  fontSize: 10.5, fontWeight: 700, color, background: `${color}26`,
+  border: `1px solid ${color}55`, borderRadius: 999, padding: '2px 10px',
 });
 
 export function Metric({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
   return (
-    <div style={{ ...card, padding: '14px 16px', borderTop: color ? `3px solid ${color}55` : card.border as string }}>
+    <div style={{ ...card, padding: '14px 16px', borderTop: color ? `3px solid ${color}` : (card.border as string) }}>
       <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 4 }}>{label}</div>
       <div style={{ fontSize: 26, fontWeight: 700, color: color || T.ink }}>{value}</div>
     </div>

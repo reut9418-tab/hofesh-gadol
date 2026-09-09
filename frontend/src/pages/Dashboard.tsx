@@ -72,14 +72,14 @@ export default function Dashboard({ go }: { go: (n: Nav) => void }) {
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12 }}>
         <Metric label="טרם הביאו חומר" value={dash?.status?.pipeline?.counts?.no_material ?? '—'} color={T.red} />
         <Metric label="הביאו חומר — טרם טופל" value={dash?.status?.pipeline?.counts?.material ?? 0} color={T.amber} />
-        <Metric label="בטיפול" value={dash?.status?.pipeline?.counts?.in_treatment ?? 0} color={T.teal} />
+        <Metric label="בטיפול" value={dash?.status?.pipeline?.counts?.in_treatment ?? 0} color={T.blue} />
         <Metric label="סיימו טיפול" value={dash?.status?.pipeline?.counts?.done ?? 0} color={T.green} />
       </section>
 
       {/* סטטוס הדוחות */}
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12 }}>
         <Metric label="דוחות פתוחים" value={dash?.status?.buckets?.open ?? '—'} />
-        <Metric label="לקראת סיום" value={dash?.status?.buckets?.near ?? 0} color={T.teal} />
+        <Metric label="לקראת סיום" value={dash?.status?.buckets?.near ?? 0} color={T.blue} />
         <Metric label="תקועים על חוסר" value={dash?.status?.buckets?.blocked ?? 0} color={T.amber} />
         <Metric label="מוכנים להגשה" value={dash?.status?.buckets?.ready ?? 0} color={T.green} />
       </section>
