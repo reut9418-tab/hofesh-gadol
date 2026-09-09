@@ -14,14 +14,19 @@ function BudgetSection({ reportId, onChange }: { reportId: number; onChange: () 
   const [data, setData] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [warn, setWarn] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const load = () => getReportBudget(reportId).then(setData).catch(() => setData(null));
   useEffect(() => { load(); }, [reportId]);
 
   const onPick = async (files: FileList | null) => {
     if (!files || !files.length) return;
-    setBusy(true); setErr(null);
-    try { await uploadBudgetFile(reportId, files[0]); await load(); onChange(); }
+    setBusy(true); setErr(null); setWarn(null);
+    try {
+      const res = await uploadBudgetFile(reportId, files[0]);
+      setWarn(res?.warning || null);
+      await load(); onChange();
+    }
     catch (e: any) { setErr(e?.response?.data?.error || 'העלאת דוח הביצוע נכשלה.'); }
     finally { setBusy(false); if (inputRef.current) inputRef.current.value = ''; }
   };
@@ -42,6 +47,7 @@ function BudgetSection({ reportId, onChange }: { reportId: number; onChange: () 
         </span>
       </div>
       {err && <div style={{ fontSize: 12.5, color: T.red, marginBottom: 8 }}>{err}</div>}
+      {warn && <div style={{ fontSize: 12.5, color: T.amber, background: T.amberBg, borderRadius: 8, padding: '7px 11px', marginBottom: 8 }}>{warn}</div>}
       {!has && !err && <div style={{ fontSize: 13, color: T.inkSoft }}>טרם הועלה דוח ביצוע. מעלים את קובץ המשרד, והתקציב לכל מוסד ייבנה אוטומטית.</div>}
 
       {has && (

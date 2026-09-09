@@ -183,10 +183,14 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   await db.prepare('INSERT INTO report_files (report_id, data) VALUES (?, ?)').run(id, req.file.buffer);
 
   const totalBudget = parsed.institutions.reduce((s, i) => s + (i.total || 0), 0);
+  const fallbackInst = parsed.institutions.find((i) => i.ratesFallback);
   res.status(201).json({
     authority: parsed.authority,
     institutions: parsed.institutions.length,
     totalBudget,
+    warning: fallbackInst
+      ? `שימי לב: בקובץ המשרד "בקרת האיוש" איפסה את חישוב התקציב, ולכן המערכת חישבה אותו לבד — ${fallbackInst.eligibleReg?.toLocaleString('he-IL')} ילדים בהרשמה × התעריף לילד שבקובץ. כדאי להשלים את גיליון "איוש משרות" בקובץ ולרענן, אך אפשר להמשיך לעבוד כרגיל.`
+      : undefined,
     health: await reportHealth(db, await db.prepare('SELECT * FROM reports WHERE id = ?').get(id)),
   });
 }));

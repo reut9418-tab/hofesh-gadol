@@ -61,6 +61,11 @@ function parseAggregateSheet(rows, sheetName) {
   let totalNormative = 0; // גיבוי: "סה"כ תקציב נורמטיבי" ממקטע העלויות
   let flexMode = false, flexCols = null; // מקטע "בדיקת ניצול תקציב סל גמיש"
   const baskets = {}, actual = {}, unused = {};
+  // גיבוי אחרון: התעריפים-לילד ממקטע "עלויות נורמטיביות"/"נתוני עזר" —
+  // כשבקרת האיוש של המשרד מאפסת את החישוב, בונים תקציב = הרשמה × תעריף
+  let tariffCol = -1, perChildShare = null;
+  let rateCols = null, perChildRates = null;
+  const RATE_KEYS = [['סל ניהול', 'management'], ['סל הדרכה', 'instruction'], ['סל העשרה', 'enrichment'], ['סל גמיש', 'flexible']];
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i] || [];
@@ -79,6 +84,23 @@ function parseAggregateSheet(rows, sheetName) {
     if ((k = li('סהכ תקציב נורמטיבי')) >= 0) { const v = firstNumAfter(row, k); if (v > 0 && !totalNormative) totalNormative = v; }
     if (gardens == null && (k = li('מספר מוסדות שפעלו')) >= 0) gardens = firstNumAfter(row, k);
     if (coordinators == null && (k = li('זכאות לרכזת')) >= 0) coordinators = firstNumAfter(row, k);
+
+    // תעריף המשרד לילד (מקטע העלויות הנורמטיביות): הכותרת קובעת את העמודה,
+    // והערך נלקח משורת "ילדים זכאים לסבסוד"
+    if (tariffCol < 0 && (k = li('תעריף לתלמיד גן')) >= 0) tariffCol = k;
+    if (perChildShare == null && tariffCol >= 0 && li('זכאים לסבסוד') >= 0) {
+      const v = num(row[tariffCol]);
+      if (v > 0) perChildShare = v;
+    }
+    // תעריפי הסלים לילד (מקטע "נתוני עזר"): שורת כותרות עם ≥3 שמות סלים,
+    // ואחריה שורת המספרים ("גנים")
+    if (!rateCols) {
+      const found = RATE_KEYS.map(([lbl, key]) => [key, labels.findIndex((x) => x === norm(lbl))]).filter(([, idx]) => idx >= 0);
+      if (found.length >= 3) rateCols = Object.fromEntries(found);
+    } else if (!perChildRates) {
+      const vals = Object.entries(rateCols).map(([key, idx]) => [key, num(row[idx])]).filter(([, v]) => v > 0);
+      if (vals.length >= 3) perChildRates = Object.fromEntries(vals);
+    }
 
     // מקטע הסל הגמיש: "בדיקת ניצול תקציב סל גמיש" — תקציבו נלכד כסל flexible
     if (labels.some((x) => x.includes('בדיקת ניצול') && x.includes('סל גמיש'))) { flexMode = true; flexCols = null; continue; }
@@ -126,15 +148,30 @@ function parseAggregateSheet(rows, sheetName) {
   }
 
   // "סה"כ תקצוב" של הגנים = סה"כ נטו (אחרי השתתפות הורים); גיבוי: התקציב הנורמטיבי
-  const budget = (totalNet != null && totalNet > 0 ? totalNet : 0) || total || totalNormative;
+  let budget = (totalNet != null && totalNet > 0 ? totalNet : 0) || total || totalNormative;
   // "לאחר בקרת איוש" יכול להיות 0 (אין רכזות מאוישות) בעוד המשרד מתקצב לפי ההרשמה —
   // לכן מעדיפים אותו רק כשהוא חיובי
   const kids = (afterControl > 0 ? afterControl : null) ?? reg;
+  // בקרת האיוש של המשרד איפסה את כל החישוב אך ההרשמה מולאה — בונים את
+  // התקציב בעצמנו: ילדים × תעריף המשרד לילד, והסלים לפי תעריפי-הסל לילד
+  let ratesFallback = false;
+  if (!(budget > 0) && kids > 0 && perChildShare > 0) {
+    budget = Math.round(kids * perChildShare * 100) / 100;
+    ratesFallback = true;
+    const noBaskets = Object.values(baskets).every((v) => !(v > 0));
+    if (noBaskets && perChildRates) {
+      for (const [key, rate] of Object.entries(perChildRates)) {
+        baskets[key] = Math.round(kids * rate * 100) / 100;
+        actual[key] = actual[key] || 0;
+      }
+    }
+  }
   const inst = {
     symbol: symbol || '0', name: authority ? `גני ${authority}` : 'גני הרשות',
     size: 'small', days: null,
     reported: reg, // כמות שדווחה בהרשמה — משמשת להסבר כשהתקצוב אופס בבקרה
     afterControlZero: afterControl === 0 && reg > 0, // המשרד איפס את "לתקצוב לאחר בקרת איוש"
+    ratesFallback, // התקציב חושב אצלנו מהרשמה×תעריף כי חישוב המשרד אופס
     eligibleReg: kids, eligibleSpec: spec,
     gardensCount: gardens, coordinators,
     baskets, actual, unused,
