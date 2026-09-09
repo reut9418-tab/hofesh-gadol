@@ -13,6 +13,6 @@
     "API_ORIGIN": "https://hofesh-gadol.onrender.com"
   },
   "routes": [
-    { "pattern": "summer-vacation.gebmpro.co.il", "custom_domain": true }
+    { "pattern": "summer-vacation.gebmgroup.com", "custom_domain": true }
   ]
 }
