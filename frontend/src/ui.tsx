@@ -3,10 +3,10 @@ import { T } from './theme';
 
 export const btn = (variant: 'primary' | 'dark' | 'ghost' | 'danger' = 'primary'): React.CSSProperties => ({
   padding: '8px 16px', borderRadius: 10, fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-  border: variant === 'ghost' ? `1px solid ${T.line}` : 'none',
-  background: variant === 'primary' ? T.teal : variant === 'dark' ? T.graphite : variant === 'danger' ? T.redBg : '#fff',
-  color: variant === 'ghost' ? T.ink : variant === 'danger' ? T.red : '#fff',
-  boxShadow: variant === 'ghost' || variant === 'danger' ? 'none' : '0 1px 3px rgba(55,50,42,0.18)',
+  border: variant === 'ghost' ? `1px solid ${T.line}` : variant === 'primary' ? `1px solid ${T.gold}` : 'none',
+  background: variant === 'primary' ? T.goldSoft : variant === 'dark' ? T.graphite : variant === 'danger' ? T.redBg : '#fff',
+  color: variant === 'primary' ? '#6B5A28' : variant === 'ghost' ? T.ink : variant === 'danger' ? T.red : '#fff',
+  boxShadow: variant === 'ghost' || variant === 'danger' ? 'none' : '0 1px 3px rgba(74,68,58,0.10)',
   transition: 'filter 0.15s',
 });
 

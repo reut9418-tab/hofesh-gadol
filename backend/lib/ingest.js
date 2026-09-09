@@ -245,7 +245,14 @@ function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOUR
     if (r.cost !== null && (r.hours === null || r.hours === 0)) flags.push({ level: 'warn', text: 'חסרות שעות — אין עלות שעתית' });
     if ((hoursById.get(r.id) || 0) > hoursCap) flags.push({ level: 'warn', text: `סה"כ שעות מעל ${hoursCap} — לבדוק` });
     if (hourlyGross !== null && hourlyGross > grossCap) flags.push({ level: 'err', text: `ברוטו שעתי מעל ${grossCap} ₪` });
-    if (hourlyCost !== null && hourlyCost > costCap) flags.push({ level: 'err', text: `עלות מעביד שעתית מעל ${costCap.toFixed(1)} ₪` });
+    // בדיקת תקרת העלות רצה על מה שמדווח בפועל — אחרי כלל הנמוך-מבין (עלות
+    // חריגה בקובץ השכר שנבלמת בתקרת ברוטו+40% אינה חריגה בדיווח; היא עדיין
+    // מוצגת כמידע בבדיקת ה-140% שלמטה ובדוח ההתאמה)
+    const effectiveHourlyCost = hourlyCost !== null && hourlyGross > 0
+      ? Math.min(hourlyCost, (hourlyGross * COST_MARKUP_LIMIT) / vatFactor)
+      : hourlyCost;
+    if (effectiveHourlyCost !== null && effectiveHourlyCost > costCap)
+      flags.push({ level: 'err', text: `עלות מעביד שעתית מעל ${costCap.toFixed(1)} ₪` });
     // כלל ה-40%: בדיווח נרשם הנמוך מבין עלות×מע"מ לבין ברוטו×1.40 — לכן זו
     // אינה שגיאה אלא מידע: העלות של העובד הוגבלה לתקרה (מוסבר בדוח ההתאמה)
     const recognizedHourlyCost = hourlyCost !== null ? hourlyCost * vatFactor : null;
