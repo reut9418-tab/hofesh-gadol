@@ -233,7 +233,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
       <div style={{ maxHeight: '52vh', overflowY: 'auto', overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
-            <tr style={{ position: 'sticky', top: 0, background: T.card, textAlign: 'right', color: T.inkSoft, fontSize: 11, zIndex: 1 }}>
+            <tr style={{ position: 'sticky', top: 0, background: T.tealSoft, textAlign: 'right', color: T.ink, fontSize: 11, zIndex: 1 }}>
               <th style={{ padding: '6px 8px', fontWeight: 600 }}>עובד</th>
               <th style={{ padding: '6px 8px', fontWeight: 600 }}>מחלקה</th>
               <th style={{ padding: '6px 8px', fontWeight: 600, width: 130 }}>סמל מקום פעילות</th>

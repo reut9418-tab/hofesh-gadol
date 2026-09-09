@@ -28,7 +28,7 @@ export const pill = (color: string): React.CSSProperties => ({
 
 export function Metric({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
   return (
-    <div style={{ ...card, padding: '14px 16px' }}>
+    <div style={{ ...card, padding: '14px 16px', borderTop: color ? `3px solid ${color}55` : card.border as string }}>
       <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 4 }}>{label}</div>
       <div style={{ fontSize: 26, fontWeight: 700, color: color || T.ink }}>{value}</div>
     </div>
