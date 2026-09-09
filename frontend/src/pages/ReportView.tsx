@@ -125,7 +125,9 @@ function CostSection({ reportId }: { reportId: number }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: 10, marginBottom: 14 }}>
         {[
           { l: 'עובדים', v: fmt(summary.workers) },
-          { l: 'עלות מעביד', v: '₪' + fmt(summary.totalCost) },
+          { l: summary.vatFactor > 1 ? 'עלות מעביד (נטו)' : 'עלות מעביד', v: '₪' + fmt(summary.totalCost) },
+          // לקוח חייב מע"מ: העלות המוכרת מול המשרד = עלות × 1.18
+          ...(summary.vatFactor > 1 ? [{ l: 'עלות מוכרת (כולל מע"מ)', v: '₪' + fmt(summary.totalCostRecognized), c: T.teal }] : []),
           { l: 'סה"כ שעות', v: fmt(summary.totalHours) },
           { l: 'שגיאות', v: fmt(summary.errors), c: summary.errors ? T.red : T.green },
           { l: 'אזהרות', v: fmt(summary.warnings), c: summary.warnings ? T.amber : T.green },
