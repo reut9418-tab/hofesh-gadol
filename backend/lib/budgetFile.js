@@ -196,6 +196,7 @@ function parseBudgetFile(buf) {
   let cur = null;
   let cols = null; // עמודות מקטע ההתאמה (נקבעות מהכותרת האחרונה שנראתה)
   let flexMode = false, flexCols = null; // מקטע "בדיקת ניצול תקציב סל גמיש" בתוך הבלוק
+  let blockCount = 0, validBlocks = 0; // אבחון: בלוקים קיימים אך בלי סמלים = קובץ לא חוּשב
 
   const pushCur = () => { if (cur && (cur.total > 0 || Object.keys(cur.baskets).length)) institutions.push(cur); };
 
@@ -206,8 +207,10 @@ function parseBudgetFile(buf) {
     // תחילת בלוק מוסד: שורה עם "סמל המוסד" והסמל בתא הסמוך
     const symIdx = labels.findIndex((x) => x === 'סמל המוסד');
     if (symIdx >= 0) {
+      blockCount++;
       const symVal = row.slice(symIdx + 1).map((x) => norm(x)).find((x) => /^\d{4,7}$/.test(x));
       if (symVal) {
+        validBlocks++;
         pushCur();
         // שם המוסד — התא הטקסטואלי הראשון באותה שורה (לרוב לפני "סמל המוסד")
         const name = row.slice(0, symIdx).map(norm).filter((x) => x && !/^\d+$/.test(x)).pop() || '';
@@ -289,7 +292,10 @@ function parseBudgetFile(buf) {
     if (idx >= 0) { authority = row.slice(idx + 1).map(norm).find((x) => x && x !== '0') || ''; break; }
   }
 
-  return { sheetName, authority, institutions };
+  // בלוקים קיימים אך אף אחד בלי סמל אמיתי — הקובץ לא חוּשב (נוסחאות קפואות
+  // או שלא נבחרה רשות בגיליון "נתונים כלליים")
+  const schoolsNotComputed = blockCount > 0 && validBlocks === 0;
+  return { sheetName, authority, institutions, schoolsNotComputed };
 }
 
 /* תעריף לילד חלק ההורים — מופיע בכותרות של כמה לשוניות בקובץ המשרד */

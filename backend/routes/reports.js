@@ -126,6 +126,9 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   catch { return res.status(422).json({ error: 'לא הצלחתי לקרוא את קובץ דוח הביצוע.' }); }
   if (parsed.error) return res.status(422).json({ error: parsed.error });
   if (!parsed.institutions.length) {
+    if (parsed.schoolsNotComputed) {
+      return res.status(422).json({ error: 'לשונית "תקצוב לפי מוסד" בקובץ לא חושבה (אין סמלי מוסדות — הנוסחאות קפואות). יש לפתוח את הקובץ ב-Excel, לוודא שנבחרה הרשות בגיליון "נתונים כלליים", להקיש Ctrl+Alt+F9 לשמור — ולהעלות שוב.' });
+    }
     return res.status(422).json({ error: 'לא נמצאו מוסדות עם תקציב מחושב בקובץ. ודאי שכמות הילדים מולאה ב"מצבת והרשמה" ושהקובץ נשמר ב-Excel.' });
   }
 

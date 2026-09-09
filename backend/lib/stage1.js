@@ -205,11 +205,15 @@ function renderStage1Html(d) {
   /* --- סעיף 4: יתרות (שתי אופציות הסל הגמיש) — תצוגה מילולית ברורה --- */
   const unitOptions = d.units.map((u) => {
     const title = u.symbol ? `${esc(u.name)} — סמל ${esc(u.symbol)}` : esc(u.name);
+    // ללקוח מע"מ — מציגים גם את העלות בספרים כדי שיהיה ברור מאיפה המספר המוכר
+    const booksNote = d.hasVat
+      ? ` <span class="soft">(עלות בספרים: ₪${fmt(u.targets.salary)}, ובתוספת מע"מ 18% ותקרות המשרד: ₪${fmt(u.salaryActual)})</span>`
+      : '';
     const salaryLine = u.overflow > 0
-      ? `בשכר נוצלו <b>₪${fmt(u.salaryActual)}</b> מתוך תקציב של ₪${fmt(u.salaryBudget)} — <span class="red">חריגה של ₪${fmt(u.overflow)}</span>${u.flexConsumed > 0 ? `, ממנה ₪${fmt(u.flexConsumed)} נבלעים אוטומטית בסל הגמיש` : ''}${u.overflow > u.flexConsumed ? ` <span class="red">(₪${fmt(u.overflow - u.flexConsumed)} נותרים ללא כיסוי ולא יוכרו)</span>` : ''}.`
+      ? `בשכר נוצלו <b>₪${fmt(u.salaryActual)}</b> מתוך תקציב של ₪${fmt(u.salaryBudget)} — <span class="red">חריגה של ₪${fmt(u.overflow)}</span>${u.flexConsumed > 0 ? `, ממנה ₪${fmt(u.flexConsumed)} נבלעים אוטומטית בסל הגמיש` : ''}${u.overflow > u.flexConsumed ? ` <span class="red">(₪${fmt(u.overflow - u.flexConsumed)} נותרים ללא כיסוי ולא יוכרו)</span>` : ''}.${booksNote}`
       : u.salaryUnused > 0
-        ? `בשכר נוצלו <b>₪${fmt(u.salaryActual)}</b> מתוך תקציב של ₪${fmt(u.salaryBudget)} — נותרה יתרה של <b class="green">₪${fmt(u.salaryUnused)}</b>.`
-        : `השכר נוצל במלואו: ₪${fmt(u.salaryActual)} מתוך ₪${fmt(u.salaryBudget)}.`;
+        ? `בשכר נוצלו <b>₪${fmt(u.salaryActual)}</b> מתוך תקציב של ₪${fmt(u.salaryBudget)} — נותרה יתרה של <b class="green">₪${fmt(u.salaryUnused)}</b>.${booksNote}`
+        : `השכר נוצל במלואו: ₪${fmt(u.salaryActual)} מתוך ₪${fmt(u.salaryBudget)}.${booksNote}`;
     // כשהסל הגמיש נבלע כולו בחריגת השכר — אין שתי אופציות, רק מצב נתון
     const optionsBlock = u.flexAvailable <= 0 && u.overflow > 0
       ? `<div class="opt" style="flex:none">
