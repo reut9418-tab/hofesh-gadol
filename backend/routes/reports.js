@@ -423,9 +423,11 @@ router.get('/:id/export', ah(async (req, res) => {
   if (!rows.length) return res.status(422).json({ error: 'אין שורות שכר מנותבות לדוח זה.' });
 
   const round2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
+  // ללקוח חייב מע"מ — העלות השעתית המדווחת למשרד כוללת מע"מ (הברוטו נשאר כפי שהוא)
+  const vatFactor = client && client.has_vat ? 1.18 : 1;
   const execRows = rows.map((r) => {
     const hourlyGross = r.gross != null && r.hours ? r.gross / r.hours : null;
-    const hourlyCost = r.cost != null && r.hours ? r.cost / r.hours : null;
+    const hourlyCost = r.cost != null && r.hours ? (r.cost / r.hours) * vatFactor : null;
     const sug = suggestRole(r.dept);
     return [
       r.symbol_override || null, null, r.emp_id,

@@ -83,13 +83,17 @@ async function recommendations(db, report) {
     return { relevant: false, reason: 'לא נמצאו תקציבי סלי שכר פר-מוסד — ודאי שקובץ דוח הביצוע נקלט.' };
   }
 
+  // עלות מוכרת כולל מע"מ ללקוח חייב — התקרות בקובץ המשרד כוללות מע"מ
+  const client = await db.prepare('SELECT has_vat FROM clients WHERE id = ?').get(report.client_id);
+  const vatFactor = client && client.has_vat ? 1.18 : 1;
+
   // רק עובדי סל ההדרכה (מורים/מובילות/סייעות) — רכז/סגן צמודים למוסד ולא מנוידים.
   // עובדים שהלקוח דחה עבורם ניוד (move_declined) לא מוצעים שוב.
   const workers = (await db.prepare(
     'SELECT id, emp_name, dept, staff_type, symbol_override, cost FROM cost_rows WHERE report_id = ? AND COALESCE(move_declined,0) = 0'
   ).all(report.id))
     .filter((r) => basketForStaff(r.staff_type || suggestRole(r.dept).staffType) === 'instruction')
-    .map((r) => ({ rowId: r.id, name: r.emp_name || '', cost: r.cost || 0, symbol: r.symbol_override }));
+    .map((r) => ({ rowId: r.id, name: r.emp_name || '', cost: (r.cost || 0) * vatFactor, symbol: r.symbol_override }));
 
   const unassigned = workers.filter((w) => !w.symbol).length;
   const result = computeMoves(insts, workers);

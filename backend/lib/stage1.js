@@ -52,7 +52,10 @@ async function stage1Data(db, report, client, authority) {
     : {};
   const rowSymbol = (r) => r.symbol_override || deptSymbol[r.dept] || null;
 
-  const mkUnit = (name, symbol, baskets, salaryActual, children, salaryByPayer) => {
+  const mkUnit = (name, symbol, baskets, salaryNet, children, salaryByPayer) => {
+    // מול התקציב משווים את הניצול המוכר (כולל מע"מ ללקוח חייב);
+    // יעד הכרטסת נשאר נטו — כך נרשם בהנהלת החשבונות
+    const salaryActual = salaryNet * vatFactor;
     const salaryBudget = (baskets.instruction || 0) + (baskets.coordinator || 0) + (baskets.deputy || 0);
     const enrichB = baskets.enrichment || 0;
     const flexB = baskets.flexible || 0;
@@ -73,7 +76,7 @@ async function stage1Data(db, report, client, authority) {
       // הגמיש (בהנחת אופציה א'); העשרה = כולל התוספת; הכנסות = ילדים × תעריף
       // (ללקוח חייב מע"מ הכרטסת נטו — חלקי 1.18)
       targets: {
-        salary: salaryActual,
+        salary: salaryNet, // יעד הכרטסת = העלות נטו (הכרטסת מתנהלת בלי מע"מ)
         salaryByPayer: salaryByPayer || {}, // הפרדה בין משלמים (מתנ"ס/רשות) כשקיימים שניים
         breakfast: breakfastB + flexB,
         enrichment: enrichB + enrichBonus,

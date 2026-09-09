@@ -209,8 +209,11 @@ function aggregateComponents(recs) {
 }
 
 /* ---------- בקרות על הנתונים המנורמלים ----------
-   grossCap: תקרת ברוטו שעתי לפי סוג התוכנית (120 בי"ס/גנים, 150 מכינות). */
-function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOURS_CAP } = {}) {
+   grossCap: תקרת ברוטו שעתי לפי סוג התוכנית (120 בי"ס/גנים, 150 מכינות).
+   vatFactor: 1.18 ללקוח חייב מע"מ — העלות המוכרת = עלות מעביד + מע"מ.
+   כלל ה-40%: העלות השעתית המוכרת לא תחרוג מ-140% מהברוטו השעתי. */
+const COST_MARKUP_LIMIT = 1.4;
+function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOURS_CAP, vatFactor = 1 } = {}) {
   const costCap = grossCap * EMPLOYER_FACTOR;
   const seen = new Map();
   const hoursById = new Map();
@@ -232,7 +235,16 @@ function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOUR
     if ((hoursById.get(r.id) || 0) > hoursCap) flags.push({ level: 'warn', text: `סה"כ שעות מעל ${hoursCap} — לבדוק` });
     if (hourlyGross !== null && hourlyGross > grossCap) flags.push({ level: 'err', text: `ברוטו שעתי מעל ${grossCap} ₪` });
     if (hourlyCost !== null && hourlyCost > costCap) flags.push({ level: 'err', text: `עלות מעביד שעתית מעל ${costCap.toFixed(1)} ₪` });
-    return { ...r, hourlyCost, hourlyGross, flags };
+    // כלל ה-40%: העלות המוכרת (כולל מע"מ ללקוח חייב) עד 140% מהברוטו השעתי
+    const recognizedHourlyCost = hourlyCost !== null ? hourlyCost * vatFactor : null;
+    if (recognizedHourlyCost !== null && hourlyGross !== null && hourlyGross > 0 &&
+        recognizedHourlyCost > hourlyGross * COST_MARKUP_LIMIT * 1.001) {
+      flags.push({
+        level: 'err',
+        text: `עלות מעביד${vatFactor > 1 ? ' (כולל מע"מ)' : ''} ${Math.round((recognizedHourlyCost / hourlyGross) * 100)}% מהברוטו — מעל תקרת 140%`,
+      });
+    }
+    return { ...r, hourlyCost, hourlyGross, recognizedHourlyCost, flags };
   });
 }
 
@@ -299,5 +311,5 @@ function parseCostFile(buf, learned = {}) {
 module.exports = {
   FIELD_DEFS, SOFTWARE_SIGNATURES, norm, isValidIsraeliId,
   detectStructure, normalizeRows, aggregateComponents, runChecks,
-  readWorkbookSheets, parseCostFile, EMPLOYER_FACTOR, HOURS_CAP,
+  readWorkbookSheets, parseCostFile, EMPLOYER_FACTOR, HOURS_CAP, COST_MARKUP_LIMIT,
 };

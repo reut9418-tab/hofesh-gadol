@@ -44,6 +44,9 @@ const BASKET_LABELS = {
 };
 
 async function salaryCheck(db, report) {
+  // התקציב מוכר כולל מע"מ — לכן ללקוח חייב מע"מ הניצול מוכפל ב-1.18
+  const client = await db.prepare('SELECT has_vat FROM clients WHERE id = ?').get(report.client_id);
+  const vatFactor = client && client.has_vat ? 1.18 : 1;
   // תקציבי הסלים מקובץ המשרד
   const budgets = {};
   (await db.prepare(
@@ -57,7 +60,7 @@ async function salaryCheck(db, report) {
   const rows = await db.prepare('SELECT dept, staff_type, cost FROM cost_rows WHERE report_id = ?').all(report.id);
   rows.forEach((r) => {
     const st = r.staff_type || suggestRole(r.dept).staffType;
-    actual[basketForStaff(st)] += r.cost || 0;
+    actual[basketForStaff(st)] += (r.cost || 0) * vatFactor;
   });
 
   const labels = BASKET_LABELS[report.framework] || BASKET_LABELS.schools;
@@ -90,6 +93,7 @@ async function salaryCheck(db, report) {
 
   return {
     items, // פר-סל: תקציב / ניצול / חריגה / תת-ניצול
+    vatFactor, // 1.18 ללקוח חייב — הניצול המוצג כולל מע"מ
     flexBudget,
     flexUsedForSalary, // "כמה ניצלתי מהסל הגמיש בגין שכר"
     flexRemaining: Math.max(0, flexBudget - flexUsedForSalary),

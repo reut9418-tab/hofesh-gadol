@@ -5,6 +5,9 @@ const { GROSS_CAP, programType } = require('./domain');
 const { aggregateComponents, runChecks } = require('./ingest');
 
 async function costDataForReport(db, report) {
+  // לקוח חייב מע"מ: העלות המוכרת (מול תקציב/דוח ביצוע) = עלות מעביד × 1.18
+  const client = await db.prepare('SELECT has_vat FROM clients WHERE id = ?').get(report.client_id);
+  const vatFactor = client && client.has_vat ? 1.18 : 1;
   const raw = await db.prepare(
     `SELECT cr.*, cf.filename, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id
      WHERE cr.report_id = ?`
@@ -18,12 +21,15 @@ async function costDataForReport(db, report) {
   }));
   const aggregated = aggregateComponents(shaped);
   const grossCap = programType(report.framework) === 'summer_prep' ? GROSS_CAP.summer_prep : GROSS_CAP.schools_gardens;
-  const rows = runChecks(aggregated, { grossCap });
+  const rows = runChecks(aggregated, { grossCap, vatFactor });
 
+  const totalCost = rows.reduce((s, r) => s + (r.cost || 0), 0);
   const summary = {
     workers: new Set(rows.map((r) => r.id)).size,
     rows: rows.length,
-    totalCost: rows.reduce((s, r) => s + (r.cost || 0), 0),
+    totalCost,
+    vatFactor,
+    totalCostRecognized: totalCost * vatFactor, // העלות המוכרת מול המשרד (כולל מע"מ ללקוח חייב)
     totalGross: rows.reduce((s, r) => s + (r.gross || 0), 0),
     totalHours: rows.reduce((s, r) => s + (r.hours || 0), 0),
     errors: rows.reduce((s, r) => s + r.flags.filter((f) => f.level === 'err').length, 0),

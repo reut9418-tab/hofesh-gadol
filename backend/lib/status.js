@@ -19,8 +19,8 @@ async function reportHealth(db, report) {
   const instRow = await db.prepare('SELECT COUNT(*) c, COALESCE(SUM(budget_total),0) budget FROM institutions WHERE report_id = ?').get(report.id);
   const instCount = Number(instRow.c);
   const totalBudget = Number(instRow.budget) || 0;
-  // תת-ניצול = תקציב שאושר פחות מה שנוצל בפועל (רק כשיש תקציב וגם ניצול)
-  const underUtil = totalBudget > 0 ? Math.max(0, totalBudget - cost.summary.totalCost) : null;
+  // תת-ניצול = תקציב פחות הניצול המוכר (כולל מע"מ ללקוח חייב)
+  const underUtil = totalBudget > 0 ? Math.max(0, totalBudget - (cost.summary.totalCostRecognized ?? cost.summary.totalCost)) : null;
 
   const ingest = {
     participants: !!report.has_participants,
