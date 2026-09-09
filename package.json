@@ -1,0 +1,14 @@
+{
+  "name": "hofesh-gadol",
+  "private": true,
+  "version": "1.0.0",
+  "description": "בקרת והכנת דוחות חופש גדול — מערכת רב-לקוחית",
+  "scripts": {
+    "build": "cd frontend && npm install && npx vite build",
+    "deploy": "npm run build && wrangler deploy",
+    "start": "node backend/server.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

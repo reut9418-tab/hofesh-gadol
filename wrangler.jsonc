@@ -1,0 +1,18 @@
+{
+  // Cloudflare Worker: מגיש את הממשק + מעביר /api לשרת ה-Node
+  "name": "summer-vacation",
+  "main": "worker/index.js",
+  "compatibility_date": "2025-06-01",
+  "assets": {
+    "directory": "./frontend/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "vars": {
+    // כתובת שרת ה-API (ציבורית — לא סוד; הסודות של Supabase נשארים בשרת בלבד)
+    "API_ORIGIN": "https://hofesh-gadol.onrender.com"
+  },
+  "routes": [
+    { "pattern": "summer-vacation.gebmpro.co.il", "custom_domain": true }
+  ]
+}
