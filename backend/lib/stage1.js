@@ -187,9 +187,9 @@ function renderStage1Html(d) {
     // כשהסל הגמיש נבלע כולו בחריגת השכר — אין שתי אופציות, רק מצב נתון
     const optionsBlock = u.flexAvailable <= 0 && u.overflow > 0
       ? `<div class="opt" style="flex:none">
-          <div class="opt-title">הסל הגמיש נוצל במלואו</div>
+          <div class="opt-title">הסל הגמיש נוצל במלואו על ידי השכר</div>
           <ul>
-            <li>הסל הגמיש (₪${fmt(u.flexBudget)}) נוצל <b>כולו</b> לכיסוי חריגת השכר — לא נותרה יתרה לארוחות בוקר או מלגות.</li>
+            <li>עלות השכר עלתה על תקציב השכר, ולכן הסל הגמיש (₪${fmt(u.flexBudget)}) נוצל <b>במלואו</b> לכיסוי עלויות השכר — לא נותרה בו יתרה לארוחות בוקר, מלגות או שימוש אחר.</li>
             <li>העשרה: עד <b>₪${fmt(u.optionB.enrich)}</b> <span class="soft">(לפי התקציב)</span></li>
           </ul>
         </div>`
