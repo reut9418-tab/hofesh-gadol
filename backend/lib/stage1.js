@@ -225,14 +225,14 @@ function renderStage1Html(d) {
               : `<li>העשרה: עד <b>₪${fmt(u.optionB.enrich)}</b> <span class="soft">(לפי התקציב)</span></li>`}
           </ul>
         </div>`
-      : `<div class="opts">
+      : u.optionA.enrichBonus > 0
+        // רק כשיש יתרת שכר (המקנה תוספת 25% להעשרה) האופציות באמת שונות
+        ? `<div class="opts">
       <div class="opt">
         <div class="opt-title">אופציה א' — הסל הגמיש ינוצל לארוחות בוקר ומלגות</div>
         <ul>
           <li>ארוחות בוקר ומלגות: עד <b>₪${fmt(u.optionA.flexForFood)}</b> ${u.flexConsumed > 0 ? `<span class="soft">(יתרת הסל הגמיש אחרי כיסוי חריגת השכר)</span>` : '(מלוא הסל הגמיש)'}</li>
-          <li>העשרה: עד <b>₪${fmt(u.optionA.enrich)}</b>${u.optionA.enrichBonus > 0
-            ? `<br><span class="soft">(תקציב ₪${fmt(u.enrichBudget)} + תוספת 25% בסך ₪${fmt(u.optionA.enrichBonus)}, המתאפשרת בזכות יתרת השכר)</span>`
-            : ` <span class="soft">(לפי התקציב)</span>`}</li>
+          <li>העשרה: עד <b>₪${fmt(u.optionA.enrich)}</b><br><span class="soft">(תקציב ₪${fmt(u.enrichBudget)} + תוספת 25% בסך ₪${fmt(u.optionA.enrichBonus)}, המתאפשרת בזכות יתרת השכר)</span></li>
         </ul>
       </div>
       <div class="opt">
@@ -242,7 +242,15 @@ function renderStage1Html(d) {
           <li>יתרת סל גמיש זמינה: <b>₪${fmt(u.optionB.flexRemaining)}</b>${u.flexConsumed > 0 ? ` <span class="soft">(אחרי כיסוי חריגת השכר)</span>` : ''}</li>
         </ul>
       </div>
-    </div>`;
+    </div>`
+        // אין יתרת שכר → האופציות זהות: מציגים דרך פעולה אחת בלבד
+        : `<div class="opt" style="flex:none">
+        <div class="opt-title">ניצול הסל הגמיש — ארוחות בוקר ומלגות</div>
+        <ul>
+          <li>ארוחות בוקר ומלגות: עד <b>₪${fmt(u.flexAvailable)}</b> ${u.flexConsumed > 0 ? `<span class="soft">(יתרת הסל הגמיש אחרי כיסוי חריגת השכר של ₪${fmt(u.flexConsumed)})</span>` : '<span class="soft">(מלוא הסל הגמיש)</span>'}</li>
+          <li>העשרה: עד <b>₪${fmt(u.enrichBudget)}</b> <span class="soft">(לפי התקציב)</span></li>
+        </ul>
+      </div>`;
     return `<h3>${title}</h3>
     <p class="salaryline">${salaryLine}</p>
     ${optionsBlock}`;
@@ -353,7 +361,7 @@ ${sec2}
 ${sec3}
 
 <h2>4. יתרות לניצול — העשרה והסל הגמיש</h2>
-<p>להלן מצב הסל הגמיש וההעשרה בכל מוסד (כשקיימת יתרה בסל הגמיש — שתי אופציות לניצולה):</p>
+<p>להלן מצב הסל הגמיש וההעשרה בכל מוסד:</p>
 ${unitOptions}
 
 <h2>5. יעדי הכרטסות — על כמה צריכה לעמוד כל כרטסת</h2>
