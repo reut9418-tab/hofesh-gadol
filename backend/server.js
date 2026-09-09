@@ -30,8 +30,8 @@ initDatabase().then(() => {
 
   app.use((err, req, res, _next) => {
     console.error(`[ERROR] ${req.method} ${req.originalUrl}:`, err.stack || err.message);
-    const isDev = process.env.NODE_ENV !== 'production';
-    res.status(err.status || 500).json({ error: isDev ? err.message : 'שגיאת שרת פנימית' });
+    // כלי פנימי — מחזירים את סיבת השגיאה האמיתית גם בענן כדי שאפשר יהיה לאבחן מרחוק
+    res.status(err.status || 500).json({ error: `שגיאת שרת: ${err.message}` });
   });
 
   const PORT = process.env.PORT || 3101;

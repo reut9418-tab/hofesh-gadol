@@ -118,7 +118,9 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
     // רק כשבקובץ רשום במפורש 0 ימים (null = בתבנית הזו אין שדה כזה — לא מציפים סתם)
     if (parsed.institutions.some((i) => i.days === 0))
       reasons.push('ימי הפעילות לא מולאו (0 ימים)');
-    if (parsed.institutions.some((i) => i.reported > 0 && !(i.eligibleReg > 0 || i.eligibleSpec > 0)))
+    if (parsed.institutions.some((i) => i.afterControlZero))
+      reasons.push(`כמות הילדים דווחה (${parsed.institutions.find((i) => i.afterControlZero)?.reported ?? '?'}) אך "תלמידים לתקצוב לאחר בקרת איוש" = 0 — כנראה גיליון "איוש משרות" לא הושלם בקובץ`);
+    else if (parsed.institutions.some((i) => i.reported > 0 && !(i.eligibleReg > 0 || i.eligibleSpec > 0)))
       reasons.push('כמות הילדים דווחה אך הזכאים לאחר בקרה = 0');
     if (!reasons.length) reasons.push('ייתכן שהקובץ לא חושב מחדש — לפתוח ב-Excel, ללחוץ Ctrl+Alt+F9 ולשמור');
     return res.status(422).json({

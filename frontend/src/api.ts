@@ -4,6 +4,34 @@
 export const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:3101/api';
 const api = axios.create({ baseURL: API_BASE });
 
+/* שרת ה-Render החינמי נרדם אחרי רבע שעה ללא שימוש; הבקשה הראשונה אליו נכשלת
+   או אורכת עד דקה. שתי הגנות: (1) פינג התעוררות ברגע שהאפליקציה נפתחת,
+   (2) לפני העלאת קובץ ממתינים שהשרת יענה ל-health כדי שההעלאה לא תיפול. */
+const ping = () => fetch(`${API_BASE}/health`).then((r) => r.ok);
+if (import.meta.env.PROD) ping().catch(() => {});
+
+export async function wakeServer(): Promise<void> {
+  for (let i = 0; i < 9; i++) {
+    try { if (await ping()) return; } catch { /* עדיין מתעורר */ }
+    await new Promise((r) => setTimeout(r, 8000));
+  }
+  throw Object.assign(new Error('server asleep'), {
+    response: { data: { error: 'השרת בענן לא מגיב — נסי לרענן את הדף ולנסות שוב בעוד דקה.' } },
+  });
+}
+
+/* תשובת שגיאה בלי JSON (למשל 502 בזמן שהשרת מתעורר, או ניתוק) → הודעה ברורה */
+api.interceptors.response.use(undefined, (e) => {
+  const hasJsonError = typeof e?.response?.data === 'object' && e.response.data?.error;
+  if (!hasJsonError) {
+    e.response = {
+      ...(e.response || {}),
+      data: { error: 'השרת בענן התעורר משינה באמצע הבקשה — המתיני חצי דקה ונסי שוב.' },
+    };
+  }
+  return Promise.reject(e);
+});
+
 export type Health = {
   bucket: 'open' | 'near' | 'blocked' | 'ready' | 'submitted';
   bucketLabel: string;
@@ -109,7 +137,8 @@ export const setLedgerFilePayer = (fileId: number, payer: string | null) =>
   api.put(`/ledger-files/${fileId}/payer`, { payer }).then((r) => r.data);
 export type RoutingResponse = { file: CostFile; departments: DeptRow[]; reports: RouteTarget[] };
 
-export const uploadCostFile = (clientId: number, file: File): Promise<RoutingResponse> => {
+export const uploadCostFile = async (clientId: number, file: File): Promise<RoutingResponse> => {
+  await wakeServer();
   const fd = new FormData();
   fd.append('file', file);
   return api.post(`/clients/${clientId}/cost-files`, fd).then((r) => r.data);
@@ -124,7 +153,8 @@ export const deleteCostFile = (fileId: number) => api.delete(`/cost-files/${file
 export const getReportCosts = (reportId: number) => api.get(`/reports/${reportId}/costs`).then((r) => r.data);
 
 /* ---------- מנוע התקציב (צעד 4) ---------- */
-export const uploadBudgetFile = (reportId: number, file: File) => {
+export const uploadBudgetFile = async (reportId: number, file: File) => {
+  await wakeServer();
   const fd = new FormData();
   fd.append('file', file);
   return api.post(`/reports/${reportId}/budget-file`, fd).then((r) => r.data);
@@ -180,7 +210,8 @@ export type LedgerData = {
     checks?: LedgerCheck[];
   };
 };
-export const uploadLedgerFile = (reportId: number, file: File) => {
+export const uploadLedgerFile = async (reportId: number, file: File) => {
+  await wakeServer();
   const fd = new FormData();
   fd.append('file', file);
   return api.post(`/reports/${reportId}/ledger-file`, fd).then((r) => r.data);

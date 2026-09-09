@@ -71,6 +71,8 @@ function parseAggregateSheet(rows, sheetName) {
       authority = row.slice(k + 1).map(norm).find((x) => x && !/^\d+$/.test(x)) || '';
     if (!symbol && /^\d{6,9}$/.test(norm(row[0]))) symbol = norm(row[0]); // סמל מוטב בעמודה A
     if (reg == null && (k = li('תלמידים ח.רגיל')) >= 0) reg = firstNumAfter(row, k);
+    // וריאנט תבנית (גוש עציון, הרחבה): "מספר תלמידים הרשמה מעודכנת/ביצוע" — בלי "ח.רגיל"
+    if (reg == null && (k = labels.findIndex((x) => x.includes('תלמידים') && x.includes('הרשמה'))) >= 0) reg = firstNumAfter(row, k);
     if (spec == null && (k = li('תלמידים ח.מיוחד')) >= 0) spec = firstNumAfter(row, k);
     if (afterControl == null && (k = li('תלמידים לתקצוב')) >= 0) afterControl = firstNumAfter(row, k);
     // מקור גיבוי לתקציב: "סה"כ תקציב נורמטיבי" ממקטע העלויות הנורמטיביות
@@ -131,6 +133,8 @@ function parseAggregateSheet(rows, sheetName) {
   const inst = {
     symbol: symbol || '0', name: authority ? `גני ${authority}` : 'גני הרשות',
     size: 'small', days: null,
+    reported: reg, // כמות שדווחה בהרשמה — משמשת להסבר כשהתקצוב אופס בבקרה
+    afterControlZero: afterControl === 0 && reg > 0, // המשרד איפס את "לתקצוב לאחר בקרת איוש"
     eligibleReg: kids, eligibleSpec: spec,
     gardensCount: gardens, coordinators,
     baskets, actual, unused,
