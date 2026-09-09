@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { T, STATUS_HE, STATUS_COLOR, BUCKET_COLOR } from '../theme';
-import { btn, card } from '../ui';
+import { btn, card, pill } from '../ui';
 import { getReport, updateReport, getReportCosts, getReportBudget, uploadBudgetFile } from '../api';
 import PrepSection from './PrepSection';
 import LedgerSection from './LedgerSection';
@@ -233,7 +233,7 @@ export default function ReportView({ reportId, clientId, go }: { reportId: numbe
         {health && (
           <div style={{ marginTop: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: '#fff', background: BUCKET_COLOR[health.bucket], borderRadius: 5, padding: '2px 8px' }}>{health.bucketLabel}</span>
+              <span style={pill(BUCKET_COLOR[health.bucket])}>{health.bucketLabel}</span>
               <span style={{ fontSize: 12, color: T.inkSoft }}>השלמה {health.completion}%</span>
               {health.exceptions.errors > 0 && <span style={{ fontSize: 12, color: T.red, fontWeight: 700 }}>· {health.exceptions.errors} חריגות</span>}
               {health.exceptions.warnings > 0 && <span style={{ fontSize: 12, color: T.amber }}>· {health.exceptions.warnings} אזהרות</span>}

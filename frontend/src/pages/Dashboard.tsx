@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { T, BUCKET_COLOR, STAGE_COLOR } from '../theme';
-import { btn, card, input, Metric } from '../ui';
+import { btn, card, input, Metric, pill } from '../ui';
 import { getTree, getDashboard, createClient, deleteClient, ClientNode, Dashboard as Dash, Report } from '../api';
 import type { Nav } from '../App';
 
@@ -122,12 +122,8 @@ export default function Dashboard({ go }: { go: (n: Nav) => void }) {
                 style={{ border: 'none', background: 'transparent', color: T.teal, fontWeight: 700, fontSize: 16, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}>
                 {c.name}
               </button>
-              {c.stage && (
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: '#fff', background: STAGE_COLOR[c.stage] || T.inkSoft, borderRadius: 5, padding: '2px 8px' }}>
-                  {c.stageLabel}
-                </span>
-              )}
-              {c.has_vat && <span style={{ fontSize: 10.5, fontWeight: 700, color: T.amber, background: T.amberBg, borderRadius: 5, padding: '2px 7px' }}>חייב מע"מ</span>}
+              {c.stage && <span style={pill(STAGE_COLOR[c.stage] || T.inkSoft)}>{c.stageLabel}</span>}
+              {c.has_vat && <span style={pill(T.amber)}>חייב מע"מ</span>}
               <span style={{ fontSize: 11.5, color: T.inkSoft }}>
                 {c.authorities.length ? `${c.authorities.length} רשויות · ` : ''}{total} דוחות
               </span>

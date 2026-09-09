@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { T, STAGE_COLOR } from '../theme';
-import { btn, card, input } from '../ui';
+import { btn, card, input, pill } from '../ui';
 import { updateClient, ClientNode, ManageData, Alert } from '../api';
 import type { Nav } from '../App';
 
@@ -46,11 +46,7 @@ export default function ManagePanel({ client, onSaved, go }: { client: ClientNod
     <section style={card}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
         <span style={{ fontWeight: 700, fontSize: 15 }}>ניהול הלקוח</span>
-        {client.stage && (
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', background: STAGE_COLOR[client.stage] || T.inkSoft, borderRadius: 5, padding: '3px 10px' }}>
-            {client.stageLabel}
-          </span>
-        )}
+        {client.stage && <span style={pill(STAGE_COLOR[client.stage] || T.inkSoft)}>{client.stageLabel}</span>}
         <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
           <select value={stage} onChange={(e) => setStage(e.target.value)} style={{ ...input, padding: '6px 8px', fontSize: 12 }}
             title="דריסת השלב ידנית (ריק = נקבע אוטומטית לפי המערכת)">
