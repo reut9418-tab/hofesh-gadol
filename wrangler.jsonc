@@ -12,7 +12,8 @@
     // כתובת שרת ה-API (ציבורית — לא סוד; הסודות של Supabase נשארים בשרת בלבד)
     "API_ORIGIN": "https://hofesh-gadol.onrender.com"
   },
-  "routes": [
-    { "pattern": "summer-vacation.gebmgroup.com", "custom_domain": true }
-  ]
+  // הדומיין summer-vacation.gebmgroup.com מחובר ל-Worker ישירות דרך ה-API
+  // (PUT /accounts/{id}/workers/domains) כי לטוקן אין הרשאת Zone→Workers Routes.
+  // הוא נשאר מחובר בין פריסות — אין צורך להגדיר כאן routes.
+  "workers_dev": true
 }
