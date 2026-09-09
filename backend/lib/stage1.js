@@ -8,7 +8,7 @@ const { salaryCheck } = require('./salaryCheck');
 const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions } = require('./nameMatch');
 const { reportLabel } = require('./domain');
-const { recognizedRowCost } = require('./ingest');
+const { recognizedRowCost, COST_MARKUP_LIMIT } = require('./ingest');
 
 const fmt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -22,7 +22,7 @@ async function stage1Data(db, report, client, authority) {
   const collect = (re) => cost.rows
     .filter((r) => r.flags.some((f) => re.test(f.text)))
     .map((r) => ({ name: r.name || '—', id: r.id, dept: r.dept, issues: r.flags.filter((f) => re.test(f.text)).map((f) => f.text) }));
-  const rateIssues = collect(/ברוטו שעתי מעל|עלות מעביד שעתית מעל|עלות מעביד נמוכה|מעל תקרת 140%/);
+  const rateIssues = collect(/ברוטו שעתי מעל|עלות מעביד שעתית מעל|עלות מעביד נמוכה/);
   const hoursIssues = collect(/שעות מעל|חסרות שעות/);
   const idIssues = collect(/ת\.ז לא תקינה/);
 
@@ -30,6 +30,12 @@ async function stage1Data(db, report, client, authority) {
   const recs = await recommendations(db, report);
   const hasVat = !!(client && client.has_vat);
   const vatFactor = hasVat ? 1.18 : 1;
+
+  // עובדים שעלותם דווחה לפי תקרת ברוטו+40% (הנמוך מבין) — מידע, לא חריגה
+  const cappedRows = cost.rows.filter((r) =>
+    r.gross > 0 && r.cost != null && r.cost * vatFactor > r.gross * COST_MARKUP_LIMIT * 1.001);
+  const cappedCount = cappedRows.length;
+  const cappedReduction = cappedRows.reduce((s, r) => s + (r.cost * vatFactor - r.gross * COST_MARKUP_LIMIT), 0);
   const tariff = report.parent_tariff || 0;
 
   const insts = await db.prepare('SELECT * FROM institutions WHERE report_id = ? ORDER BY symbol').all(report.id);
@@ -136,7 +142,7 @@ async function stage1Data(db, report, client, authority) {
 
   return {
     report, client, authority, cost, salary, recs, hasVat, tariff, payers,
-    rateIssues, hoursIssues, idIssues, units,
+    rateIssues, hoursIssues, idIssues, units, cappedCount, cappedReduction,
     label: reportLabel(report.framework, report.program),
     unassignedCost: report.framework !== 'gardens'
       ? rows.filter((r) => !rowSymbol(r)).reduce((s, r) => s + (r.cost || 0), 0)
@@ -158,7 +164,8 @@ function renderStage1Html(d) {
 
   /* --- נקודות חשובות (תמצית) --- */
   const highlights = [];
-  if (d.rateIssues.length) highlights.push(`נמצאו <b>${d.rateIssues.length} עובדים</b> החורגים מבקרות השכר של המשרד — ברוטו לשעה, עלות לשעה או עלות מעל 140% מהברוטו — יש לתקן לפני ההגשה (פירוט בסעיף 1).`);
+  if (d.rateIssues.length) highlights.push(`נמצאו <b>${d.rateIssues.length} עובדים</b> עם שכר לשעה מעל תקרת המשרד — יש לתקן לפני ההגשה (פירוט בסעיף 1).`);
+  if (d.cappedCount > 0) highlights.push(`אצל <b>${d.cappedCount} עובדים</b> העלות השעתית עלתה על 140% מהברוטו — בדוח הביצוע דווח עבורם, בהתאם לכלל, <b>הנמוך מבין</b> העלות${d.hasVat ? ' כולל מע"מ' : ''} לבין ברוטו + 40% (הפחתה כוללת של ₪${fmt(d.cappedReduction)}; הפירוט בדוח ההתאמה לדוח העלות).`);
   if (d.hoursIssues.length) highlights.push(`נמצאו <b>${d.hoursIssues.length} עובדים</b> עם כמות שעות הדורשת בדיקה (פירוט בסעיף 2).`);
   if (d.idIssues.length) highlights.push(`נמצאו <b>${d.idIssues.length} עובדים</b> עם תעודת זהות שאינה תקינה (פירוט בסעיף 1).`);
   const hasOverflow = d.units.some((u) => u.overflow > 0) || (d.recs && d.recs.relevant && (d.recs.moves || []).length > 0);
@@ -170,10 +177,13 @@ function renderStage1Html(d) {
   if (!highlights.length) highlights.push('כל הבדיקות עברו תקין — ניתן להתקדם לשלב הכרטסות.');
 
   /* --- סעיף 1+2: בקרות פר-עובד --- */
-  const sec1 = d.rateIssues.length || d.idIssues.length
+  const cappedNote = d.cappedCount > 0
+    ? `<p class="note">ℹ אצל ${d.cappedCount} עובדים העלות השעתית${d.hasVat ? ' (כולל מע"מ)' : ''} עלתה על 140% מהברוטו השעתי. בהתאם לכלל הדיווח, בדוח הביצוע נרשמה עבורם העלות <b>הנמוכה מבין</b> העלות בפועל${d.hasVat ? ' בתוספת מע"מ' : ''} לבין הברוטו בתוספת 40% — סה"כ הפחתה של ₪${fmt(d.cappedReduction)}. הפירוט המלא מצורף ב"דוח ההתאמה לדוח עלות".</p>`
+    : '';
+  const sec1 = (d.rateIssues.length || d.idIssues.length
     ? `${issuesTable([...d.rateIssues, ...d.idIssues])}
        <p class="note">שכר מעל התקרה לא יוכר ע"י המשרד — מומלץ לתקן את הדיווח או לעדכן את חלוקת השעות.</p>`
-    : `<p class="okline">✓ כל העובדים נמצאים בתקרות התעריף של המשרד (ברוטו לשעה ועלות לשעה) — תקין.</p>`;
+    : `<p class="okline">✓ כל העובדים נמצאים בתקרות התעריף של המשרד (ברוטו לשעה ועלות לשעה) — תקין.</p>`) + cappedNote;
   const sec2 = d.hoursIssues.length
     ? issuesTable(d.hoursIssues)
     : `<p class="okline">✓ כמות השעות של כל העובדים בטווח התקין — תקין.</p>`;

@@ -246,13 +246,14 @@ function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOUR
     if ((hoursById.get(r.id) || 0) > hoursCap) flags.push({ level: 'warn', text: `סה"כ שעות מעל ${hoursCap} — לבדוק` });
     if (hourlyGross !== null && hourlyGross > grossCap) flags.push({ level: 'err', text: `ברוטו שעתי מעל ${grossCap} ₪` });
     if (hourlyCost !== null && hourlyCost > costCap) flags.push({ level: 'err', text: `עלות מעביד שעתית מעל ${costCap.toFixed(1)} ₪` });
-    // כלל ה-40%: העלות המוכרת (כולל מע"מ ללקוח חייב) עד 140% מהברוטו השעתי
+    // כלל ה-40%: בדיווח נרשם הנמוך מבין עלות×מע"מ לבין ברוטו×1.40 — לכן זו
+    // אינה שגיאה אלא מידע: העלות של העובד הוגבלה לתקרה (מוסבר בדוח ההתאמה)
     const recognizedHourlyCost = hourlyCost !== null ? hourlyCost * vatFactor : null;
     if (recognizedHourlyCost !== null && hourlyGross !== null && hourlyGross > 0 &&
         recognizedHourlyCost > hourlyGross * COST_MARKUP_LIMIT * 1.001) {
       flags.push({
-        level: 'err',
-        text: `עלות מעביד${vatFactor > 1 ? ' (כולל מע"מ)' : ''} ${Math.round((recognizedHourlyCost / hourlyGross) * 100)}% מהברוטו — מעל תקרת 140%`,
+        level: 'warn',
+        text: `עלות שעתית ${Math.round((recognizedHourlyCost / hourlyGross) * 100)}% מהברוטו — דווחה לפי תקרת ברוטו+40% (הנמוך מבין)`,
       });
     }
     return { ...r, hourlyCost, hourlyGross, recognizedHourlyCost, flags };
