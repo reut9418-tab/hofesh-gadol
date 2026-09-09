@@ -69,6 +69,10 @@ async function stage1Data(db, report, client, authority) {
     // באמת לניצול (ארוחות בוקר/מלגות/גמיש) היא מה שנשאר אחרי הבליעה
     const flexConsumed = Math.min(overflow, flexB);
     const flexAvailable = Math.max(0, flexB - flexConsumed);
+    // שורת "ארוחת בוקר" בקובץ המשרד היא ייעוד של הסל הגמיש (אותו סכום בדיוק),
+    // לא תקציב נפרד — אין לספור פעמיים, והיתרה לארוחות בוקר = יתרת הסל הגמיש
+    const breakfastPot = Math.abs(breakfastB - flexB) < 1 ? flexB : breakfastB + flexB;
+    const breakfastAvailable = Math.max(0, breakfastPot - flexConsumed);
     // אופציה א: הסל הגמיש לארוחות בוקר/מלגות → תוספת העשרה = הנמוך מבין
     // 25% מתקציב ההעשרה לבין יתרת השכר שטרם נוצלה
     const enrichBonus = salaryUnused > 0 ? Math.min(0.25 * enrichB, salaryUnused) : 0;
@@ -89,7 +93,7 @@ async function stage1Data(db, report, client, authority) {
       targets: {
         salary: salaryNet, // יעד הכרטסת = העלות נטו (הכרטסת מתנהלת בלי מע"מ)
         salaryByPayer: salaryByPayer || {}, // הפרדה בין משלמים (מתנ"ס/רשות) כשקיימים שניים
-        breakfast: net(breakfastB + flexAvailable),
+        breakfast: net(breakfastAvailable),
         enrichment: net(enrichB + enrichBonus),
         income: children && tariff ? Math.round((children * tariff / vatFactor) * 100) / 100 : 0,
       },
