@@ -52,20 +52,20 @@ function renderCostMatchHtml({ report, client, authority, rows, label }) {
   return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
 <title>דוח התאמה לדוח עלות — ${esc(who)} — ${esc(label)}</title>
 <style>
-  body{font-family:'Segoe UI',Arial,sans-serif;color:#182A33;max-width:1100px;margin:0 auto;padding:26px;line-height:1.6;font-size:13px}
+  body{font-family:'Segoe UI',Arial,sans-serif;color:#37322A;max-width:1100px;margin:0 auto;padding:26px;line-height:1.6;font-size:13px}
   h1{font-size:18px;margin:14px 0 2px}
-  .letterhead{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #17656D;padding-bottom:8px;font-size:12.5px;color:#4A5D66}
-  .subject{background:#F5F7F6;border-radius:8px;padding:10px 16px;margin:14px 0;font-size:14px}
-  .method{border:1px solid #DCE4E2;border-radius:9px;padding:10px 16px;background:#F5F7F6;margin:12px 0}
+  .letterhead{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #9A7B2F;padding-bottom:8px;font-size:12.5px;color:#7A7062}
+  .subject{background:#FAF6EE;border-radius:8px;padding:10px 16px;margin:14px 0;font-size:14px}
+  .method{border:1px solid #EAE1CF;border-radius:9px;padding:10px 16px;background:#FAF6EE;margin:12px 0}
   table{width:100%;border-collapse:collapse;font-size:11.5px;margin:10px 0}
-  th{background:#17656D;color:#fff;text-align:right;padding:5px 8px;font-size:11px}
-  td{border-bottom:1px solid #DCE4E2;padding:4px 8px;vertical-align:top}
+  th{background:#9A7B2F;color:#fff;text-align:right;padding:5px 8px;font-size:11px}
+  td{border-bottom:1px solid #EAE1CF;padding:4px 8px;vertical-align:top}
   th.num,td.num{text-align:center}
   tr.capped td{background:#FDF6EC}
-  tr.total td{background:#E3EFEF;font-weight:700;border-top:2px solid #17656D}
-  .note{font-size:11.5px;color:#4A5D66;background:#F5F7F6;border-radius:6px;padding:7px 11px}
-  .footer{margin-top:22px;font-size:11px;color:#4A5D66;border-top:1px solid #DCE4E2;padding-top:8px}
-  .printbtn{position:fixed;top:14px;left:14px;background:#17656D;color:#fff;border:none;border-radius:7px;padding:9px 16px;font-size:13px;cursor:pointer;font-family:inherit}
+  tr.total td{background:#F4ECDA;font-weight:700;border-top:2px solid #9A7B2F}
+  .note{font-size:11.5px;color:#7A7062;background:#FAF6EE;border-radius:6px;padding:7px 11px}
+  .footer{margin-top:22px;font-size:11px;color:#7A7062;border-top:1px solid #EAE1CF;padding-top:8px}
+  .printbtn{position:fixed;top:14px;left:14px;background:#9A7B2F;color:#fff;border:none;border-radius:7px;padding:9px 16px;font-size:13px;cursor:pointer;font-family:inherit}
   @media print{.printbtn{display:none}body{padding:0;font-size:11px}}
 </style></head><body>
 <button class="printbtn" onclick="window.print()">🖨 הדפסה / שמירה כ-PDF</button>

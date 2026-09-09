@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { T } from './theme';
+import { FirmLogo } from './ui';
 import Dashboard from './pages/Dashboard';
 import ClientView from './pages/ClientView';
 import ReportView from './pages/ReportView';
@@ -23,16 +24,27 @@ export default function App() {
 
   return (
     <div dir="rtl" style={{ minHeight: '100vh', background: T.paper, color: T.ink, paddingBottom: 48 }}>
-      <header style={{ background: T.ink, color: '#fff', padding: '18px 28px 16px' }}>
-        <div style={{ fontSize: 12, letterSpacing: '0.14em', color: '#9DB8B4', marginBottom: 6 }}>מערכת החופש הגדול</div>
-        <div style={{ fontSize: 22, fontWeight: 700 }}>בקרת והכנת דוחות חופש גדול</div>
+      <header style={{
+        background: `linear-gradient(135deg, ${T.graphite} 0%, #4A433A 100%)`,
+        color: '#fff', padding: '16px 28px 14px',
+        borderBottom: `3px solid ${T.gold}`,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <FirmLogo size={46} />
+          <div>
+            <div style={{ fontSize: 12, letterSpacing: '0.14em', color: T.goldSoft, marginBottom: 4 }}>
+              גוטליב את ביטון, רו"ח · מערכת החופש הגדול
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 700 }}>בקרת והכנת דוחות חופש גדול</div>
+          </div>
+        </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8, alignItems: 'center', fontSize: 13 }}>
           {crumb.map((c, i) => (
             <span key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              {i > 0 && <span style={{ color: '#9DB8B4' }}>‹</span>}
+              {i > 0 && <span style={{ color: T.goldSoft }}>‹</span>}
               {c.onClick && i < crumb.length - 1 ? (
                 <button onClick={c.onClick}
-                  style={{ border: 'none', background: 'transparent', color: '#C4D4D1', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, padding: 0, textDecoration: 'underline' }}>
+                  style={{ border: 'none', background: 'transparent', color: T.goldSoft, cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, padding: 0, textDecoration: 'underline' }}>
                   {c.label}
                 </button>
               ) : (

@@ -298,33 +298,33 @@ function renderStage1Html(d) {
   return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
 <title>מכתב שלב 1 — ${esc(to)} — ${esc(d.label)}</title>
 <style>
-  body{font-family:'Segoe UI',Arial,sans-serif;color:#182A33;max-width:880px;margin:0 auto;padding:30px;line-height:1.7;font-size:13.5px}
+  body{font-family:'Segoe UI',Arial,sans-serif;color:#37322A;max-width:880px;margin:0 auto;padding:30px;line-height:1.7;font-size:13.5px}
   h1{font-size:19px;margin:16px 0 4px}
-  h2{font-size:15px;color:#17656D;margin-top:26px;margin-bottom:6px}
-  h3{font-size:13.5px;margin:16px 0 4px;color:#17656D}
-  .letterhead{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #17656D;padding-bottom:8px;font-size:12.5px;color:#4A5D66}
-  .subject{background:#F5F7F6;border-radius:8px;padding:10px 16px;margin:14px 0;font-size:14px}
+  h2{font-size:15px;color:#9A7B2F;margin-top:26px;margin-bottom:6px}
+  h3{font-size:13.5px;margin:16px 0 4px;color:#9A7B2F}
+  .letterhead{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #9A7B2F;padding-bottom:8px;font-size:12.5px;color:#7A7062}
+  .subject{background:#FAF6EE;border-radius:8px;padding:10px 16px;margin:14px 0;font-size:14px}
   table{width:100%;border-collapse:collapse;font-size:12.5px;margin:8px 0}
-  th{background:#E3EFEF;text-align:right;padding:6px 10px;font-size:12px}
-  td{border-bottom:1px solid #DCE4E2;padding:6px 10px;vertical-align:top}
+  th{background:#F4ECDA;text-align:right;padding:6px 10px;font-size:12px}
+  td{border-bottom:1px solid #EAE1CF;padding:6px 10px;vertical-align:top}
   th.num,td.num{text-align:center}
   .center{text-align:center}
-  table.targets th{background:#17656D;color:#fff}
-  tr.total td{background:#E3EFEF;font-weight:700;border-top:2px solid #17656D}
-  .okline{color:#1E6B3C;font-weight:600}
-  .red{color:#B3261E;font-weight:600}.green{color:#1E6B3C}.soft{color:#4A5D66;font-size:11.5px;font-weight:400}
+  table.targets th{background:#9A7B2F;color:#fff}
+  tr.total td{background:#F4ECDA;font-weight:700;border-top:2px solid #9A7B2F}
+  .okline{color:#4C7A45;font-weight:600}
+  .red{color:#B3261E;font-weight:600}.green{color:#4C7A45}.soft{color:#7A7062;font-size:11.5px;font-weight:400}
   .salaryline{margin:4px 0 8px}
   .opts{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}
-  .opt{flex:1 1 300px;border:1px solid #DCE4E2;border-radius:9px;padding:10px 16px;background:#F5F7F6}
-  .opt-title{font-weight:700;color:#17656D;font-size:12.5px;border-bottom:1px solid #DCE4E2;padding-bottom:5px;margin-bottom:6px}
+  .opt{flex:1 1 300px;border:1px solid #EAE1CF;border-radius:9px;padding:10px 16px;background:#FAF6EE}
+  .opt-title{font-weight:700;color:#9A7B2F;font-size:12.5px;border-bottom:1px solid #EAE1CF;padding-bottom:5px;margin-bottom:6px}
   .opt ul{margin:0;padding-inline-start:18px}
   .opt li{margin-bottom:5px}
-  .note{font-size:11.5px;color:#4A5D66;background:#F5F7F6;border-radius:6px;padding:7px 11px;line-height:1.6}
+  .note{font-size:11.5px;color:#7A7062;background:#FAF6EE;border-radius:6px;padding:7px 11px;line-height:1.6}
   ul.points{margin:6px 0;padding-inline-start:22px}
   ul.points li{margin-bottom:4px}
   .closing{margin-top:26px}
-  .footer{margin-top:26px;font-size:11px;color:#4A5D66;border-top:1px solid #DCE4E2;padding-top:8px}
-  .printbtn{position:fixed;top:14px;left:14px;background:#17656D;color:#fff;border:none;border-radius:7px;padding:9px 16px;font-size:13px;cursor:pointer;font-family:inherit}
+  .footer{margin-top:26px;font-size:11px;color:#7A7062;border-top:1px solid #EAE1CF;padding-top:8px}
+  .printbtn{position:fixed;top:14px;left:14px;background:#9A7B2F;color:#fff;border:none;border-radius:7px;padding:9px 16px;font-size:13px;cursor:pointer;font-family:inherit}
   @media print{.printbtn{display:none}body{padding:0;font-size:12.5px}}
 </style></head><body>
 <button class="printbtn" onclick="window.print()">🖨 הדפסה / שמירה כ-PDF</button>
