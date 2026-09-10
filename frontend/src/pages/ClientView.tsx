@@ -3,7 +3,7 @@ import { T, STATUS_HE, STATUS_COLOR, BUCKET_COLOR } from '../theme';
 import { btn, card, input } from '../ui';
 import {
   getClient, updateClient, ClientNode, Report, createAuthority, deleteAuthority,
-  createReport, deleteReport,
+  createReport, deleteReport, getCrossMoves, applyCrossMove, CrossPair,
 } from '../api';
 import CostReportsPanel from './CostReports';
 import ManagePanel from './ManagePanel';
@@ -85,6 +85,65 @@ function ReportRow({ r, onOpen, onDelete }: { r: Report; onOpen: () => void; onD
   );
 }
 
+/* המלצות ניוד עובדים בין פרויקטים: פרויקט חורג בשכר ↔ פרויקט עם יתרה,
+   באותה רשות ובאותה מסגרת. הביצוע רק באישור מפורש. */
+function CrossMovesPanel({ clientId, onApplied, go }: { clientId: number; onApplied: () => void; go: (n: Nav) => void }) {
+  const [data, setData] = useState<{ pairs: CrossPair[] } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const load = () => getCrossMoves(clientId).then(setData).catch(() => setData(null));
+  useEffect(() => { load(); }, [clientId]);
+  const fmt = (n: number) => n.toLocaleString('he-IL');
+
+  if (!data || data.pairs.length === 0) return null;
+  return (
+    <section style={{ ...card, border: `1px solid ${T.blue}`, background: T.blueBg }}>
+      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>המלצות ניוד עובדים בין פרויקטים</div>
+      <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 10 }}>
+        פרויקט אחד חורג בשכר בעוד אחר באותה רשות בתת-ביצוע — העברת עובדים בין דוחות העלות מאזנת את שניהם. הביצוע רק באישור.
+      </div>
+      {msg && <div style={{ fontSize: 12, color: T.green, marginBottom: 8 }}>{msg}</div>}
+      <div style={{ display: 'grid', gap: 12 }}>
+        {data.pairs.map((p, pi) => (
+          <div key={pi} style={{ background: '#fff', borderRadius: 8, padding: '10px 14px', border: `1px solid ${T.line}` }}>
+            <div style={{ fontSize: 12.5, marginBottom: 8 }}>
+              <b>{p.authority || ''}</b>: <button onClick={() => go({ view: 'report', reportId: p.from.reportId, clientId })}
+                style={{ border: 'none', background: 'transparent', color: T.red, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, padding: 0, textDecoration: 'underline' }}>
+                {p.from.label}</button> חורג ב-₪{fmt(p.from.overflow)} · <button onClick={() => go({ view: 'report', reportId: p.to.reportId, clientId })}
+                style={{ border: 'none', background: 'transparent', color: T.green, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, padding: 0, textDecoration: 'underline' }}>
+                {p.to.label}</button> עם יתרה של ₪{fmt(p.to.slack)}
+            </div>
+            <div style={{ display: 'grid', gap: 4 }}>
+              {p.moves.map((m) => (
+                <div key={m.rowId} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, flexWrap: 'wrap' }}>
+                  <span>↔</span>
+                  <span style={{ fontWeight: 600 }}>{m.name}</span>
+                  <span style={{ color: T.inkSoft }}>₪{fmt(m.cost)}</span>
+                  <span style={{ color: T.green, fontSize: 11.5 }}>מקטין את החריגה ב-₪{fmt(m.reduces)}</span>
+                  <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 6 }}>
+                    <button style={{ ...btn('primary'), padding: '3px 10px', fontSize: 11.5 }}
+                      onClick={async () => {
+                        if (!window.confirm(`הלקוח אישר? ${m.name} יעבור מ"${m.fromLabel}" ל"${m.toLabel}". בדוח היעד צריך יהיה לשייך לו סמל גן.`)) return;
+                        await applyCrossMove(clientId, m.rowId, m.toReportId, 'move');
+                        await load(); onApplied();
+                        setMsg(`${m.name} הועבר/ה ל"${m.toLabel}" — שני הדוחות עודכנו.`);
+                      }}>
+                      הלקוח אישר — ביצוע
+                    </button>
+                    <button style={{ ...btn('ghost'), padding: '3px 10px', fontSize: 11.5 }}
+                      onClick={async () => { await applyCrossMove(clientId, m.rowId, m.toReportId, 'decline'); await load(); }}>
+                      נדחה
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function ClientView({ clientId, go }: { clientId: number; go: (n: Nav) => void }) {
   const [client, setClient] = useState<ClientNode | null>(null);
   const [newAuthority, setNewAuthority] = useState('');
@@ -132,6 +191,9 @@ export default function ClientView({ clientId, go }: { clientId: number; go: (n:
 
       {/* דוחות עלות שכר — ניתוב חוצה-פרויקטים (צעד 3) */}
       <CostReportsPanel clientId={clientId} onRouted={load} />
+
+      {/* המלצות ניוד עובדים בין פרויקטים (15 יום ↔ הרחבה) */}
+      <CrossMovesPanel clientId={clientId} onApplied={load} go={go} />
 
       {/* דוחות ישנים שנפתחו ישירות תחת הלקוח (ללא רשות) — פתיחת דוחות חדשים נעשית תחת רשות בלבד */}
       {client.directReports.length > 0 && (

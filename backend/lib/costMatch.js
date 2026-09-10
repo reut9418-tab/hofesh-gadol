@@ -3,7 +3,7 @@
    השכר: הנמוך מבין עלות שכר שעתית (בתוספת מע"מ 18% ללקוח חייב) לבין
    שכר ברוטו שעתי בתוספת 40% (תקרת המשרד). מופק כדף HTML להדפסה/PDF. */
 
-const { COST_MARKUP_LIMIT } = require('./ingest');
+const { COST_MARKUP_LIMIT, effectiveGross } = require('./ingest');
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const fmt0 = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
@@ -16,7 +16,8 @@ function renderCostMatchHtml({ report, client, authority, rows, label }) {
   const who = (authority && authority.name) || (client && client.name) || '';
 
   const calc = rows.map((r) => {
-    const hourlyGross = r.gross != null && r.hours ? r.gross / r.hours : null;
+    // הברוטו האפקטיבי כולל התאמת ברוטו שאושרה (עד 5 ₪ לשעה)
+    const hourlyGross = r.gross != null && r.hours ? effectiveGross(r) / r.hours : null;
     const hourlyCostNet = r.cost != null && r.hours ? r.cost / r.hours : null;
     const hourlyCostVat = hourlyCostNet != null ? hourlyCostNet * vatFactor : null;
     const cap140 = hourlyGross != null && hourlyGross > 0 ? hourlyGross * COST_MARKUP_LIMIT : null;

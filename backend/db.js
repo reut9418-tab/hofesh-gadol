@@ -181,6 +181,11 @@ async function migrate(db) {
   await add('clients', 'manage_data TEXT');
   // שם הגן/בי"ס כפי שמופיע בשורת העובד בדוח העלות — לשיוך סמל אוטומטי מול ההרשמה
   await add('cost_rows', 'inst_name TEXT');
+  // ניוד בין פרויקטים (15 יום ↔ הרחבה באותה רשות): מקור + דחיית המלצה
+  await add('cost_rows', 'moved_from_report INTEGER');
+  await add('cost_rows', 'cross_declined INTEGER DEFAULT 0');
+  // התאמת ברוטו שעתי (עד 5 ₪) שאושרה — כדי שבקרת ה-140% של המשרד תעבור
+  await add('cost_rows', 'gross_bump REAL DEFAULT 0');
   // קובץ דוח הביצוע של המשרד נשמר גם במסד (טבלה נפרדת — לא מכבידה על שליפות
   // הדוחות) — הדיסק של Render מתאפס בכל פריסה והקובץ חיוני לייצוא
   await db.exec(`CREATE TABLE IF NOT EXISTS report_files (

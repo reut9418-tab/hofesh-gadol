@@ -397,6 +397,29 @@ function extractCoordinatorGardens(buf) {
   return out;
 }
 
+/* כל סמלי הגנים הפעילים מלשונית "גנים - דוח ביצוע" — לשיוך אוטומטי של
+   עובדים לגנים (איוש משרות דורש גננת + סייעת בכל גן) */
+function extractExecGardens(buf) {
+  const wb = XLSX.read(buf, { type: 'buffer' });
+  const sheetName = wb.SheetNames.find((n) => n.includes('דוח ביצוע') && n.includes('גנים') && !n.includes('רכזות'));
+  if (!sheetName) return [];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: null });
+  let symCol = -1, headerIdx = -1;
+  for (let i = 0; i < Math.min(rows.length, 40); i++) {
+    const cells = (rows[i] || []).map(norm);
+    const s = cells.findIndex((c) => c.includes('סמל גן בו מתקיימת הפעילות') || c === 'סמל גן' || c.includes('סמל מוסד'));
+    if (s >= 0) { symCol = s; headerIdx = i; break; }
+  }
+  if (headerIdx < 0) return [];
+  const out = [];
+  const seen = new Set();
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const sym = norm((rows[i] || [])[symCol]);
+    if (/^\d{3,}$/.test(sym) && !seen.has(sym)) { seen.add(sym); out.push(sym); }
+  }
+  return out;
+}
+
 /* רשימות "איש צוות" והתפקידים המותרים — מגיליון העזר של קובץ המשרד (גנים).
    בתבניות בתי ספר הרשימות שונות מעט — יזוהו מהקובץ בהמשך; אלו ברירות המחדל. */
 const STAFF_TYPES = [
@@ -447,7 +470,7 @@ function extractInstitutions(buf) {
 }
 
 module.exports = {
-  fillMinistryReport, detectStartRow, extractInstitutions, extractCoordinatorGardens,
+  fillMinistryReport, detectStartRow, extractInstitutions, extractCoordinatorGardens, extractExecGardens,
   detectExpenseSheet, EXPENSE_LABEL_HE,
   STAFF_TYPES, MINISTRY_SHEET_HINT, COORD_SHEET_HINT,
 };

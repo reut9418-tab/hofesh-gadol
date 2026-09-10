@@ -216,13 +216,22 @@ function aggregateComponents(recs) {
    כלל ה-40%: העלות השעתית המוכרת לא תחרוג מ-140% מהברוטו השעתי. */
 const COST_MARKUP_LIMIT = 1.4;
 
+/* הברוטו האפקטיבי של שורה: הברוטו מהקובץ + התאמת ברוטו שאושרה (gross_bump,
+   ₪ לשעה עד 5) — ההתאמה מעלה את תקרת ה-140% כך שבקרות המשרד עוברות */
+function effectiveGross(row) {
+  const bump = Number(row.gross_bump) || 0;
+  if (!(row.gross > 0)) return row.gross;
+  return row.gross + (bump > 0 && row.hours > 0 ? bump * row.hours : 0);
+}
+
 /* העלות המוכרת של שורת עלות: עלות מעביד × מע"מ (ללקוח חייב), מוגבלת לתקרת
-   ההכרה של המשרד — ברוטו × 140% (זהה להגבלה השעתית: השעות מצטמצמות).
+   ההכרה של המשרד — ברוטו אפקטיבי × 140% (זהה להגבלה השעתית: השעות מצטמצמות).
    משמש בכל השוואת "ביצוע מוכר" מול תקציב: מכתב, בקרת שכר, המלצות, ייצוא. */
 function recognizedRowCost(row, vatFactor = 1) {
   if (row.cost == null) return 0;
   const full = row.cost * vatFactor;
-  return row.gross > 0 ? Math.min(full, row.gross * COST_MARKUP_LIMIT) : full;
+  const g = effectiveGross(row);
+  return g > 0 ? Math.min(full, g * COST_MARKUP_LIMIT) : full;
 }
 function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOURS_CAP, vatFactor = 1 } = {}) {
   const costCap = grossCap * EMPLOYER_FACTOR;
@@ -330,5 +339,5 @@ function parseCostFile(buf, learned = {}) {
 module.exports = {
   FIELD_DEFS, SOFTWARE_SIGNATURES, norm, isValidIsraeliId,
   detectStructure, normalizeRows, aggregateComponents, runChecks,
-  readWorkbookSheets, parseCostFile, EMPLOYER_FACTOR, HOURS_CAP, COST_MARKUP_LIMIT, recognizedRowCost,
+  readWorkbookSheets, parseCostFile, EMPLOYER_FACTOR, HOURS_CAP, COST_MARKUP_LIMIT, recognizedRowCost, effectiveGross,
 };

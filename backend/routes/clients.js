@@ -79,6 +79,32 @@ router.get('/', ah(async (req, res) => {
   res.json(out);
 }));
 
+/* ---------- ניוד עובדים בין פרויקטים (15 יום ↔ הרחבה באותה רשות) ---------- */
+router.get('/:id/cross-moves', ah(async (req, res) => {
+  const db = getDB();
+  const { crossMoveRecommendations } = require('../lib/crossMoves');
+  res.json(await crossMoveRecommendations(db, parseInt(req.params.id)));
+}));
+
+router.post('/:id/cross-moves/apply', ah(async (req, res) => {
+  const db = getDB();
+  const { rowId, toReportId, decision } = req.body || {};
+  const row = await db.prepare('SELECT * FROM cost_rows WHERE id = ? AND client_id = ?').get(rowId, parseInt(req.params.id));
+  if (!row) return res.status(404).json({ error: 'שורת העלות לא נמצאה.' });
+  if (decision === 'decline') {
+    await db.prepare('UPDATE cost_rows SET cross_declined = 1 WHERE id = ?').run(rowId);
+    return res.json({ ok: true, declined: true });
+  }
+  const target = await db.prepare('SELECT id FROM reports WHERE id = ? AND client_id = ?').get(toReportId, parseInt(req.params.id));
+  if (!target) return res.status(400).json({ error: 'דוח היעד לא נמצא אצל הלקוח.' });
+  // המקור נשמר כדי שאפשר יהיה לשחזר; הסמל מתאפס — ישויך מחדש בדוח היעד
+  await db.prepare(
+    `UPDATE cost_rows SET moved_from_report = COALESCE(moved_from_report, report_id),
+       report_id = ?, symbol_override = NULL, cross_declined = 0 WHERE id = ?`
+  ).run(toReportId, rowId);
+  res.json({ ok: true, moved: true });
+}));
+
 router.get('/:id', ah(async (req, res) => {
   const db = getDB();
   const id = parseInt(req.params.id);

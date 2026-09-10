@@ -11,9 +11,9 @@ const { cascadeReport } = require('./clients');
 const { costDataForReport } = require('../lib/reportCosts');
 const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff } = require('../lib/budgetFile');
-const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, STAFF_TYPES } = require('../lib/fillMinistry');
+const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, STAFF_TYPES } = require('../lib/fillMinistry');
 const { salaryCheck, suggestRole } = require('../lib/salaryCheck');
-const { COST_MARKUP_LIMIT } = require('../lib/ingest');
+const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml } = require('../lib/costMatch');
 const { recommendations } = require('../lib/recommend');
 const { matchDeptsToInstitutions } = require('../lib/nameMatch');
@@ -237,7 +237,8 @@ router.get('/:id/prep', ah(async (req, res) => {
 
   const rawRows = await db.prepare(
     `SELECT cr.id, cr.emp_id, cr.emp_name, cr.first_name, cr.last_name, cr.dept,
-            cr.inst_symbol, cr.inst_name, cr.symbol_override, cr.staff_type, cr.role, cr.gross, cr.cost, cr.hours
+            cr.inst_symbol, cr.inst_name, cr.symbol_override, cr.staff_type, cr.role,
+            cr.gross, cr.cost, cr.hours, cr.gross_bump
      FROM cost_rows cr WHERE cr.report_id = ? ORDER BY cr.dept, cr.emp_name`
   ).all(id);
 
@@ -267,8 +268,29 @@ router.get('/:id/prep', ah(async (req, res) => {
     };
   });
 
-  const client = await db.prepare('SELECT name FROM clients WHERE id = ?').get(report.client_id);
+  const client = await db.prepare('SELECT name, has_vat FROM clients WHERE id = ?').get(report.client_id);
   const authority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
+
+  // מועמדים להתאמת ברוטו (עד 5 ₪ לשעה): העלות המוכרת חורגת מ-140% מהברוטו,
+  // והגדלה קטנה של הברוטו מיישרת את בקרת המשרד בלי לוותר על הכרה בעלות
+  const vatF = client && client.has_vat ? 1.18 : 1;
+  const bumps = rawRows
+    .map((r) => {
+      if (!(r.gross > 0 && r.hours > 0 && r.cost != null)) return null;
+      const hourlyGross = r.gross / r.hours;
+      const hourlyCostVat = (r.cost / r.hours) * vatF;
+      const needed = hourlyCostVat / COST_MARKUP_LIMIT - hourlyGross;
+      if (!(needed > 0.01 && needed <= 5)) return null;
+      return {
+        rowId: r.id, name: r.emp_name || '', dept: r.dept,
+        hourlyGross: Math.round(hourlyGross * 100) / 100,
+        hourlyCostVat: Math.round(hourlyCostVat * 100) / 100,
+        bump: Math.ceil(needed * 100) / 100,
+        applied: (Number(r.gross_bump) || 0) > 0,
+      };
+    })
+    .filter(Boolean);
+
   res.json({
     rows, institutions, staffTypes: STAFF_TYPES,
     employer: (authority && authority.name) || (client && client.name) || '',
@@ -277,7 +299,100 @@ router.get('/:id/prep', ah(async (req, res) => {
     salary: await salaryCheck(db, report),
     framework: report.framework,
     recommendations: await recommendations(db, report),
+    bumps,
   });
+}));
+
+/* שיוך אוטומטי מלא (גנים): מחלק את העובדים שטרם שויכו בין סמלי הגנים
+   מלשונית "גנים - דוח ביצוע", כך שבכל גן תהיה גננת וסייעת — ובקרת
+   "איוש משרות" של המשרד תעבור. מופעל רק בלחיצה מפורשת של המשתמשת. */
+router.post('/:id/auto-assign', ah(async (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+  if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
+  if (report.framework !== 'gardens') return res.status(400).json({ error: 'שיוך אוטומטי מלא זמין כרגע לדוחות גנים.' });
+  const buf = await budgetFileBuf(db, report);
+  if (!buf) return res.status(422).json({ error: 'אין קובץ דוח ביצוע שמור — יש להעלות קודם את קובץ המשרד.' });
+  let gardens = [];
+  try { gardens = extractExecGardens(buf); } catch { /* ריק */ }
+  if (!gardens.length) {
+    // גיבוי: סמלי ההרשמה
+    try { gardens = extractInstitutions(buf).map((i) => i.symbol); } catch { /* ריק */ }
+  }
+  if (!gardens.length) return res.status(422).json({ error: 'לא נמצאו סמלי גנים בלשונית "גנים - דוח ביצוע" של הקובץ.' });
+
+  const rows = await db.prepare('SELECT * FROM cost_rows WHERE report_id = ?').all(id);
+  const exNameSymbol = (() => {
+    try {
+      const insts = extractInstitutions(buf);
+      return matchDeptsToInstitutions(insts, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))]);
+    } catch { return {}; }
+  })();
+  const validSet = new Set(gardens);
+  const symbolOf = (r) => r.symbol_override
+    || (r.inst_symbol && validSet.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
+    || (r.inst_name && exNameSymbol[r.inst_name]) || null;
+  const staffOf = (r) => r.staff_type || suggestRole(r.dept).staffType || 'גננת';
+
+  // ספירת האיוש הקיים פר גן
+  const staffed = new Map(gardens.map((g) => [g, { gan: 0, say: 0 }]));
+  const unassigned = [];
+  for (const r of rows) {
+    const sym = symbolOf(r);
+    const st = staffOf(r);
+    const kind = /סייע/.test(st) ? 'say' : /גננת|מוביל/.test(st) ? 'gan' : null;
+    if (sym && staffed.has(sym)) { if (kind) staffed.get(sym)[kind]++; }
+    else if (!sym) unassigned.push({ r, kind: kind || 'gan', st });
+  }
+
+  // שלב 1: להשלים גננת+סייעת בגנים חסרים; שלב 2: לפזר את היתר מחזורית
+  let assigned = 0;
+  const takeFor = (need) => {
+    const idx = unassigned.findIndex((u) => u.kind === need);
+    return idx >= 0 ? unassigned.splice(idx, 1)[0] : null;
+  };
+  const updates = [];
+  for (const g of gardens) {
+    const s = staffed.get(g);
+    if (s.gan === 0) { const u = takeFor('gan'); if (u) { updates.push([g, u]); s.gan++; } }
+    if (s.say === 0) { const u = takeFor('say'); if (u) { updates.push([g, u]); s.say++; } }
+  }
+  let gi = 0;
+  while (unassigned.length) {
+    const u = unassigned.shift();
+    updates.push([gardens[gi % gardens.length], u]);
+    gi++;
+  }
+  for (const [g, u] of updates) {
+    const role = u.r.role || (/סייע/.test(u.st) ? 'סייעת' : 'גננת של הגן');
+    await db.prepare('UPDATE cost_rows SET symbol_override = ?, staff_type = COALESCE(staff_type, ?), role = COALESCE(role, ?) WHERE id = ?')
+      .run(g, u.st, role, u.r.id);
+    assigned++;
+  }
+  res.json({ ok: true, assigned, gardens: gardens.length });
+}));
+
+/* אישור התאמות ברוטו: מגדיל את הברוטו השעתי בדיוק כדי לעמוד בתקרת ה-140%
+   (עד 5 ₪ לשעה — מעבר לזה דורש בדיקה מעמיקה, לא מוצע אוטומטית) */
+router.post('/:id/apply-bumps', ah(async (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const report = await db.prepare('SELECT client_id FROM reports WHERE id = ?').get(id);
+  if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
+  const client = await db.prepare('SELECT has_vat FROM clients WHERE id = ?').get(report.client_id);
+  const vatF = client && client.has_vat ? 1.18 : 1;
+  const rowIds = (req.body && req.body.rowIds) || [];
+  let applied = 0;
+  for (const rowId of rowIds) {
+    const r = await db.prepare('SELECT id, gross, cost, hours FROM cost_rows WHERE id = ? AND report_id = ?').get(rowId, id);
+    if (!r || !(r.gross > 0 && r.hours > 0 && r.cost != null)) continue;
+    const needed = ((r.cost / r.hours) * vatF) / COST_MARKUP_LIMIT - r.gross / r.hours;
+    if (!(needed > 0 && needed <= 5)) continue;
+    await db.prepare('UPDATE cost_rows SET gross_bump = ? WHERE id = ?').run(Math.ceil(needed * 100) / 100, rowId);
+    applied++;
+  }
+  res.json({ ok: true, applied });
 }));
 
 const prepSchema = z.object({
@@ -501,7 +616,8 @@ router.get('/:id/export', ah(async (req, res) => {
   // ההפרש מול דוח העלות מוסבר ב"דוח ההתאמה לדוח עלות".
   const vatFactor = client && client.has_vat ? 1.18 : 1;
   const execRows = rows.map((r) => {
-    const hourlyGross = r.gross != null && r.hours ? r.gross / r.hours : null;
+    // הברוטו המדווח כולל התאמת ברוטו שאושרה (עד 5 ₪ לשעה) — מעלה את תקרת ה-140%
+    const hourlyGross = r.gross != null && r.hours ? effectiveGross(r) / r.hours : null;
     const rawHourlyCost = r.cost != null && r.hours ? (r.cost / r.hours) * vatFactor : null;
     const cap140 = hourlyGross != null && hourlyGross > 0 ? hourlyGross * COST_MARKUP_LIMIT : null;
     const hourlyCost = rawHourlyCost != null && cap140 != null ? Math.min(rawHourlyCost, cap140) : rawHourlyCost;

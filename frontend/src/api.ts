@@ -183,6 +183,7 @@ export type PrepData = {
   rows: PrepRow[]; institutions: { symbol: string; name: string }[]; staffTypes: StaffType[];
   employer: string; hasBudgetFile: boolean; budgetFileName: string | null;
   salary: SalaryCheck; framework: string; recommendations: Recommendations;
+  bumps?: BumpSuggestion[];
 };
 export type Assignment = { symbol: string | null; staffType: string | null; role: string | null };
 export const getReportPrep = (reportId: number): Promise<PrepData> =>
@@ -224,6 +225,19 @@ export const deleteLedgerFile = (fileId: number) => api.delete(`/ledger-files/${
 
 /* ---------- מסמך שלב 1 + החלטת לקוח על ניוד ---------- */
 export const stage1DocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/stage1-doc`;
+
+/* ---------- ניוד בין פרויקטים + התאמות ברוטו + שיוך אוטומטי ---------- */
+export type CrossMove = { rowId: number; name: string; cost: number; fromReportId: number; fromLabel: string; toReportId: number; toLabel: string; reduces: number };
+export type CrossPair = { authority: string | null; from: { reportId: number; label: string; overflow: number }; to: { reportId: number; label: string; slack: number }; moves: CrossMove[] };
+export const getCrossMoves = (clientId: number): Promise<{ pairs: CrossPair[] }> =>
+  api.get(`/clients/${clientId}/cross-moves`).then((r) => r.data);
+export const applyCrossMove = (clientId: number, rowId: number, toReportId: number, decision: 'move' | 'decline') =>
+  api.post(`/clients/${clientId}/cross-moves/apply`, { rowId, toReportId, decision }).then((r) => r.data);
+export type BumpSuggestion = { rowId: number; name: string; dept: string; hourlyGross: number; hourlyCostVat: number; bump: number; applied: boolean };
+export const applyBumps = (reportId: number, rowIds: number[]) =>
+  api.post(`/reports/${reportId}/apply-bumps`, { rowIds }).then((r) => r.data);
+export const autoAssign = (reportId: number) =>
+  api.post(`/reports/${reportId}/auto-assign`).then((r) => r.data);
 export const costMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/cost-match-doc`;
 export const applyMove = (reportId: number, rowId: number, decision: 'move' | 'decline', toSymbol?: string) =>
   api.post(`/reports/${reportId}/apply-move`, { rowId, decision, toSymbol }).then((r) => r.data);

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { T } from '../theme';
 import { btn, card, input } from '../ui';
-import { getReportPrep, saveReportPrep, exportReportUrl, stage1DocUrl, costMatchDocUrl, applyMove, PrepData, Assignment } from '../api';
+import { getReportPrep, saveReportPrep, exportReportUrl, stage1DocUrl, costMatchDocUrl, applyMove, applyBumps, autoAssign, PrepData, Assignment } from '../api';
 
 const fmt = (n: number | null, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -79,7 +79,20 @@ export default function PrepSection({ reportId }: { reportId: number }) {
         <span style={{ fontSize: 11.5, color: T.inkSoft }}>
           משייכים כל עובד לגן/מוסד, איש צוות ותפקיד — והמערכת ממלאת את קובץ המשרד.
         </span>
-        <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 8 }}>
+        <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {data.framework === 'gardens' && missing > 0 && (
+            <button style={btn('ghost')}
+              title='משלים סמלים לעובדים שטרם שויכו, כך שבכל גן תהיה גננת וסייעת — ובקרת "איוש משרות" של המשרד תעבור'
+              onClick={async () => {
+                if (!window.confirm(`להשלים שיוך אוטומטית? ${missing} עובדים ללא שיוך יחולקו בין הגנים מלשונית דוח הביצוע, עם גננת וסייעת בכל גן. אפשר לתקן ידנית אחר כך.`)) return;
+                setBusy(true);
+                try { const r = await autoAssign(reportId); await load(); setMsg(`שויכו ${r.assigned} עובדים בין ${r.gardens} גנים.`); }
+                catch (e: any) { setMsg(e?.response?.data?.error || 'השיוך האוטומטי נכשל.'); }
+                finally { setBusy(false); }
+              }}>
+              🪄 השלמת שיוך אוטומטית
+            </button>
+          )}
           <button onClick={() => window.open(stage1DocUrl(reportId), '_blank')} style={btn('ghost')}
             title="סיכום הבדיקות ללקוח — להדפסה או שמירה כ-PDF">📄 מסמך שלב 1 ללקוח</button>
           <button onClick={() => window.open(costMatchDocUrl(reportId), '_blank')} style={btn('ghost')}
@@ -198,6 +211,51 @@ export default function PrepSection({ reportId }: { reportId: number }) {
           <div style={{ fontSize: 11, color: T.inkSoft, marginTop: 6 }}>
             ההמלצות מבוססות על השיוכים השמורים ועל תקרת שכר פר-מוסד = סל שכר הצוות + הסל הגמיש. ההחלטה הסופית שלך.
           </div>
+        </div>
+      )}
+
+      {/* התאמות ברוטו (עד 5 ₪ לשעה) — מיישרות את בקרת ה-140% של המשרד בלי לוותר על הכרה */}
+      {(data.bumps || []).filter((b) => !b.applied).length > 0 && (
+        <div style={{ border: `1px solid ${T.blue}`, background: T.blueBg, borderRadius: 8, padding: '10px 14px', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+            <span style={{ fontWeight: 700, fontSize: 12.5 }}>התאמות ברוטו — עד ₪5 לשעה</span>
+            <span style={{ fontSize: 11.5, color: T.inkSoft }}>
+              העלות (כולל מע"מ) חורגת מ-140% מהברוטו; הגדלה קטנה של הברוטו מיישרת את בקרת המשרד ומכירה במלוא העלות.
+            </span>
+            <button style={{ ...btn('primary'), marginInlineStart: 'auto' }}
+              onClick={async () => {
+                const list = (data.bumps || []).filter((b) => !b.applied);
+                if (!window.confirm(`לאשר הגדלת ברוטו ל-${list.length} עובדים (עד ₪5 לשעה כל אחד)? הברוטו המעודכן ייכתב בדוח הביצוע.`)) return;
+                await applyBumps(reportId, list.map((b) => b.rowId));
+                await load();
+                setMsg('התאמות הברוטו אושרו — ייכתבו בייצוא הבא.');
+              }}>
+              אישור כולן
+            </button>
+          </div>
+          <div style={{ display: 'grid', gap: 4 }}>
+            {(data.bumps || []).filter((b) => !b.applied).map((b) => (
+              <div key={b.rowId} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 600 }}>{b.name}</span>
+                <span style={{ color: T.inkSoft }}>{b.dept}</span>
+                <span>ברוטו ₪{b.hourlyGross} → ₪{(Math.round((b.hourlyGross + b.bump) * 100) / 100)}</span>
+                <span style={{ color: T.inkSoft, fontSize: 11.5 }}>(עלות שעתית כולל מע"מ: ₪{b.hourlyCostVat})</span>
+                <button style={{ ...btn('ghost'), padding: '3px 10px', fontSize: 11.5, marginInlineStart: 'auto' }}
+                  onClick={async () => {
+                    if (!window.confirm(`להגדיל את הברוטו של ${b.name} ב-₪${b.bump} לשעה?`)) return;
+                    await applyBumps(reportId, [b.rowId]);
+                    await load();
+                  }}>
+                  אישור
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {(data.bumps || []).some((b) => b.applied) && (
+        <div style={{ fontSize: 11.5, color: T.green, background: T.greenBg, borderRadius: 8, padding: '6px 11px', marginBottom: 12 }}>
+          ✓ {(data.bumps || []).filter((b) => b.applied).length} התאמות ברוטו מאושרות — נכתבות בייצוא.
         </div>
       )}
 
