@@ -78,17 +78,24 @@ async function salaryCheck(db, report) {
   });
 
   const labels = BASKET_LABELS[report.framework] || BASKET_LABELS.schools;
-  const types = report.framework === 'gardens' ? ['instruction', 'coordinator'] : ['instruction', 'coordinator', 'deputy'];
+  // רכזים וסגני רכזים = משפחת "שכר ריכוז" אחת: יתרה אצל הרכזים מכסה את
+  // הסגנים (ולהפך) לפני שנוגעים בסל הגמיש — כך המשרד מתקצב אותם (קבוע למוסד)
+  const groups = report.framework === 'gardens'
+    ? [['instruction'], ['coordinator']]
+    : [['instruction'], ['coordinator', 'deputy']];
 
   let overflow = 0;
-  const items = types
-    .filter((t) => (budgets[t] || 0) > 0 || actual[t] > 0)
-    .map((t) => {
-      const budget = budgets[t] || 0;
-      const over = Math.max(0, actual[t] - budget);
+  const items = groups
+    .map((g) => {
+      const budget = g.reduce((s, t) => s + (budgets[t] || 0), 0);
+      const act = g.reduce((s, t) => s + (actual[t] || 0), 0);
+      if (!(budget > 0) && !(act > 0)) return null;
+      const over = Math.max(0, act - budget);
       overflow += over;
-      return { type: t, label: labels[t], budget, actual: actual[t], over, under: Math.max(0, budget - actual[t]) };
-    });
+      const label = g.length > 1 ? 'שכר רכזים וסגני רכזים' : labels[g[0]];
+      return { type: g[0], label, budget, actual: act, over, under: Math.max(0, budget - act) };
+    })
+    .filter(Boolean);
 
   const flexBudget = budgets.flexible || 0;
   const flexUsedForSalary = Math.min(overflow, flexBudget);
