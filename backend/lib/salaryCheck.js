@@ -16,6 +16,16 @@ function suggestRole(dept) {
   return { staffType: null, role: null };
 }
 
+/* בתי ספר: זיהוי רכז/סגן לפי כמות שעות (כלל המשתמשת, תקף לכל דוחות בתי הספר):
+   מעל 114 שעות = רכז/ת בי"ס; סביב 93 שעות = סגן/ית רכז. המשרד מציג את
+   תקציב בית הספר רק כשמוגדר רכז בכל סמל מוסד. */
+function schoolsRoleByHours(hours) {
+  if (!(hours > 0)) return null;
+  if (hours >= 114) return { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' };
+  if (hours >= 90 && hours <= 96) return { staffType: 'סגנית רכזת מעל 150', role: 'סגנ/ית רכז/ת>150' };
+  return null;
+}
+
 /* תפקיד כפי שמופיע בדוח השכר עצמו (עמודת "תפקיד") → איש צוות + תפקיד לפי רשימות המשרד */
 function staffFromRoleText(text) {
   const t = String(text || '');
@@ -59,9 +69,11 @@ async function salaryCheck(db, report) {
   // הניצול המוכר מוגבל פר-עובד לתקרת ה-140% מהברוטו — כמו בדיווח בפועל
   const { recognizedRowCost } = require('./ingest');
   const actual = { instruction: 0, coordinator: 0, deputy: 0 };
-  const rows = await db.prepare('SELECT dept, staff_type, cost, gross FROM cost_rows WHERE report_id = ?').all(report.id);
+  const rows = await db.prepare('SELECT dept, staff_type, cost, gross, hours FROM cost_rows WHERE report_id = ?').all(report.id);
+  const hoursRule = report.framework !== 'gardens';
   rows.forEach((r) => {
-    const st = r.staff_type || suggestRole(r.dept).staffType;
+    const byHours = hoursRule ? schoolsRoleByHours(r.hours) : null;
+    const st = r.staff_type || (byHours && byHours.staffType) || suggestRole(r.dept).staffType;
     actual[basketForStaff(st)] += recognizedRowCost(r, vatFactor);
   });
 
@@ -104,4 +116,4 @@ async function salaryCheck(db, report) {
   };
 }
 
-module.exports = { salaryCheck, suggestRole, basketForStaff, staffFromRoleText };
+module.exports = { salaryCheck, suggestRole, basketForStaff, staffFromRoleText, schoolsRoleByHours };

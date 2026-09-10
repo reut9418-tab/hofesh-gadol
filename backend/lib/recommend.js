@@ -90,10 +90,14 @@ async function recommendations(db, report) {
   // רק עובדי סל ההדרכה (מורים/מובילות/סייעות) — רכז/סגן צמודים למוסד ולא מנוידים.
   // עובדים שהלקוח דחה עבורם ניוד (move_declined) לא מוצעים שוב.
   const { recognizedRowCost } = require('./ingest');
+  const { schoolsRoleByHours } = require('./salaryCheck');
   const workers = (await db.prepare(
-    'SELECT id, emp_name, dept, staff_type, symbol_override, cost, gross FROM cost_rows WHERE report_id = ? AND COALESCE(move_declined,0) = 0'
+    'SELECT id, emp_name, dept, staff_type, symbol_override, cost, gross, hours, gross_bump FROM cost_rows WHERE report_id = ? AND COALESCE(move_declined,0) = 0'
   ).all(report.id))
-    .filter((r) => basketForStaff(r.staff_type || suggestRole(r.dept).staffType) === 'instruction')
+    .filter((r) => {
+      const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
+      return basketForStaff(r.staff_type || (byHours && byHours.staffType) || suggestRole(r.dept).staffType) === 'instruction';
+    })
     .map((r) => ({ rowId: r.id, name: r.emp_name || '', cost: recognizedRowCost(r, vatFactor), symbol: r.symbol_override }));
 
   const unassigned = workers.filter((w) => !w.symbol).length;

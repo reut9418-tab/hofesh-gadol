@@ -12,7 +12,7 @@ const { costDataForReport } = require('../lib/reportCosts');
 const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff } = require('../lib/budgetFile');
 const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, STAFF_TYPES } = require('../lib/fillMinistry');
-const { salaryCheck, suggestRole } = require('../lib/salaryCheck');
+const { salaryCheck, suggestRole, schoolsRoleByHours } = require('../lib/salaryCheck');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml } = require('../lib/costMatch');
 const { recommendations } = require('../lib/recommend');
@@ -254,13 +254,16 @@ router.get('/:id/prep', ah(async (req, res) => {
 
   const rows = rawRows.map((r) => {
     const sug = suggestRole(r.dept);
+    // בתי ספר: רכז/סגן מזוהים לפי שעות (מעל 114 = רכז, ~93 = סגן) —
+    // המשרד מציג את תקציב בית הספר רק כשמוגדר רכז בכל סמל
+    const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
     const fileSymbol = r.inst_symbol && validSymbols.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null;
     return {
       rowId: r.id, empId: r.emp_id, name: r.emp_name,
       firstName: r.first_name, lastName: r.last_name, dept: r.dept, instName: r.inst_name,
       symbol: r.symbol_override || fileSymbol || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null,
-      staffType: r.staff_type || sug.staffType,
-      role: r.role || sug.role,
+      staffType: r.staff_type || (byHours && byHours.staffType) || sug.staffType,
+      role: r.role || (byHours && byHours.role) || sug.role,
       saved: !!(r.symbol_override || r.staff_type || r.role),
       gross: r.gross, cost: r.cost, hours: r.hours,
       hourlyGross: r.gross != null && r.hours ? r.gross / r.hours : null,
@@ -622,13 +625,14 @@ router.get('/:id/export', ah(async (req, res) => {
     const cap140 = hourlyGross != null && hourlyGross > 0 ? hourlyGross * COST_MARKUP_LIMIT : null;
     const hourlyCost = rawHourlyCost != null && cap140 != null ? Math.min(rawHourlyCost, cap140) : rawHourlyCost;
     const sug = suggestRole(r.dept);
+    const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
     return [
       resolveSymbol(r), null, r.emp_id,
       r.first_name || (r.emp_name || '').split(' ')[0] || '',
       r.last_name || (r.emp_name || '').split(' ').slice(1).join(' ') || '',
       r.payer || employer, // "הועסק ע"י" — המשלם של הקובץ (מתנ"ס/רשות), אם הוגדר
-      r.staff_type || sug.staffType || '',
-      r.role || sug.role || '',
+      r.staff_type || (byHours && byHours.staffType) || sug.staffType || '',
+      r.role || (byHours && byHours.role) || sug.role || '',
       round2(hourlyGross), round2(hourlyCost), round2(r.hours),
       null,
     ];
