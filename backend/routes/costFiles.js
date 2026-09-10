@@ -3,7 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const { z } = require('zod');
 const { getDB } = require('../db');
-const { parseCostFile, norm } = require('../lib/ingest');
+const { parseCostFile, norm, FIELD_DEFS, readWorkbookSheets, detectStructure, inferMissingColumns } = require('../lib/ingest');
 const { reportLabel } = require('../lib/domain');
 const { staffFromRoleText } = require('../lib/salaryCheck');
 
@@ -92,6 +92,8 @@ router.post('/clients/:clientId/cost-files', upload.single('file'), ah(async (re
     'INSERT INTO cost_files (client_id, filename, software, sheets_used, row_count) VALUES (?, ?, ?, ?, ?)'
   ).run(clientId, originalName, parsed.software, JSON.stringify(parsed.sheetsUsed), parsed.records.length);
   const fileId = fileRow.lastInsertRowid;
+  // הקובץ המקורי נשמר — מאפשר שיוך עמודות ידני וקליטה מחדש בכל רגע
+  await db.prepare('INSERT INTO cost_file_blobs (cost_file_id, data) VALUES (?, ?)').run(fileId, req.file.buffer);
 
   for (const r of parsed.records) {
     // אם דוח השכר כולל עמודת "תפקיד" — איש הצוות והתפקיד נגזרים ממנה אוטומטית
@@ -218,6 +220,134 @@ router.delete('/cost-files/:fileId', ah(async (req, res) => {
   await db.prepare('DELETE FROM cost_files WHERE id = ?').run(fileId);
   for (const rid of affected) await refreshReportFlag(db, rid);
   res.json({ ok: true });
+}));
+
+/* ---------- שיוך עמודות ידני: כותרת בדוח העלות → שדה במערכת ---------- */
+
+async function learnedColumns(db, clientId) {
+  const m = {};
+  (await db.prepare("SELECT map_key, map_value FROM client_mappings WHERE client_id = ? AND mapping_type = 'column_header'")
+    .all(clientId)).forEach((r) => { m[r.map_key] = r.map_value; });
+  return m;
+}
+
+async function costFileBlob(db, fileId) {
+  const row = await db.prepare('SELECT data FROM cost_file_blobs WHERE cost_file_id = ?').get(fileId);
+  if (!row || !row.data) return null;
+  return Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
+}
+
+/* הכותרות שנמצאו בקובץ + השיוך האוטומטי הנוכחי + דוגמאות ערכים */
+router.get('/cost-files/:fileId/columns', ah(async (req, res) => {
+  const db = getDB();
+  const fileId = parseInt(req.params.fileId);
+  const file = await db.prepare('SELECT * FROM cost_files WHERE id = ?').get(fileId);
+  if (!file) return res.status(404).json({ error: 'קובץ לא נמצא' });
+  const buf = await costFileBlob(db, fileId);
+  if (!buf) return res.status(422).json({ error: 'הקובץ הועלה לפני שהמערכת החלה לשמור עותקי מקור — יש להעלות אותו מחדש (ההעלאה תחליף את הנתונים), ואז יופיע שיוך העמודות.' });
+
+  const learned = await learnedColumns(db, file.client_id);
+  const sheets = readWorkbookSheets(buf);
+  let best = null;
+  for (const s of sheets) {
+    const det = inferMissingColumns(s.rows, detectStructure(s.rows, learned));
+    if (!best || det.score > best.det.score) best = { s, det };
+  }
+  if (!best || best.det.rowIdx < 0) return res.status(422).json({ error: 'לא זוהתה שורת כותרות בקובץ.' });
+
+  const headerRow = best.s.rows[best.det.rowIdx] || [];
+  const sample = best.s.rows.slice(best.det.rowIdx + 1, best.det.rowIdx + 30);
+  const colCount = Math.max(headerRow.length, ...sample.map((r) => (r || []).length));
+  const headers = [];
+  for (let c = 0; c < colCount; c++) {
+    const text = norm(headerRow[c]);
+    const samples = sample.map((r) => (r || [])[c]).filter((v) => v != null && String(v).trim() !== '').slice(0, 3);
+    if (!text && !samples.length) continue; // עמודה ריקה לגמרי
+    headers.push({
+      index: c,
+      key: text || `#${c}`, // עמודה בלי כותרת — מפתח לפי מיקום
+      label: text || `עמודה ${c + 1} (ללא כותרת)`,
+      samples: samples.map((v) => String(v).slice(0, 24)),
+    });
+  }
+  const mapping = {}; // field → מפתח הכותרת שנבחרה אוטומטית
+  for (const [fieldKey, idx] of Object.entries(best.det.mapping)) {
+    const h = headers.find((x) => x.index === idx);
+    if (h) mapping[fieldKey] = h.key;
+  }
+  res.json({
+    sheet: best.s.sheetName,
+    fields: FIELD_DEFS.map((f) => ({ key: f.key, label: f.label })),
+    headers, mapping,
+  });
+}));
+
+/* שמירת השיוך + קליטת הקובץ מחדש. assign: { fieldKey: headerKey|null }.
+   השיוך נלמד ללקוח — קבצים הבאים באותו פורמט ייקלטו נכון אוטומטית. */
+router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
+  const db = getDB();
+  const fileId = parseInt(req.params.fileId);
+  const file = await db.prepare('SELECT * FROM cost_files WHERE id = ?').get(fileId);
+  if (!file) return res.status(404).json({ error: 'קובץ לא נמצא' });
+  const buf = await costFileBlob(db, fileId);
+  if (!buf) return res.status(422).json({ error: 'אין עותק מקור לקובץ — יש להעלות אותו מחדש.' });
+  const assign = (req.body && req.body.assign) || {};
+
+  // עדכון הזיכרון הנלמד של הלקוח: לכל שדה — הכותרת שנבחרה; כותרות שהוסרו
+  // משדה מסומנות 'none' כדי שהזיהוי האוטומטי לא יחזור אליהן
+  const prev = await learnedColumns(db, file.client_id);
+  const upsert = async (key, val) => db.prepare(
+    `INSERT INTO client_mappings (client_id, mapping_type, map_key, map_value) VALUES (?, 'column_header', ?, ?)
+     ON CONFLICT(client_id, mapping_type, map_key) DO UPDATE SET map_value = excluded.map_value`
+  ).run(file.client_id, key, val);
+  for (const [fieldKey, headerKey] of Object.entries(assign)) {
+    if (!FIELD_DEFS.some((f) => f.key === fieldKey)) continue;
+    // כותרת שהייתה משויכת לשדה הזה ושונתה — משוחררת
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === fieldKey && k !== headerKey) await upsert(k, 'none');
+    }
+    if (headerKey) await upsert(String(headerKey), fieldKey);
+  }
+
+  // קליטה מחדש עם השיוך המעודכן, תוך שימור הניתוב והשיוכים הקיימים
+  const learned = await learnedColumns(db, file.client_id);
+  let parsed;
+  try { parsed = parseCostFile(buf, learned); }
+  catch { return res.status(422).json({ error: 'הקליטה מחדש נכשלה — לא הצלחתי לקרוא את הקובץ.' }); }
+  if (!parsed.records.length) return res.status(422).json({ error: 'עם השיוך הזה לא זוהו שורות שכר — בדקי את עמודת תעודת הזהות.' });
+
+  const oldRows = await db.prepare('SELECT * FROM cost_rows WHERE cost_file_id = ?').all(fileId);
+  const keep = new Map(oldRows.map((r) => [`${r.emp_id}|${norm(r.dept)}`, r]));
+  const affectedReports = new Set(oldRows.map((r) => r.report_id).filter(Boolean));
+  await db.prepare('DELETE FROM cost_rows WHERE cost_file_id = ?').run(fileId);
+
+  const routing = await learnedRouting(db, file.client_id);
+  for (const r of parsed.records) {
+    const staff = staffFromRoleText(r.roleText);
+    const old = keep.get(`${r.id}|${norm(r.dept)}`);
+    let reportId = old ? old.report_id : null;
+    if (reportId == null) {
+      const lv = routing[norm(r.dept)];
+      if (lv !== undefined && lv !== 'none') reportId = parseInt(lv) || null;
+    }
+    await db.prepare(
+      `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept, inst_symbol, inst_name, component_names, gross, cost, hours,
+         staff_type, role, symbol_override, gross_bump, moved_from_dept, moved_from_symbol, move_declined, moved_from_report, cross_declined)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(fileId, file.client_id, reportId, r.id, r.name || null, r.firstName, r.lastName, r.dept,
+      r.instSymbol, r.instName || null, JSON.stringify(r.componentNames || []), r.gross, r.cost, r.hours,
+      (old && old.staff_type) || (staff ? staff.staffType : null),
+      (old && old.role) || (staff ? staff.role : null),
+      old ? old.symbol_override : null, old ? old.gross_bump : 0,
+      old ? old.moved_from_dept : null, old ? old.moved_from_symbol : null, old ? old.move_declined : 0,
+      old ? old.moved_from_report : null, old ? old.cross_declined : 0);
+    if (reportId) affectedReports.add(reportId);
+  }
+  await db.prepare('UPDATE cost_files SET software = ?, sheets_used = ?, row_count = ? WHERE id = ?')
+    .run(parsed.software, JSON.stringify(parsed.sheetsUsed), parsed.records.length, fileId);
+  for (const rid of affectedReports) await refreshReportFlag(db, rid);
+
+  res.json({ ok: true, rowCount: parsed.records.length, software: parsed.software });
 }));
 
 module.exports = router;

@@ -61,6 +61,7 @@ function detectStructure(rows, learned = {}) {
       const cellN = norm(cell);
       if (!cellN) return;
       const learnedKey = learned[cellN];
+      if (learnedKey === 'none') return; // המשתמשת סימנה: לא להשתמש בעמודה הזו
       if (learnedKey && FIELD_DEFS.some((f) => f.key === learnedKey) && mapping[learnedKey] === undefined) {
         mapping[learnedKey] = c; score += 2; return;
       }
@@ -74,6 +75,12 @@ function detectStructure(rows, learned = {}) {
   if (best.rowIdx < 0) {
     const firstData = rows.findIndex((r) => (r || []).filter((c) => norm(c) !== '').length >= 2);
     if (firstData >= 0) best = { rowIdx: firstData, mapping: {}, score: 0 };
+  }
+  // עקיפות ידניות לפי אינדקס עמודה (מפתח "#N") — לעמודות ללא כותרת
+  for (const [k, v] of Object.entries(learned)) {
+    if (!k.startsWith('#')) continue;
+    const idx = parseInt(k.slice(1));
+    if (Number.isFinite(idx) && v !== 'none' && FIELD_DEFS.some((f) => f.key === v)) best.mapping[v] = idx;
   }
   // עידון מחלקה: כשיש כמה עמודות מתאימות (קוד + שם), ניתוב עובד לפי טקסט,
   // לכן בוחרים את העמודה עם הערכים הטקסטואליים ביותר (שם מחלקה ולא קוד).
@@ -316,9 +323,45 @@ function isPayrollSheet(det) {
 
 /* מפענח קובץ שלם → שורות מנורמלות מאוחדות מכל הלשוניות בעלות נתוני שכר.
    מחזיר { software, sheetsUsed, records } */
+/* השלמת עמודות שאין להן כותרת — לפי הנתונים עצמם. מקרה נפוץ: כותרת
+   "עובד" ממוזגת מעל ת"ז/פרטי/משפחה, כך שעמודת הת"ז נשארת בלי כותרת
+   (פורמט ביתר). הת"ז מזוהה לפי בדיקת ספרת הביקורת על מדגם ערכים. */
+function inferMissingColumns(rows, det) {
+  const { rowIdx, mapping } = det;
+  if (rowIdx < 0) return det;
+  const sample = rows.slice(rowIdx + 1, rowIdx + 60);
+  if (!sample.length) return det;
+  const colCount = Math.max(0, ...sample.map((r) => (r || []).length));
+  const taken = () => new Set(Object.values(mapping));
+  if (mapping.id === undefined) {
+    let best = -1, bestHit = 0;
+    for (let c = 0; c < colCount; c++) {
+      if (taken().has(c)) continue;
+      const vals = sample.map((r) => (r || [])[c]).filter((v) => v != null && String(v).trim() !== '');
+      if (vals.length < 5) continue;
+      const hit = vals.filter((v) => isValidIsraeliId(v)).length / vals.length;
+      if (hit > 0.6 && hit > bestHit) { best = c; bestHit = hit; }
+    }
+    if (best >= 0) {
+      mapping.id = best;
+      // שמות: עמודות טקסט עברי צמודות מימין לת"ז שטרם מופו
+      const isTextCol = (c) => {
+        if (c >= colCount || taken().has(c)) return false;
+        const vals = sample.map((r) => (r || [])[c]).filter((v) => v != null && String(v).trim() !== '');
+        return vals.length >= 5 && vals.filter((v) => /[א-ת]/.test(String(v))).length / vals.length > 0.8;
+      };
+      if (mapping.fullName === undefined && mapping.firstName === undefined && isTextCol(best + 1)) {
+        if (isTextCol(best + 2)) { mapping.firstName = best + 1; mapping.lastName = best + 2; }
+        else mapping.fullName = best + 1;
+      }
+    }
+  }
+  return det;
+}
+
 function parseCostFile(buf, learned = {}) {
   const sheets = readWorkbookSheets(buf);
-  const detected = sheets.map((s) => ({ ...s, det: detectStructure(s.rows, learned) }));
+  const detected = sheets.map((s) => ({ ...s, det: inferMissingColumns(s.rows, detectStructure(s.rows, learned)) }));
   let chosen = detected.filter((s) => isPayrollSheet(s.det));
   if (chosen.length === 0 && detected.length) {
     chosen = [detected.reduce((a, b) => (b.rows.length > a.rows.length ? b : a))];
@@ -338,6 +381,6 @@ function parseCostFile(buf, learned = {}) {
 
 module.exports = {
   FIELD_DEFS, SOFTWARE_SIGNATURES, norm, isValidIsraeliId,
-  detectStructure, normalizeRows, aggregateComponents, runChecks,
+  detectStructure, inferMissingColumns, normalizeRows, aggregateComponents, runChecks,
   readWorkbookSheets, parseCostFile, EMPLOYER_FACTOR, HOURS_CAP, COST_MARKUP_LIMIT, recognizedRowCost, effectiveGross,
 };

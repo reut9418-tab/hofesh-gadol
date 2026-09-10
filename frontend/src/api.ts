@@ -143,6 +143,14 @@ export const uploadCostFile = async (clientId: number, file: File): Promise<Rout
   fd.append('file', file);
   return api.post(`/clients/${clientId}/cost-files`, fd).then((r) => r.data);
 };
+/* שיוך עמודות ידני: כותרת בדוח העלות → שדה במערכת (נלמד ללקוח) */
+export type ColumnHeader = { index: number; key: string; label: string; samples: string[] };
+export type ColumnsInfo = { sheet: string; fields: { key: string; label: string }[]; headers: ColumnHeader[]; mapping: Record<string, string> };
+export const getCostFileColumns = (fileId: number): Promise<ColumnsInfo> =>
+  api.get(`/cost-files/${fileId}/columns`).then((r) => r.data);
+export const remapCostFile = (fileId: number, assign: Record<string, string | null>) =>
+  api.post(`/cost-files/${fileId}/remap`, { assign }).then((r) => r.data);
+
 export const getCostFileRouting = (fileId: number): Promise<RoutingResponse> =>
   api.get(`/cost-files/${fileId}`).then((r) => r.data);
 export const routeCostFile = (fileId: number, routing: Record<string, number | null>) =>

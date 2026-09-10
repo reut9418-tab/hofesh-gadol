@@ -191,6 +191,10 @@ async function migrate(db) {
   await db.exec(`CREATE TABLE IF NOT EXISTS report_files (
     report_id INTEGER PRIMARY KEY, data ${pg ? 'BYTEA' : 'BLOB'}
   )`);
+  // קובץ דוח העלות המקורי — לשיוך עמודות ידני וקליטה מחדש
+  await db.exec(`CREATE TABLE IF NOT EXISTS cost_file_blobs (
+    cost_file_id INTEGER PRIMARY KEY, data ${pg ? 'BYTEA' : 'BLOB'}
+  )`);
 }
 
 /* זריעת דמו קלה — רק במסד SQLite מקומי ריק (הענן מתמלא ממיגרציית הנתונים) */

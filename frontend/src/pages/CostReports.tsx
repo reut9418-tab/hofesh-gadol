@@ -3,8 +3,68 @@ import { T } from '../theme';
 import { btn, card, input } from '../ui';
 import {
   uploadCostFile, getCostFileRouting, routeCostFile, listCostFiles, deleteCostFile, setCostFilePayer,
+  getCostFileColumns, remapCostFile, ColumnsInfo,
   CostFile, DeptRow, RouteTarget, RoutingResponse,
 } from '../api';
+
+/* ---------- שיוך עמודות ידני: כותרת מדוח העלות → שדה במערכת ---------- */
+function ColumnsModal({ fileId, info, onClose, onDone }: { fileId: number; info: ColumnsInfo; onClose: () => void; onDone: () => void }) {
+  const [assign, setAssign] = useState<Record<string, string | null>>(() => ({ ...info.mapping }));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const headerOf = (key: string | null | undefined) => info.headers.find((h) => h.key === key);
+
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await remapCostFile(fileId, assign);
+      onDone();
+    } catch (e: any) { setErr(e?.response?.data?.error || 'השמירה נכשלה.'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(65,58,47,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
+      <div style={{ background: '#fff', borderRadius: 14, padding: '18px 22px', width: 'min(680px, 96vw)', maxHeight: '88vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          <span style={{ fontWeight: 700, fontSize: 15 }}>שיוך עמודות — {info.sheet}</span>
+          <button onClick={onClose} style={{ marginInlineStart: 'auto', border: 'none', background: 'transparent', fontSize: 16, cursor: 'pointer', color: T.inkSoft }}>✕</button>
+        </div>
+        <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 12 }}>
+          לכל שדה של המערכת בוחרים את הכותרת המתאימה מדוח העלות. השיוך נשמר ללקוח — קבצים הבאים באותו פורמט ייקלטו נכון אוטומטית.
+        </div>
+        {err && <div style={{ fontSize: 12.5, color: T.red, background: T.redBg, borderRadius: 8, padding: '7px 11px', marginBottom: 10 }}>{err}</div>}
+        <div style={{ display: 'grid', gap: 8 }}>
+          {info.fields.map((f) => {
+            const chosen = headerOf(assign[f.key]);
+            return (
+              <div key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderBottom: `1px solid ${T.line}`, paddingBottom: 8 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 600, width: 170 }}>{f.label}</span>
+                <select value={assign[f.key] || ''} onChange={(e) => setAssign((p) => ({ ...p, [f.key]: e.target.value || null }))}
+                  style={{ ...input, padding: '5px 8px', fontSize: 12, minWidth: 190 }}>
+                  <option value="">— לא בשימוש —</option>
+                  {info.headers.map((h) => <option key={h.key} value={h.key}>{h.label}</option>)}
+                </select>
+                {chosen && chosen.samples.length > 0 && (
+                  <span style={{ fontSize: 10.5, color: T.inkSoft }}>לדוגמה: {chosen.samples.join(' · ')}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={btn('ghost')}>ביטול</button>
+          <button onClick={save} disabled={busy} style={btn('primary')}>
+            {busy ? 'קולט מחדש…' : 'שמירה וקליטה מחדש'}
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: T.inkSoft, marginTop: 8 }}>
+          הניתוב לפרויקטים והשיוכים הידניים (סמלים, תפקידים, התאמות ברוטו) נשמרים גם אחרי הקליטה מחדש.
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const fmt = (n: number, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -129,9 +189,16 @@ function RoutingModal({ data, onClose, onDone }: { data: RoutingResponse; onClos
 export default function CostReportsPanel({ clientId, onRouted }: { clientId: number; onRouted: () => void }) {
   const [files, setFiles] = useState<CostFile[]>([]);
   const [routing, setRouting] = useState<RoutingResponse | null>(null);
+  const [columns, setColumns] = useState<{ fileId: number; info: ColumnsInfo } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const openColumns = async (fileId: number) => {
+    setErr(null);
+    try { setColumns({ fileId, info: await getCostFileColumns(fileId) }); }
+    catch (e: any) { setErr(e?.response?.data?.error || 'טעינת העמודות נכשלה.'); }
+  };
 
   const load = () => listCostFiles(clientId).then(setFiles).catch(() => setFiles([]));
   useEffect(() => { load(); }, [clientId]);
@@ -192,6 +259,10 @@ export default function CostReportsPanel({ clientId, onRouted }: { clientId: num
               ? <span style={{ fontSize: 10.5, fontWeight: 700, color: T.green, background: T.greenBg, borderRadius: 5, padding: '2px 7px' }}>נותב · {f.routedRows} שורות בדוחות</span>
               : <span style={{ fontSize: 10.5, fontWeight: 700, color: T.amber, background: T.amberBg, borderRadius: 5, padding: '2px 7px' }}>ממתין לניתוב</span>}
             <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button onClick={() => openColumns(f.id)} style={btn('ghost')}
+                title="שיוך ידני: כותרת מדוח העלות → שדה במערכת (ת&quot;ז, ברוטו, עלות, שעות...). נלמד ללקוח.">
+                🔗 שיוך עמודות
+              </button>
               <button onClick={() => openRouting(f.id)} style={btn(f.routed ? 'ghost' : 'dark')}>{f.routed ? 'עריכת ניתוב' : 'ניתוב'}</button>
               <button title="מחיקת הקובץ" onClick={() => removeFile(f)}
                 style={{ border: 'none', background: 'transparent', color: T.red, cursor: 'pointer', fontSize: 14, fontWeight: 700, padding: 0 }}>✕</button>
@@ -203,6 +274,10 @@ export default function CostReportsPanel({ clientId, onRouted }: { clientId: num
       {routing && (
         <RoutingModal data={routing} onClose={() => setRouting(null)}
           onDone={() => { setRouting(null); load(); onRouted(); }} />
+      )}
+      {columns && (
+        <ColumnsModal fileId={columns.fileId} info={columns.info} onClose={() => setColumns(null)}
+          onDone={() => { setColumns(null); load(); onRouted(); }} />
       )}
     </section>
   );
