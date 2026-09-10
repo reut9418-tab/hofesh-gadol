@@ -435,6 +435,47 @@ const STAFF_TYPES = [
   { type: 'סגנית רכזת מעל 150', roles: ['סגנ/ית רכז/ת>150'] },
 ];
 
+/* רשימת ברירת מחדל לתבנית בתי הספר (כשהגיליון לא נמצא) — הערכים המדויקים
+   מ"סיווג התפקידים והעלויות" של תבנית תשפ"ו. אין "גננת" בבתי ספר! */
+const SCHOOL_STAFF_TYPES = [
+  { type: 'מורה', roles: ['בעל/ת תעודת הוראה שסיימ/ה 80% מהתואר', 'עוזר/ת חינוך', 'סטודנט/ית', 'מדריכ/ה מוסמכ/ת'] },
+  { type: 'מדצ', roles: ['מדצ/ית'] },
+  { type: 'רכזת תכנית בבית הספר', roles: ['רכז/ת תכנית בבית הספר'] },
+  { type: 'סגנית רכזת מעל 150', roles: ['סגנ/ית רכ/זת>150'] },
+  { type: 'תוספת כח אדם', roles: ['יועצ/ת', 'מורה להוראה מתקנת', 'מורה מקצוע/ית למתמטיקה/אנגלית/מדעים'] },
+  { type: 'סייעת רפואית או אישית', roles: ['סייעת'] },
+];
+
+/* רשימת אנשי הצוות והתפקידים מתוך גיליון "סיווג התפקידים והעלויות" של
+   הקובץ עצמו — המחרוזות חייבות להתאים אחד-לאחד (כולל רווחים) לרשימות
+   הקובץ, אחרת בקרות התעריף המינימלי שבו נשברות. */
+function extractSchoolStaffTypes(buf) {
+  try {
+    const wb = XLSX.read(buf, { type: 'buffer' });
+    const sn = wb.SheetNames.find((n) => norm(n).includes('סיווג התפקידים'));
+    if (!sn) return null;
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+    let start = -1, typeCol = -1, roleCol = -1;
+    for (let i = 0; i < rows.length; i++) {
+      const cells = (rows[i] || []).map(norm);
+      const t = cells.findIndex((c) => c === 'איש צוות');
+      const r = cells.findIndex((c) => c === 'תפקיד');
+      if (t >= 0 && r >= 0) { start = i + 1; typeCol = t; roleCol = r; break; }
+    }
+    if (start < 0) return null;
+    const map = new Map();
+    for (let i = start; i < rows.length; i++) {
+      const row = rows[i] || [];
+      const t = row[typeCol] == null ? '' : String(row[typeCol]);
+      const r = row[roleCol] == null ? '' : String(row[roleCol]);
+      if (!t.trim() || !r.trim()) continue; // שורות תעריף בלבד (גננת/סייעת של גנים) — לא לרשימה
+      if (!map.has(t.trim())) map.set(t.trim(), { type: t.trim(), roles: [] });
+      map.get(t.trim()).roles.push(r); // שומרים את המחרוזת המדויקת של הקובץ
+    }
+    return map.size ? [...map.values()] : null;
+  } catch { return null; }
+}
+
 /* רשימת המוסדות (סמל + שם) מקובץ דוח הביצוע — מגיליון "מצבת והרשמה" של הרשות.
    נעצרים בגיליון הראשון שמניב תוצאות כדי לא לגרוף את הרשימה הארצית הנסתרת. */
 function extractInstitutions(buf) {
@@ -471,6 +512,7 @@ function extractInstitutions(buf) {
 
 module.exports = {
   fillMinistryReport, detectStartRow, extractInstitutions, extractCoordinatorGardens, extractExecGardens,
+  SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
   detectExpenseSheet, EXPENSE_LABEL_HE,
   STAFF_TYPES, MINISTRY_SHEET_HINT, COORD_SHEET_HINT,
 };

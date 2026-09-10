@@ -11,7 +11,30 @@ const { cascadeReport } = require('./clients');
 const { costDataForReport } = require('../lib/reportCosts');
 const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff } = require('../lib/budgetFile');
-const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, STAFF_TYPES } = require('../lib/fillMinistry');
+const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes } = require('../lib/fillMinistry');
+
+/* בבתי ספר אין "גננת"/"סייעת" — תרגום סוגי צוות של גנים (שמגיעים מדוח
+   העלות) לערכי הרשימה של תבנית בתי הספר, והצמדה למחרוזות המדויקות בקובץ */
+const SCHOOL_TYPE_MAP = {
+  'גננת': { staffType: 'מורה', role: 'בעל/ת תעודת הוראה שסיימ/ה 80% מהתואר' },
+  'סייעת חדשה': { staffType: 'מורה', role: 'עוזר/ת חינוך' },
+  'סייעת ממשיכה': { staffType: 'מורה', role: 'עוזר/ת חינוך' },
+  'רכזת גן': { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' },
+};
+function mapSchoolsStaff(staffType, role, schoolTypes) {
+  let st = staffType, rl = role;
+  const m = st && SCHOOL_TYPE_MAP[String(st).trim()];
+  if (m) { st = m.staffType; rl = m.role; }
+  const list = schoolTypes || SCHOOL_STAFF_TYPES;
+  if (st) {
+    const entry = list.find((x) => x.type.trim() === String(st).trim());
+    if (entry) {
+      const exact = rl && entry.roles.find((r) => r.trim() === String(rl).trim());
+      rl = exact || entry.roles[0];
+    }
+  }
+  return { staffType: st, role: rl };
+}
 const { salaryCheck, suggestRole, schoolsRoleByHours } = require('../lib/salaryCheck');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml } = require('../lib/costMatch');
@@ -252,18 +275,23 @@ router.get('/:id/prep', ah(async (req, res) => {
     }
   }
 
+  const isSchools = report.framework !== 'gardens';
+  const schoolTypes = isSchools && prepBuf ? extractSchoolStaffTypes(prepBuf) : null;
   const rows = rawRows.map((r) => {
     const sug = suggestRole(r.dept);
     // בתי ספר: רכז/סגן מזוהים לפי שעות (מעל 114 = רכז, ~93 = סגן) —
     // המשרד מציג את תקציב בית הספר רק כשמוגדר רכז בכל סמל
-    const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
+    const byHours = isSchools ? schoolsRoleByHours(r.hours) : null;
+    let stVal = r.staff_type || (byHours && byHours.staffType) || sug.staffType;
+    let roleVal = r.role || (byHours && byHours.role) || sug.role;
+    if (isSchools) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, schoolTypes));
     const fileSymbol = r.inst_symbol && validSymbols.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null;
     return {
       rowId: r.id, empId: r.emp_id, name: r.emp_name,
       firstName: r.first_name, lastName: r.last_name, dept: r.dept, instName: r.inst_name,
       symbol: r.symbol_override || fileSymbol || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null,
-      staffType: r.staff_type || (byHours && byHours.staffType) || sug.staffType,
-      role: r.role || (byHours && byHours.role) || sug.role,
+      staffType: stVal,
+      role: roleVal,
       saved: !!(r.symbol_override || r.staff_type || r.role),
       gross: r.gross, cost: r.cost, hours: r.hours,
       hourlyGross: r.gross != null && r.hours ? r.gross / r.hours : null,
@@ -295,7 +323,8 @@ router.get('/:id/prep', ah(async (req, res) => {
     .filter(Boolean);
 
   res.json({
-    rows, institutions, staffTypes: STAFF_TYPES,
+    rows, institutions,
+    staffTypes: isSchools ? (schoolTypes || SCHOOL_STAFF_TYPES) : STAFF_TYPES,
     employer: (authority && authority.name) || (client && client.name) || '',
     hasBudgetFile: !!prepBuf,
     budgetFileName: report.budget_file_name || null,
@@ -614,6 +643,8 @@ router.get('/:id/export', ah(async (req, res) => {
     || null;
 
   const round2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
+  // רשימות איש-צוות/תפקיד של תבנית בתי הספר — מהקובץ עצמו (מחרוזות מדויקות)
+  const exSchoolTypes = report.framework !== 'gardens' ? extractSchoolStaffTypes(ministryBuf) : null;
   // ללקוח חייב מע"מ — העלות השעתית המדווחת למשרד כוללת מע"מ (הברוטו נשאר כפי שהוא).
   // העלות המדווחת מוגבלת לנמוך מבין עלות×מע"מ לבין ברוטו שעתי×140% (תקרת המשרד);
   // ההפרש מול דוח העלות מוסבר ב"דוח ההתאמה לדוח עלות".
@@ -626,13 +657,16 @@ router.get('/:id/export', ah(async (req, res) => {
     const hourlyCost = rawHourlyCost != null && cap140 != null ? Math.min(rawHourlyCost, cap140) : rawHourlyCost;
     const sug = suggestRole(r.dept);
     const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
+    let stVal = r.staff_type || (byHours && byHours.staffType) || sug.staffType || '';
+    let roleVal = r.role || (byHours && byHours.role) || sug.role || '';
+    if (report.framework !== 'gardens') ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, exSchoolTypes));
     return [
       resolveSymbol(r), null, r.emp_id,
       r.first_name || (r.emp_name || '').split(' ')[0] || '',
       r.last_name || (r.emp_name || '').split(' ').slice(1).join(' ') || '',
       r.payer || employer, // "הועסק ע"י" — המשלם של הקובץ (מתנ"ס/רשות), אם הוגדר
-      r.staff_type || (byHours && byHours.staffType) || sug.staffType || '',
-      r.role || (byHours && byHours.role) || sug.role || '',
+      stVal || '',
+      roleVal || '',
       round2(hourlyGross), round2(hourlyCost), round2(r.hours),
       null,
     ];
