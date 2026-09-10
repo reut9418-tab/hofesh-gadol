@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { T } from '../theme';
 import { btn, card, input } from '../ui';
-import { getReportPrep, saveReportPrep, exportReportUrl, stage1DocUrl, costMatchDocUrl, applyMove, applyBumps, autoAssign, PrepData, Assignment } from '../api';
+import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, applyMove, applyBumps, autoAssign, PrepData, Assignment } from '../api';
 
 const fmt = (n: number | null, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -14,6 +14,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
   const [deptFilter, setDeptFilter] = useState('');
   const [bulk, setBulk] = useState<Assignment>({ symbol: null, staffType: null, role: null });
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   const load = () =>
@@ -59,14 +60,22 @@ export default function PrepSection({ reportId }: { reportId: number }) {
   };
 
   const doExport = async () => {
+    if (exporting) return;
     // התרעה על חריגת שכר לפני העברת הנתונים לדוח הביצוע
     const sal = data.salary;
     if (sal && (sal.overflow > 0 || sal.unfunded > 0)) {
       const lines = sal.alerts.map((a) => '• ' + a.text).join('\n');
       if (!window.confirm(`שימי לב — נמצאה חריגה בשכר:\n\n${lines}\n\nלהמשיך בייצוא בכל זאת?`)) return;
     }
-    await save();
-    window.open(exportReportUrl(reportId), '_blank');
+    setExporting(true); setMsg('שומר שיוכים ומכין את הקובץ…');
+    try {
+      await saveReportPrep(reportId, assign); // שמירה בלי לרענן את כל המסך
+      await downloadExport(reportId); // הורדה ישירה — בלי window.open שנחסם
+      setMsg('✓ הקובץ ירד לתיקיית ההורדות.');
+      load(); // רענון הבדיקות ברקע, אחרי שההורדה כבר בידיים
+    } catch (e: any) {
+      setMsg(e?.response?.data?.error || 'הייצוא נכשל — נסי שוב.');
+    } finally { setExporting(false); }
   };
 
   const rolesFor = (staffType: string | null) =>
@@ -98,10 +107,10 @@ export default function PrepSection({ reportId }: { reportId: number }) {
           <button onClick={() => window.open(costMatchDocUrl(reportId), '_blank')} style={btn('ghost')}
             title="הסבר למשרד החינוך: העלות השעתית שדווחה = הנמוך מבין עלות + מע&quot;מ לבין ברוטו + 40%">🧾 דוח התאמה לדוח עלות</button>
           <button onClick={save} disabled={busy} style={btn('ghost')}>{busy ? 'שומר…' : 'שמירת שיוכים'}</button>
-          <button onClick={doExport} disabled={busy || !data.hasBudgetFile}
+          <button onClick={doExport} disabled={busy || exporting || !data.hasBudgetFile}
             title={data.hasBudgetFile ? '' : 'קודם מעלים דוח ביצוע של המשרד (בסקשן התקציב)'}
-            style={{ ...btn('primary'), opacity: busy || !data.hasBudgetFile ? 0.6 : 1 }}>
-            ⬇ הורדת דוח ביצוע ממולא
+            style={{ ...btn('primary'), opacity: busy || exporting || !data.hasBudgetFile ? 0.6 : 1 }}>
+            {exporting ? '⏳ מכין את הקובץ…' : '⬇ הורדת דוח ביצוע ממולא'}
           </button>
         </span>
       </div>

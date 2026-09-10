@@ -97,14 +97,19 @@ function resolveSheetPath(wbXml, relsXml, hint) {
 function applyRowsToSheetXml(xml, colSpecs, startRow, rows, clearBelow = 500) {
   // סגנונות ייחוס משורת הנתונים הראשונה, כדי שהעיצוב יישמר
   const refStyles = {};
+  const formulaCols = new Set();
   const refRowM = new RegExp(`<row r="${startRow}"[^>]*>([\\s\\S]*?)</row>`).exec(xml);
   if (refRowM) {
     const rc = parseRowCells(refRowM[1]);
     for (const { col } of colSpecs) {
       const cm = /\bs="(\d+)"/.exec((rc[col] || {}).attrs || '');
       if (cm) refStyles[col] = cm[1];
+      // עמודה שבתבנית היא נוסחה (למשל "תפקיד" בבתי"ס — נוסחה משותפת של
+      // המשרד) — אסור לגעת בה: דריסת תא-האב של נוסחה משותפת משחיתה את הקובץ
+      if (rc[col] && /<f[\s>]/.test(rc[col].full)) formulaCols.add(col);
     }
   }
+  colSpecs = colSpecs.filter(({ col }) => !formulaCols.has(col));
 
   const renderRow = (cellsMap, rowNum, values) => {
     for (const { src, col, kind } of colSpecs) {
@@ -122,13 +127,13 @@ function applyRowsToSheetXml(xml, colSpecs, startRow, rows, clearBelow = 500) {
     const rowRe = new RegExp(`<row r="${rowNum}"([^>]*)>([\\s\\S]*?)</row>`);
     const rm = rowRe.exec(xml);
     if (rm) {
-      xml = xml.replace(rowRe, `<row r="${rowNum}"${rm[1]}>${renderRow(parseRowCells(rm[2]), rowNum, row)}</row>`);
+      xml = xml.replace(rowRe, () => `<row r="${rowNum}"${rm[1]}>${renderRow(parseRowCells(rm[2]), rowNum, row)}</row>`); // פונקציה — $2 בנוסחאות משחית
     } else {
       const newRow = `<row r="${rowNum}" spans="1:28">${renderRow({}, rowNum, row)}</row>`;
       const re = /<row r="(\d+)"/g;
       let insertAt = -1, mm;
       while ((mm = re.exec(xml)) !== null) { if (parseInt(mm[1]) > rowNum) { insertAt = mm.index; break; } }
-      xml = insertAt >= 0 ? xml.slice(0, insertAt) + newRow + xml.slice(insertAt) : xml.replace('</sheetData>', newRow + '</sheetData>');
+      xml = insertAt >= 0 ? xml.slice(0, insertAt) + newRow + xml.slice(insertAt) : xml.replace('</sheetData>', () => newRow + '</sheetData>');
     }
   });
 
@@ -140,7 +145,7 @@ function applyRowsToSheetXml(xml, colSpecs, startRow, rows, clearBelow = 500) {
     const cells = parseRowCells(rm[2]);
     const hasValue = colSpecs.some(({ col }) => cells[col] && /<v>|<is>/.test(cells[col].full));
     if (!hasValue) continue;
-    xml = xml.replace(rowRe, `<row r="${rowNum}"${rm[1]}>${renderRow(cells, rowNum, null)}</row>`);
+    xml = xml.replace(rowRe, () => `<row r="${rowNum}"${rm[1]}>${renderRow(cells, rowNum, null)}</row>`); // פונקציה — $2 בנוסחאות משחית
   }
   return xml;
 }
@@ -302,13 +307,15 @@ function setCellsInSheetXml(xml, writes) {
       cells[w.col] = { colLetter: w.col, full: buildCell(w.col, rowNum, style, w.kind, w.value) };
     });
     const inner = Object.values(cells).sort((a, b) => colToNum(a.colLetter) - colToNum(b.colLetter)).map((c) => c.full).join('');
-    if (rm) xml = xml.replace(rowRe, `<row r="${rowNum}"${rm[1]}>${inner}</row>`);
+    // חובה פונקציית-החלפה: בנוסחאות של המשרד יש "$2"/"$1" ($C$20...) —
+    // בהחלפת-מחרוזת הם מתפרשים כקבוצות רגקס ומשחיתים את הקובץ!
+    if (rm) xml = xml.replace(rowRe, () => `<row r="${rowNum}"${rm[1]}>${inner}</row>`);
     else {
       const newRow = `<row r="${rowNum}" spans="1:28">${inner}</row>`;
       const re = /<row r="(\d+)"/g;
       let insertAt = -1, mm;
       while ((mm = re.exec(xml)) !== null) { if (parseInt(mm[1]) > rowNum) { insertAt = mm.index; break; } }
-      xml = insertAt >= 0 ? xml.slice(0, insertAt) + newRow + xml.slice(insertAt) : xml.replace('</sheetData>', newRow + '</sheetData>');
+      xml = insertAt >= 0 ? xml.slice(0, insertAt) + newRow + xml.slice(insertAt) : xml.replace('</sheetData>', () => newRow + '</sheetData>');
     }
   }
   return xml;
@@ -469,8 +476,9 @@ function extractSchoolStaffTypes(buf) {
       const t = row[typeCol] == null ? '' : String(row[typeCol]);
       const r = row[roleCol] == null ? '' : String(row[roleCol]);
       if (!t.trim() || !r.trim()) continue; // שורות תעריף בלבד (גננת/סייעת של גנים) — לא לרשימה
-      if (!map.has(t.trim())) map.set(t.trim(), { type: t.trim(), roles: [] });
-      map.get(t.trim()).roles.push(r); // שומרים את המחרוזת המדויקת של הקובץ
+      // שומרים את המחרוזות המדויקות של הקובץ (כולל רווחים) — ההשוואות בקובץ תו-בתו
+      if (!map.has(t.trim())) map.set(t.trim(), { type: t, roles: [] });
+      map.get(t.trim()).roles.push(r);
     }
     return map.size ? [...map.values()] : null;
   } catch { return null; }
@@ -493,9 +501,16 @@ function extractInstitutions(buf) {
         const row = rows[i] || [];
         const name = norm(row[nameCol]);
         if (!name) continue;
-        [norm(row[symCol]), actCol >= 0 ? norm(row[actCol]) : ''].forEach((s) => {
-          if (/^\d{3,}$/.test(s) && !out.has(s)) out.set(s, { symbol: s, name });
-        });
+        const official = norm(row[symCol]);
+        const act = actCol >= 0 ? norm(row[actCol]) : '';
+        // בתי ספר מאוחדים: הפעילות מתקיימת בסמל אחר — בדוח הביצוע מדווחים
+        // את סמל מקום הפעילות; הסמל הרשמי נשמר עם הפניה אליו
+        const target = /^\d{3,}$/.test(act) ? act : (/^\d{3,}$/.test(official) ? official : '');
+        if (!target) continue;
+        if (!out.has(target)) out.set(target, { symbol: target, name });
+        if (/^\d{3,}$/.test(official) && official !== target && !out.has(official)) {
+          out.set(official, { symbol: official, name, activitySymbol: target });
+        }
       }
       break; // שורת כותרות אחת לגיליון
     }

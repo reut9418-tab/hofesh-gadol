@@ -192,6 +192,20 @@ export const saveReportPrep = (reportId: number, assignments: Record<string, Ass
   api.put(`/reports/${reportId}/prep`, { assignments }).then((r) => r.data);
 export const exportReportUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/export`;
 
+/* הורדת הייצוא ישירות (blob) — window.open אחרי await ארוך נחסם כחלון
+   קופץ על ידי כרום, ולכן לפעמים "לא קרה כלום" */
+export const downloadExport = async (reportId: number) => {
+  const res = await api.get(`/reports/${reportId}/export`, { responseType: 'blob' });
+  const dispo: string = res.headers['content-disposition'] || '';
+  const m = /filename\*=UTF-8''([^;]+)/.exec(dispo);
+  const name = m ? decodeURIComponent(m[1]) : `דוח ביצוע ממולא - ${reportId}.xlsx`;
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+};
+
 /* ---------- כרטסות + התאמה (צעד 6) ---------- */
 export type LedgerCard = {
   id: number; ledger_file_id: number; card_key: string; card_name: string;

@@ -7,7 +7,7 @@ const fs = require('fs');
 const { initDatabase } = require('./db');
 
 const app = express();
-app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5273' }));
+app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5273', exposedHeaders: ['Content-Disposition'] }));
 app.use(express.json());
 
 // בענן: השרת מגיש גם את הממשק הבנוי (frontend/dist) — שירות אחד לדומיין

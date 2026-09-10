@@ -29,6 +29,7 @@ function mapSchoolsStaff(staffType, role, schoolTypes) {
   if (st) {
     const entry = list.find((x) => x.type.trim() === String(st).trim());
     if (entry) {
+      st = entry.type; // המחרוזת המדויקת של הקובץ — ההשוואות בו תו-בתו
       const exact = rl && entry.roles.find((r) => r.trim() === String(rl).trim());
       rl = exact || entry.roles[0];
     }
@@ -45,6 +46,30 @@ const { stage1Data, renderStage1Html } = require('../lib/stage1');
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+/* מטמון פר-דוח לנגזרות היקרות של קובץ המשרד (פענוח 2-3MB בכל בקשה האט
+   את כל המסכים) — מתרוקן אוטומטית כשמעלים קובץ חדש לדוח */
+const ministryCache = new Map(); // reportId -> { fileName, buf, institutions, schoolTypes, redirect, coordGardens, execGardens }
+async function ministryData(db, report) {
+  const key = report.id;
+  const cached = ministryCache.get(key);
+  if (cached && cached.fileName === (report.budget_file_name || '')) return cached;
+  const buf = await budgetFileBuf(db, report);
+  const entry = { fileName: report.budget_file_name || '', buf, institutions: [], schoolTypes: null, redirect: new Map(), coordGardens: [], execGardens: [] };
+  if (buf) {
+    try { entry.institutions = extractInstitutions(buf); } catch { /* בלי רשימה */ }
+    // בתי ספר מאוחדים: הסמל הרשמי מפנה לסמל שבו מתקיימת הפעילות
+    entry.redirect = new Map(entry.institutions.filter((i) => i.activitySymbol).map((i) => [String(i.symbol), String(i.activitySymbol)]));
+    if (report.framework !== 'gardens') {
+      try { entry.schoolTypes = extractSchoolStaffTypes(buf); } catch { /* ברירת מחדל */ }
+    } else {
+      try { entry.coordGardens = extractCoordinatorGardens(buf); } catch { /* ריק */ }
+      try { entry.execGardens = extractExecGardens(buf); } catch { /* ריק */ }
+    }
+  }
+  ministryCache.set(key, entry);
+  return entry;
+}
 
 /* קובץ המשרד השמור של הדוח: מהדיסק אם קיים, אחרת מהמסד (הדיסק בענן מתאפס
    בכל פריסה — העותק במסד הוא הקבוע). כשמשחזרים מהמסד כותבים גם לדיסק. */
@@ -209,6 +234,7 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   // עותק קבוע במסד — שורד את איפוס הדיסק של הענן בכל פריסה
   await db.prepare('DELETE FROM report_files WHERE report_id = ?').run(id);
   await db.prepare('INSERT INTO report_files (report_id, data) VALUES (?, ?)').run(id, req.file.buffer);
+  ministryCache.delete(id); // הקובץ התחלף — הנגזרות ייבנו מחדש
 
   const totalBudget = parsed.institutions.reduce((s, i) => s + (i.total || 0), 0);
   const fallbackInst = parsed.institutions.find((i) => i.ratesFallback);
@@ -253,12 +279,11 @@ router.get('/:id/prep', ah(async (req, res) => {
   if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
 
   // רשימת המוסדות מקובץ המשרד השמור (מצבת והרשמה) — לבחירת סמל מקום פעילות
-  let institutions = [];
-  const prepBuf = await budgetFileBuf(db, report);
-  if (prepBuf) {
-    try { institutions = extractInstitutions(prepBuf); } catch { /* בלי רשימה */ }
-  }
+  const md = await ministryData(db, report);
+  const institutions = md.institutions;
+  const prepBuf = md.buf;
   const validSymbols = new Set(institutions.map((i) => i.symbol));
+  const toActivity = (s) => (s ? (md.redirect.get(String(s)) || s) : s);
 
   const rawRows = await db.prepare(
     `SELECT cr.id, cr.emp_id, cr.emp_name, cr.first_name, cr.last_name, cr.dept,
@@ -278,7 +303,7 @@ router.get('/:id/prep', ah(async (req, res) => {
   }
 
   const isSchools = report.framework !== 'gardens';
-  const schoolTypes = isSchools && prepBuf ? extractSchoolStaffTypes(prepBuf) : null;
+  const schoolTypes = isSchools ? md.schoolTypes : null;
   const rows = rawRows.map((r) => {
     const sug = suggestRole(r.dept);
     // בתי ספר: רכז/סגן מזוהים לפי שעות (מעל 114 = רכז, ~93 = סגן) —
@@ -291,7 +316,7 @@ router.get('/:id/prep', ah(async (req, res) => {
     return {
       rowId: r.id, empId: r.emp_id, name: r.emp_name,
       firstName: r.first_name, lastName: r.last_name, dept: r.dept, instName: r.inst_name,
-      symbol: r.symbol_override || fileSymbol || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null,
+      symbol: toActivity(r.symbol_override || fileSymbol || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null),
       staffType: stVal,
       role: roleVal,
       saved: !!(r.symbol_override || r.staff_type || r.role),
@@ -301,8 +326,13 @@ router.get('/:id/prep', ah(async (req, res) => {
     };
   });
 
-  const client = await db.prepare('SELECT name, has_vat FROM clients WHERE id = ?').get(report.client_id);
-  const authority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  // הבדיקות רצות במקביל — כל אחת עושה כמה סבבי-רשת ל-DB בענן
+  const [client, authority, salaryRes, recsRes] = await Promise.all([
+    db.prepare('SELECT name, has_vat FROM clients WHERE id = ?').get(report.client_id),
+    report.authority_id ? db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null,
+    salaryCheck(db, report),
+    recommendations(db, report),
+  ]);
 
   // מועמדים להתאמת ברוטו (עד 5 ₪ לשעה): העלות המוכרת חורגת מ-140% מהברוטו,
   // והגדלה קטנה של הברוטו מיישרת את בקרת המשרד בלי לוותר על הכרה בעלות
@@ -330,9 +360,9 @@ router.get('/:id/prep', ah(async (req, res) => {
     employer: (authority && authority.name) || (client && client.name) || '',
     hasBudgetFile: !!prepBuf,
     budgetFileName: report.budget_file_name || null,
-    salary: await salaryCheck(db, report),
+    salary: salaryRes,
     framework: report.framework,
-    recommendations: await recommendations(db, report),
+    recommendations: recsRes,
     bumps,
   });
 }));
@@ -346,23 +376,15 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
   const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
   if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
   if (report.framework !== 'gardens') return res.status(400).json({ error: 'שיוך אוטומטי מלא זמין כרגע לדוחות גנים.' });
-  const buf = await budgetFileBuf(db, report);
-  if (!buf) return res.status(422).json({ error: 'אין קובץ דוח ביצוע שמור — יש להעלות קודם את קובץ המשרד.' });
-  let gardens = [];
-  try { gardens = extractExecGardens(buf); } catch { /* ריק */ }
-  if (!gardens.length) {
-    // גיבוי: סמלי ההרשמה
-    try { gardens = extractInstitutions(buf).map((i) => i.symbol); } catch { /* ריק */ }
-  }
+  const aaMd = await ministryData(db, report);
+  if (!aaMd.buf) return res.status(422).json({ error: 'אין קובץ דוח ביצוע שמור — יש להעלות קודם את קובץ המשרד.' });
+  let gardens = aaMd.execGardens.length ? aaMd.execGardens : aaMd.institutions.map((i) => i.symbol);
   if (!gardens.length) return res.status(422).json({ error: 'לא נמצאו סמלי גנים בלשונית "גנים - דוח ביצוע" של הקובץ.' });
 
   const rows = await db.prepare('SELECT * FROM cost_rows WHERE report_id = ?').all(id);
-  const exNameSymbol = (() => {
-    try {
-      const insts = extractInstitutions(buf);
-      return matchDeptsToInstitutions(insts, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))]);
-    } catch { return {}; }
-  })();
+  const exNameSymbol = aaMd.institutions.length
+    ? matchDeptsToInstitutions(aaMd.institutions, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))])
+    : {};
   const validSet = new Set(gardens);
   const symbolOf = (r) => r.symbol_override
     || (r.inst_symbol && validSet.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
@@ -398,11 +420,15 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
     updates.push([gardens[gi % gardens.length], u]);
     gi++;
   }
-  for (const [g, u] of updates) {
-    const role = u.r.role || (/סייע/.test(u.st) ? 'סייעת' : 'גננת של הגן');
-    await db.prepare('UPDATE cost_rows SET symbol_override = ?, staff_type = COALESCE(staff_type, ?), role = COALESCE(role, ?) WHERE id = ?')
-      .run(g, u.st, role, u.r.id);
-    assigned++;
+  // עדכונים במקביל (בקבוצות) — כל סבב-רשת ל-DB בענן עולה ~50ms
+  const CHUNK = 10;
+  for (let i = 0; i < updates.length; i += CHUNK) {
+    await Promise.all(updates.slice(i, i + CHUNK).map(([g, u]) => {
+      const role = u.r.role || (/סייע/.test(u.st) ? 'סייעת' : 'גננת של הגן');
+      assigned++;
+      return db.prepare('UPDATE cost_rows SET symbol_override = ?, staff_type = COALESCE(staff_type, ?), role = COALESCE(role, ?) WHERE id = ?')
+        .run(g, u.st, role, u.r.id);
+    }));
   }
   res.json({ ok: true, assigned, gardens: gardens.length });
 }));
@@ -443,13 +469,17 @@ router.put('/:id/prep', ah(async (req, res) => {
   const db = getDB();
   const id = parseInt(req.params.id);
   if (!(await db.prepare('SELECT id FROM reports WHERE id = ?').get(id))) return res.status(404).json({ error: 'דוח לא נמצא' });
+  // עדכון ישיר עם תנאי report_id (בלי SELECT מקדים) ובמקביל בקבוצות —
+  // כל סבב-רשת ל-DB בענן עולה ~50ms, ושמירת 90 שיוכים לקחה שניות
   let updated = 0;
-  for (const [rowId, a] of Object.entries(parsed.data.assignments)) {
-    const r = await db.prepare('SELECT id FROM cost_rows WHERE id = ? AND report_id = ?').get(parseInt(rowId), id);
-    if (!r) continue;
-    await db.prepare('UPDATE cost_rows SET symbol_override = ?, staff_type = ?, role = ? WHERE id = ?')
-      .run(a.symbol || null, a.staffType || null, a.role || null, r.id);
-    updated++;
+  const entries = Object.entries(parsed.data.assignments);
+  const CHUNK = 10;
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    const results = await Promise.all(entries.slice(i, i + CHUNK).map(([rowId, a]) =>
+      db.prepare('UPDATE cost_rows SET symbol_override = ?, staff_type = ?, role = ? WHERE id = ? AND report_id = ?')
+        .run(a.symbol || null, a.staffType || null, a.role || null, parseInt(rowId), id)
+    ));
+    updated += results.reduce((s, r) => s + (r.changes || 0), 0);
   }
   res.json({ ok: true, updated });
 }));
@@ -613,7 +643,8 @@ router.get('/:id/export', ah(async (req, res) => {
   const id = parseInt(req.params.id);
   const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
   if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
-  const ministryBuf = await budgetFileBuf(db, report);
+  const exMd = await ministryData(db, report);
+  const ministryBuf = exMd.buf;
   if (!ministryBuf) {
     return res.status(422).json({ error: 'אין קובץ דוח ביצוע שמור לדוח זה — יש להעלות קודם את קובץ המשרד.' });
   }
@@ -629,24 +660,25 @@ router.get('/:id/export', ah(async (req, res) => {
   if (!rows.length) return res.status(422).json({ error: 'אין שורות שכר מנותבות לדוח זה.' });
 
   // שיוך סמל אוטומטי גם בייצוא: שם הגן/בי"ס שבשורה מול לשונית ההרשמה
-  const srcBufEarly = ministryBuf;
-  let exInstitutions = [];
-  try { exInstitutions = extractInstitutions(srcBufEarly); } catch { /* בלי רשימה */ }
+  const exInstitutions = exMd.institutions;
   const exValid = new Set(exInstitutions.map((i) => i.symbol));
   const exNameSymbol = exInstitutions.length
     ? matchDeptsToInstitutions(exInstitutions, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))]) : {};
   const exDeptSymbol = exInstitutions.length && report.framework !== 'gardens'
     ? matchDeptsToInstitutions(exInstitutions, [...new Set(rows.map((r) => r.dept))]) : {};
-  const resolveSymbol = (r) =>
-    r.symbol_override
-    || (r.inst_symbol && exValid.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
-    || (r.inst_name && exNameSymbol[r.inst_name])
-    || exDeptSymbol[r.dept]
-    || null;
+  // בתי ספר מאוחדים: בדוח הביצוע נרשם סמל מקום הפעילות, לא הסמל הרשמי
+  const resolveSymbol = (r) => {
+    const s = r.symbol_override
+      || (r.inst_symbol && exValid.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
+      || (r.inst_name && exNameSymbol[r.inst_name])
+      || exDeptSymbol[r.dept]
+      || null;
+    return s ? (exMd.redirect.get(String(s)) || s) : null;
+  };
 
   const round2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
   // רשימות איש-צוות/תפקיד של תבנית בתי הספר — מהקובץ עצמו (מחרוזות מדויקות)
-  const exSchoolTypes = report.framework !== 'gardens' ? extractSchoolStaffTypes(ministryBuf) : null;
+  const exSchoolTypes = report.framework !== 'gardens' ? exMd.schoolTypes : null;
   // ללקוח חייב מע"מ — העלות השעתית המדווחת למשרד כוללת מע"מ (הברוטו נשאר כפי שהוא).
   // העלות המדווחת מוגבלת לנמוך מבין עלות×מע"מ לבין ברוטו שעתי×140% (תקרת המשרד);
   // ההפרש מול דוח העלות מוסבר ב"דוח ההתאמה לדוח עלות".
@@ -677,8 +709,7 @@ router.get('/:id/export', ah(async (req, res) => {
   const srcBuf = ministryBuf;
   let coordRows = null;
   if (report.framework === 'gardens') {
-    const gardens = extractCoordinatorGardens(srcBuf);
-    coordRows = gardens.map((sym, i) => [i + 1, sym, 0.2]);
+    coordRows = exMd.coordGardens.map((sym, i) => [i + 1, sym, 0.2]);
   }
 
   const expenses = await buildExpenseFill(db, report, client);
