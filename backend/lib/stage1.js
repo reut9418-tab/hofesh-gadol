@@ -4,7 +4,7 @@
    בתי"ס פר סמל מוסד, גנים במרוכז. מוגש כדף HTML להדפסה/PDF. */
 
 const { costDataForReport } = require('./reportCosts');
-const { salaryCheck } = require('./salaryCheck');
+const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours } = require('./salaryCheck');
 const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions } = require('./nameMatch');
 const { reportLabel } = require('./domain');
@@ -62,17 +62,36 @@ async function stage1Data(db, report, client, authority) {
     : {};
   const rowSymbol = (r) => r.symbol_override || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null;
 
-  const mkUnit = (name, symbol, baskets, salaryNet, salaryRecognized, children, salaryByPayer) => {
+  // פיצול הניצול המוכר של יחידה לסל הדרכה מול סל הריכוז (רכז+סגן) —
+  // ההשוואה במכתב היא סל-מול-סל, לא סך שכר מול סך תקציבים
+  const splitRecognized = (unitRows) => {
+    let instr = 0, coord = 0;
+    for (const r of unitRows) {
+      const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
+      const st = r.staff_type || (byHours && byHours.staffType) || suggestRole(r.dept).staffType;
+      const v = recognizedRowCost(r, vatFactor);
+      if (basketForStaff(st) === 'instruction') instr += v; else coord += v;
+    }
+    return { instr, coord };
+  };
+
+  const mkUnit = (name, symbol, baskets, salaryNet, split, children, salaryByPayer) => {
     // מול התקציב משווים את הניצול המוכר: עלות + מע"מ ללקוח חייב, מוגבל
-    // פר-עובד לתקרת 140% מהברוטו (כמו בדיווח בפועל);
-    // יעד הכרטסת נשאר נטו מלא — כך נרשם בהנהלת החשבונות
-    const salaryActual = salaryRecognized;
-    const salaryBudget = (baskets.instruction || 0) + (baskets.coordinator || 0) + (baskets.deputy || 0);
+    // פר-עובד לתקרת 140% (כמו בדיווח). ההשוואה סל-מול-סל: הדרכה לבד,
+    // ריכוז (רכז+סגן) לבד; יתרה בסל אחד אינה מכסה חריגה באחר — רק הסל
+    // הגמיש בולע חריגות. יעד הכרטסת נשאר נטו מלא — כך בהנהלת החשבונות.
+    const instrBudget = baskets.instruction || 0;
+    const coordBudget = (baskets.coordinator || 0) + (baskets.deputy || 0);
+    const instrActual = split.instr, coordActual = split.coord;
+    const salaryActual = instrActual + coordActual;
+    const salaryBudget = instrBudget + coordBudget;
     const enrichB = baskets.enrichment || 0;
     const flexB = baskets.flexible || 0;
     const breakfastB = baskets.breakfast || 0;
-    const salaryUnused = Math.max(0, salaryBudget - salaryActual);
-    const overflow = Math.max(0, salaryActual - salaryBudget);
+    const instrOver = Math.max(0, instrActual - instrBudget);
+    const coordOver = Math.max(0, coordActual - coordBudget);
+    const salaryUnused = Math.max(0, instrBudget - instrActual) + Math.max(0, coordBudget - coordActual);
+    const overflow = instrOver + coordOver; // סך החריגות הסליות — אותן בולע הגמיש
     // דוח הביצוע של המשרד בולע חריגת שכר בסל הגמיש אוטומטית — היתרה הזמינה
     // באמת לניצול (ארוחות בוקר/מלגות/גמיש) היא מה שנשאר אחרי הבליעה
     const flexConsumed = Math.min(overflow, flexB);
@@ -82,8 +101,8 @@ async function stage1Data(db, report, client, authority) {
     const breakfastPot = Math.abs(breakfastB - flexB) < 1 ? flexB : breakfastB + flexB;
     const breakfastAvailable = Math.max(0, breakfastPot - flexConsumed);
     // אופציה א: הסל הגמיש לארוחות בוקר/מלגות → תוספת העשרה = הנמוך מבין
-    // 25% מתקציב ההעשרה לבין יתרת השכר שטרם נוצלה
-    const enrichBonus = salaryUnused > 0 ? Math.min(0.25 * enrichB, salaryUnused) : 0;
+    // 25% מתקציב ההעשרה לבין יתרת השכר שטרם נוצלה (רק כשאין חריגות סליות)
+    const enrichBonus = overflow === 0 && salaryUnused > 0 ? Math.min(0.25 * enrichB, salaryUnused) : 0;
     // חריגת שכר גדולה (מעבר לסל הגמיש): ממליצים להכיר ב-75% מתקציב ההעשרה
     // ולנתב 25% ממנו לכיסוי החריגה
     const uncovered = Math.max(0, overflow - flexConsumed);
@@ -94,6 +113,7 @@ async function stage1Data(db, report, client, authority) {
     return {
       name, symbol, children: children || 0,
       salaryBudget, salaryActual, salaryUnused, overflow,
+      instrBudget, instrActual, coordBudget, coordActual,
       enrichBudget: enrichB, flexBudget: flexB, breakfastBudget: breakfastB,
       flexConsumed, flexAvailable, uncovered, enrichShift,
       management: baskets.management || 0,
@@ -129,14 +149,12 @@ async function stage1Data(db, report, client, authority) {
       const b = await basketsOf(i.id);
       Object.entries(b).forEach(([k, v]) => { baskets[k] = (baskets[k] || 0) + v; });
     }
-    const recognized = rows.reduce((s, r) => s + recognizedRowCost(r, vatFactor), 0);
-    units = [mkUnit('כל הגנים (במרוכז)', null, baskets, cost.summary.totalCost, recognized, kids, payerSplit(rows))];
+    units = [mkUnit('כל הגנים (במרוכז)', null, baskets, cost.summary.totalCost, splitRecognized(rows), kids, payerSplit(rows))];
   } else {
     for (const i of insts) {
       const unitRows = rows.filter((r) => rowSymbol(r) === String(i.symbol));
       const actual = unitRows.reduce((s, r) => s + (r.cost || 0), 0);
-      const recognized = unitRows.reduce((s, r) => s + recognizedRowCost(r, vatFactor), 0);
-      units.push(mkUnit(i.name || i.symbol, String(i.symbol), await basketsOf(i.id), actual, recognized, i.children_count || 0, payerSplit(unitRows)));
+      units.push(mkUnit(i.name || i.symbol, String(i.symbol), await basketsOf(i.id), actual, splitRecognized(unitRows), i.children_count || 0, payerSplit(unitRows)));
     }
   }
 
@@ -209,11 +227,23 @@ function renderStage1Html(d) {
     const booksNote = d.hasVat
       ? ` <span class="soft">(עלות בספרים: ₪${fmt(u.targets.salary)}, ובתוספת מע"מ 18% ותקרות המשרד: ₪${fmt(u.salaryActual)})</span>`
       : '';
-    const salaryLine = u.overflow > 0
-      ? `בשכר נוצלו <b>₪${fmt(u.salaryActual)}</b> מתוך תקציב של ₪${fmt(u.salaryBudget)} — <span class="red">חריגה של ₪${fmt(u.overflow)}</span>${u.flexConsumed > 0 ? `, ממנה ₪${fmt(u.flexConsumed)} נבלעים אוטומטית בסל הגמיש` : ''}${u.overflow > u.flexConsumed ? ` <span class="red">(₪${fmt(u.overflow - u.flexConsumed)} נותרים ללא כיסוי ולא יוכרו)</span>` : ''}.${booksNote}`
-      : u.salaryUnused > 0
-        ? `בשכר נוצלו <b>₪${fmt(u.salaryActual)}</b> מתוך תקציב של ₪${fmt(u.salaryBudget)} — נותרה יתרה של <b class="green">₪${fmt(u.salaryUnused)}</b>.${booksNote}`
-        : `השכר נוצל במלואו: ₪${fmt(u.salaryActual)} מתוך ₪${fmt(u.salaryBudget)}.${booksNote}`;
+    // השוואה סל-מול-סל: הדרכה לבד, ריכוז לבד; רק הסל הגמיש בולע חריגות
+    const basketLine = (label, actual, budget) => {
+      if (!(budget > 0) && !(actual > 0)) return '';
+      const diff = budget - actual;
+      const stat = diff >= 0
+        ? (diff > 0 ? `יתרה <b class="green">₪${fmt(diff)}</b>` : 'נוצל במלואו')
+        : `<span class="red">חריגה ₪${fmt(-diff)}</span>`;
+      return `<div>${label}: נוצלו <b>₪${fmt(actual)}</b> מתוך ₪${fmt(budget)} — ${stat}.</div>`;
+    };
+    const flexLine = !(u.flexBudget > 0) ? '' : `<div>סל גמיש (₪${fmt(u.flexBudget)}): ${
+      u.flexConsumed > 0
+        ? `₪${fmt(u.flexConsumed)} מכסים את חריגות השכר${u.uncovered > 0 ? ` <span class="red">(₪${fmt(u.uncovered)} נותרים ללא כיסוי ולא יוכרו)</span>` : ''}; `
+        : ''
+    }יתרה <b>₪${fmt(u.flexAvailable)}</b> — לשכר או למלגות/ארוחות בוקר (האופציות למטה).</div>`;
+    const salaryLine = `${basketLine('סל הדרכה — שכר הצוות החינוכי', u.instrActual, u.instrBudget)}
+      ${basketLine(u.symbol == null ? 'סל ריכוז — רכזות גנים' : 'סל ריכוז — רכז/ת וסגן/ית', u.coordActual, u.coordBudget)}
+      ${flexLine}${booksNote ? `<div>${booksNote}</div>` : ''}`;
     // כשהסל הגמיש נבלע כולו בחריגת השכר — אין שתי אופציות, רק מצב נתון
     const optionsBlock = u.flexAvailable <= 0 && u.overflow > 0
       ? `<div class="opt" style="flex:none">
@@ -252,7 +282,7 @@ function renderStage1Html(d) {
         </ul>
       </div>`;
     return `<h3>${title}</h3>
-    <p class="salaryline">${salaryLine}</p>
+    <div class="salaryline">${salaryLine}</div>
     ${optionsBlock}`;
   }).join('');
 
