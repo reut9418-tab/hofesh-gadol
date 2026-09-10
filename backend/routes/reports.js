@@ -184,7 +184,9 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   await db.prepare('DELETE FROM institutions WHERE report_id = ?').run(id);
 
   for (const inst of parsed.institutions) {
-    const reg = inst.eligibleReg || 0, spec = inst.eligibleSpec || 0;
+    // קבצי המשרד מחשבים לעיתים זכאים כמספר עשרוני (אחוז בקרה × ילדים) —
+    // עמודות הילדים במסד הן מספרים שלמים, מעגלים
+    const reg = Math.round(inst.eligibleReg || 0), spec = Math.round(inst.eligibleSpec || 0);
     const iid = (await db.prepare(
       `INSERT INTO institutions (report_id, symbol, name, size_type, children_count, children_regular, children_special, budget_total, actual_total)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
