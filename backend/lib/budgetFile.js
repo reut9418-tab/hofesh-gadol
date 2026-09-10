@@ -181,8 +181,67 @@ function parseAggregateSheet(rows, sheetName) {
   return { sheetName, authority, aggregate: true, institutions };
 }
 
-/* מפענח קובץ דוח ביצוע → רשימת מוסדות עם תקציב מחושב לכל סל */
-function parseBudgetFile(buf) {
+/* תעריפי בתי הספר מגיליון "גנים ובתי ספר- מבנה תקציב" — לבניית תקציב
+   כשחישוב המשרד אופס (איוש משרות לא מולא). לתלמיד: סלי ניהול/הדרכה/
+   העשרה/גמיש; קבוע למוסד: שכר רכז (+סגן בבי"ס גדול) + ניהול. */
+function parseSchoolRates(wb, program) {
+  const sn = wb.SheetNames.find((n) => norm(n).includes('מבנה תקציב'));
+  if (!sn) return null;
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  const daysNeedle = program === 'extension' ? 'ל- 7 ימים' : 'ל- 15 ימים';
+  const wantExt = program === 'extension';
+
+  let inSchools = false, perCols = null, perChild = null, inSpecial = false;
+  let fixedCols = null, curSize = null, curExt = false;
+  const fixed = {};
+  for (const row of rows) {
+    const labels = (row || []).map(norm);
+    const has = (needle) => labels.findIndex((x) => x.includes(needle));
+    if (has('מבנה תקציבי בתי ספר') >= 0) { inSchools = true; continue; }
+    if (!inSchools) continue;
+
+    // --- עלות לתלמיד ---
+    if (!perCols && has('סל ניהול') >= 0 && has('סל הדרכה') >= 0) {
+      perCols = {
+        management: has('סל ניהול'), instruction: has('סל הדרכה'),
+        enrichment: has('סל העשרה'), flexible: has('סל גמיש'),
+      };
+      continue;
+    }
+    if (has('חנמ') >= 0 || has('חנ"מ') >= 0) inSpecial = true; // לא לוקחים תעריפי חינוך מיוחד
+    if (perCols && !perChild && !inSpecial && has(daysNeedle) >= 0) {
+      const vals = Object.fromEntries(Object.entries(perCols).map(([k, idx]) => [k, num(row[idx]) || 0]));
+      if (vals.instruction > 0) perChild = vals;
+      continue;
+    }
+
+    // --- קבוע למוסד ---
+    if (!fixedCols && has('שכר רכז') >= 0 && has('ניהול ותפעול') >= 0) {
+      fixedCols = { coordinator: has('שכר רכז'), deputy: has('שכר סגן'), management: has('ניהול ותפעול') };
+      continue;
+    }
+    if (fixedCols) {
+      const sizeIdx = labels.findIndex((x) => x.includes('עד 150') || x.includes('מעל 150'));
+      if (sizeIdx >= 0) {
+        curSize = labels[sizeIdx].includes('מעל') ? 'large' : 'small';
+        curExt = labels[sizeIdx].includes('הרחבה');
+      }
+      if (curSize && curExt === wantExt && !fixed[curSize] && has(daysNeedle) >= 0) {
+        fixed[curSize] = {
+          coordinator: num(row[fixedCols.coordinator]) || 0,
+          deputy: fixedCols.deputy >= 0 ? (num(row[fixedCols.deputy]) || 0) : 0,
+          management: num(row[fixedCols.management]) || 0,
+        };
+      }
+    }
+  }
+  if (!perChild) return null;
+  return { perChild, fixed };
+}
+
+/* מפענח קובץ דוח ביצוע → רשימת מוסדות עם תקציב מחושב לכל סל.
+   opts.program ('base15'/'extension') משמש את תעריפי הגיבוי של בתי הספר. */
+function parseBudgetFile(buf, opts = {}) {
   const wb = XLSX.read(buf, { type: 'buffer' });
   const sheetName = findBudgetSheet(wb);
   if (!sheetName) return { error: 'לא נמצא גיליון "תקצוב לפי מוסד" בקובץ — ודאי שזה קובץ דוח הביצוע של המשרד.' };
@@ -295,6 +354,30 @@ function parseBudgetFile(buf) {
   // בלוקים קיימים אך אף אחד בלי סמל אמיתי — הקובץ לא חוּשב (נוסחאות קפואות
   // או שלא נבחרה רשות בגיליון "נתונים כלליים")
   const schoolsNotComputed = blockCount > 0 && validBlocks === 0;
+
+  // חישוב המשרד אופס (איוש משרות לא מולא) אך דווחו ילדים — בונים תקציב
+  // מטבלת התעריפים הרשמית שבקובץ: לתלמיד × ילדים + קבוע למוסד (רכז/סגן/ניהול)
+  if (institutions.length && institutions.every((i) => !(i.total > 0))) {
+    const rates = parseSchoolRates(wb, opts.program);
+    if (rates) {
+      for (const inst of institutions) {
+        const kids = inst.reported > 0 ? inst.reported : (inst.eligibleReg || 0);
+        if (!(kids > 0)) continue;
+        const fx = rates.fixed[inst.size === 'large' ? 'large' : 'small'] || rates.fixed.small || { coordinator: 0, deputy: 0, management: 0 };
+        const b = inst.baskets;
+        b.instruction = Math.round(rates.perChild.instruction * kids * 100) / 100;
+        b.enrichment = Math.round(rates.perChild.enrichment * kids * 100) / 100;
+        b.flexible = Math.round(rates.perChild.flexible * kids * 100) / 100;
+        b.management = Math.round((rates.perChild.management * kids + fx.management) * 100) / 100;
+        if (fx.coordinator > 0) b.coordinator = fx.coordinator;
+        if (fx.deputy > 0) b.deputy = fx.deputy;
+        inst.total = Math.round(Object.values(b).reduce((s, v) => s + (v || 0), 0) * 100) / 100;
+        inst.eligibleReg = kids;
+        inst.ratesFallback = true;
+      }
+    }
+  }
+
   return { sheetName, authority, institutions, schoolsNotComputed };
 }
 
