@@ -301,7 +301,15 @@ function renderStage1Html(d) {
     const cells = [...sc, ...(anyBreakfast ? [`₪${fmt(t.breakfast)}`] : []), ...ec, ...(anyIncome ? [`₪${fmt(t.income)}`] : [])];
     totalsRow = `<tr class="total"><td>סה"כ</td>${cells.map((c) => `<td class="num">${c}</td>`).join('')}</tr>`;
   }
-  const targetsTable = `<table class="targets">
+  // אין מוסדות (טרם הועלה קובץ המשרד) או שכל השכר טרם שויך לסמלים —
+  // הודעה ברורה במקום טבלה ריקה/חסרת משמעות
+  const totalAssignedSalary = d.units.reduce((s, u) => s + (u.targets.salary || 0), 0);
+  const targetsMissing = d.units.length === 0
+    ? `<p class="note">⚠ טרם הועלה קובץ דוח הביצוע של המשרד לדוח זה — טבלת יעדי הכרטסות תיבנה אוטומטית לאחר העלאתו.</p>`
+    : totalAssignedSalary <= 0 && d.unassignedCost > 0
+      ? `<p class="note">⚠ כל עלות השכר (₪${fmt(d.unassignedCost)}) טרם שויכה לסמלי המוסדות — היעדים בטבלה יתמלאו לאחר שיוך העובדים במסך ההכנה (אפשר בשיוך קבוצתי לפי מחלקה).</p>`
+      : '';
+  const targetsTable = `${targetsMissing}<table class="targets">
     <thead><tr><th>${d.units.length > 1 ? 'בית ספר' : 'מסגרת'}</th>${headCols.map((h) => `<th class="num">${h}</th>`).join('')}</tr></thead>
     <tbody>${d.units.map(unitRow).join('')}${totalsRow}</tbody>
   </table>
