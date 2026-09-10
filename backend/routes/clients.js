@@ -34,8 +34,11 @@ async function buildTree(db) {
   const clients = await db.prepare('SELECT * FROM clients ORDER BY name').all();
   const authorities = await db.prepare('SELECT * FROM authorities ORDER BY name').all();
   const rawReports = await db.prepare('SELECT * FROM reports ORDER BY id').all();
+  // בריאות במקביל (בקבוצות) — בשילוב המטמון זה מה שהופך את המעבר בין מסכים למהיר
   const reports = [];
-  for (const r of rawReports) reports.push(await withHealth(db, r));
+  for (let i = 0; i < rawReports.length; i += 8) {
+    reports.push(...await Promise.all(rawReports.slice(i, i + 8).map((r) => withHealth(db, r))));
+  }
   return clients.map((c) => {
     const clientReports = reports.filter((r) => r.client_id === c.id);
     const stage = deriveClientStage(c, clientReports.map((r) => r.health));
@@ -115,13 +118,17 @@ router.get('/:id', ah(async (req, res) => {
   const rawReports = await db.prepare('SELECT * FROM reports WHERE client_id = ? ORDER BY id').all(id);
   const reports = [];
   let alerts = [];
-  for (const r of rawReports) {
-    const shaped = await withHealth(db, r);
+  const shapedAll = [];
+  for (let i = 0; i < rawReports.length; i += 8) {
+    shapedAll.push(...await Promise.all(rawReports.slice(i, i + 8).map((r) => withHealth(db, r))));
+  }
+  rawReports.forEach((r, i) => {
+    const shaped = shapedAll[i];
     reports.push(shaped);
     // ההתראות של הלקוח (עברו לכאן מהמסך הראשי)
     r._authorityName = r.authority_id ? auths[r.authority_id] : null;
     alerts = alerts.concat(reportAlerts(r, shaped.health));
-  }
+  });
   alerts.sort((a, b) => b.urgency - a.urgency);
   const authorities = (await db.prepare('SELECT * FROM authorities WHERE client_id = ? ORDER BY name').all(id))
     .map((a) => ({ ...a, reports: reports.filter((r) => r.authority_id === a.id) }));

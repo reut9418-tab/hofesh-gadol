@@ -13,8 +13,15 @@ const BUCKETS = {
   submitted: 'הוגשו',
 };
 
+/* מטמון בריאות פר-דוח: הלוח, העץ ומסכי הלקוח מחשבים את אותם דוחות שוב
+   ושוב (כל חישוב = שליפת שורות + בקרות). מתרוקן בכל בקשת-שינוי (server.js). */
+const healthCache = new Map(); // reportId -> health
+function bustHealthCache() { healthCache.clear(); }
+
 /* בריאות דוח בודד — הלב של המנוע */
 async function reportHealth(db, report) {
+  const cached = healthCache.get(report.id);
+  if (cached) return cached;
   const cost = await costDataForReport(db, report);
   const instRow = await db.prepare('SELECT COUNT(*) c, COALESCE(SUM(budget_total),0) budget FROM institutions WHERE report_id = ?').get(report.id);
   const instCount = Number(instRow.c);
@@ -53,7 +60,7 @@ async function reportHealth(db, report) {
   if (underUtil != null && underUtil >= 1000) todos.push(`${Math.round(underUtil).toLocaleString('he-IL')} ₪ תת-ניצול תקציב הניתן למיצוי — ראו המלצות (בהמשך).`);
   if (todos.length === 0) todos.push('כל הקלטים נקלטו והבקרות נקיות — מוכן להגשה.');
 
-  return {
+  const h = {
     bucket, bucketLabel: BUCKETS[bucket], completion,
     ingest, present,
     exceptions: { errors, warnings },
@@ -64,6 +71,8 @@ async function reportHealth(db, report) {
     underUtilization: underUtil, // תקציב מול ניצול (§9) — מזין "כסף על השולחן" בלוח
     todos,
   };
+  healthCache.set(report.id, h);
+  return h;
 }
 
 /* התראה בודדת ללוח הראשי (urgency גבוה = דחוף יותר) */
@@ -119,15 +128,21 @@ async function dashboardStatus(db) {
   let alerts = [];
   let moneyOnTable = 0;
 
-  for (const r of reports) {
-    const health = await reportHealth(db, r);
+  // חישוב הבריאות במקביל (בקבוצות) — כל דוח = כמה סבבי-רשת ל-DB
+  const CHUNK = 8;
+  const healths = [];
+  for (let i = 0; i < reports.length; i += CHUNK) {
+    healths.push(...await Promise.all(reports.slice(i, i + CHUNK).map((r) => reportHealth(db, r))));
+  }
+  reports.forEach((r, i) => {
+    const health = healths[i];
     buckets[health.bucket] = (buckets[health.bucket] || 0) + 1;
     (healthsByClient[r.client_id] = healthsByClient[r.client_id] || []).push(health);
     r._clientName = clients[r.client_id];
     r._authorityName = r.authority_id ? auths[r.authority_id] : null;
     alerts = alerts.concat(reportAlerts(r, health));
     if (health.underUtilization) moneyOnTable += health.underUtilization;
-  }
+  });
 
   // צנרת הלקוחות: מי הביא חומר, מי בטיפול, מי סיים
   const stageCounts = { no_material: 0, material: 0, in_treatment: 0, done: 0 };
@@ -148,4 +163,4 @@ async function dashboardStatus(db) {
   };
 }
 
-module.exports = { reportHealth, reportAlerts, dashboardStatus, deriveClientStage, BUCKETS, CLIENT_STAGES };
+module.exports = { reportHealth, reportAlerts, dashboardStatus, deriveClientStage, bustHealthCache, BUCKETS, CLIENT_STAGES };

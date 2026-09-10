@@ -9,6 +9,11 @@ const { initDatabase } = require('./db');
 const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5273', exposedHeaders: ['Content-Disposition'] }));
 app.use(express.json());
+// כל בקשת שינוי מרוקנת את מטמון בריאות-הדוחות (הלוח/העץ מחושבים מהר מהמטמון)
+app.use('/api', (req, _res, next) => {
+  if (req.method !== 'GET') require('./lib/status').bustHealthCache();
+  next();
+});
 
 // בענן: השרת מגיש גם את הממשק הבנוי (frontend/dist) — שירות אחד לדומיין
 const DIST = path.join(__dirname, '..', 'frontend', 'dist');

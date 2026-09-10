@@ -95,15 +95,21 @@ router.post('/clients/:clientId/cost-files', upload.single('file'), ah(async (re
   // הקובץ המקורי נשמר — מאפשר שיוך עמודות ידני וקליטה מחדש בכל רגע
   await db.prepare('INSERT INTO cost_file_blobs (cost_file_id, data) VALUES (?, ?)').run(fileId, req.file.buffer);
 
-  for (const r of parsed.records) {
+  // הכנסה בבת-אחת (קבוצות של 50) — הכנסה שורה-שורה מול DB בענן איטית מאוד
+  const values = parsed.records.map((r) => {
     // אם דוח השכר כולל עמודת "תפקיד" — איש הצוות והתפקיד נגזרים ממנה אוטומטית
     const staff = staffFromRoleText(r.roleText);
+    return [fileId, clientId, null, r.id, r.name || null, r.firstName, r.lastName, r.dept,
+      r.instSymbol, r.instName || null, JSON.stringify(r.componentNames || []), r.gross, r.cost, r.hours,
+      staff ? staff.staffType : null, staff ? staff.role : null];
+  });
+  for (let i = 0; i < values.length; i += 50) {
+    const chunk = values.slice(i, i + 50);
+    const ph = chunk.map(() => `(${Array(16).fill('?').join(',')})`).join(',');
     await db.prepare(
       `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept, inst_symbol, inst_name, component_names, gross, cost, hours, staff_type, role)
-       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(fileId, clientId, r.id, r.name || null, r.firstName, r.lastName, r.dept,
-      r.instSymbol, r.instName || null, JSON.stringify(r.componentNames || []), r.gross, r.cost, r.hours,
-      staff ? staff.staffType : null, staff ? staff.role : null);
+       VALUES ${ph}`
+    ).run(...chunk.flat());
   }
 
   // הצעת ניתוב לפי מה שנלמד; ברירת מחדל — הדוח היחיד אם ללקוח דוח אחד בלבד
@@ -322,7 +328,7 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
   await db.prepare('DELETE FROM cost_rows WHERE cost_file_id = ?').run(fileId);
 
   const routing = await learnedRouting(db, file.client_id);
-  for (const r of parsed.records) {
+  const vals2 = parsed.records.map((r) => {
     const staff = staffFromRoleText(r.roleText);
     const old = keep.get(`${r.id}|${norm(r.dept)}`);
     let reportId = old ? old.report_id : null;
@@ -330,18 +336,23 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
       const lv = routing[norm(r.dept)];
       if (lv !== undefined && lv !== 'none') reportId = parseInt(lv) || null;
     }
-    await db.prepare(
-      `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept, inst_symbol, inst_name, component_names, gross, cost, hours,
-         staff_type, role, symbol_override, gross_bump, moved_from_dept, moved_from_symbol, move_declined, moved_from_report, cross_declined)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(fileId, file.client_id, reportId, r.id, r.name || null, r.firstName, r.lastName, r.dept,
+    if (reportId) affectedReports.add(reportId);
+    return [fileId, file.client_id, reportId, r.id, r.name || null, r.firstName, r.lastName, r.dept,
       r.instSymbol, r.instName || null, JSON.stringify(r.componentNames || []), r.gross, r.cost, r.hours,
       (old && old.staff_type) || (staff ? staff.staffType : null),
       (old && old.role) || (staff ? staff.role : null),
       old ? old.symbol_override : null, old ? old.gross_bump : 0,
       old ? old.moved_from_dept : null, old ? old.moved_from_symbol : null, old ? old.move_declined : 0,
-      old ? old.moved_from_report : null, old ? old.cross_declined : 0);
-    if (reportId) affectedReports.add(reportId);
+      old ? old.moved_from_report : null, old ? old.cross_declined : 0];
+  });
+  for (let i = 0; i < vals2.length; i += 50) {
+    const chunk = vals2.slice(i, i + 50);
+    const ph = chunk.map(() => `(${Array(23).fill('?').join(',')})`).join(',');
+    await db.prepare(
+      `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept, inst_symbol, inst_name, component_names, gross, cost, hours,
+         staff_type, role, symbol_override, gross_bump, moved_from_dept, moved_from_symbol, move_declined, moved_from_report, cross_declined)
+       VALUES ${ph}`
+    ).run(...chunk.flat());
   }
   await db.prepare('UPDATE cost_files SET software = ?, sheets_used = ?, row_count = ? WHERE id = ?')
     .run(parsed.software, JSON.stringify(parsed.sheetsUsed), parsed.records.length, fileId);
