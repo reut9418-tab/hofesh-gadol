@@ -239,6 +239,39 @@ function parseSchoolRates(wb, program) {
   return { perChild, fixed };
 }
 
+/* כמות הנרשמים פר בית ספר מלשונית "מצבת והרשמה" — גיבוי כשגם "דיווח
+   הרשות" בבלוקים ריק (קרית מוצקין): המשרד מתקצב לפי הנרשמים. */
+function parseRegistrationCounts(wb) {
+  const sn = wb.SheetNames.find((n) => norm(n).includes('מצבת והרשמה'));
+  if (!sn) return {};
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  let cols = null;
+  const out = {};
+  for (const row of rows) {
+    const labels = (row || []).map(norm);
+    if (!cols) {
+      const sym = labels.findIndex((x) => x === 'סמל בית ספר' || x === 'סמל גן' || x === 'סמל מוסד');
+      const reg = labels.findIndex((x) => x.includes('חינוך רגיל שנרשמו') || x.includes('רגיל שנר'));
+      if (sym >= 0 && reg >= 0) {
+        cols = {
+          sym, reg,
+          spec: labels.findIndex((x) => x.includes('מיוחד שנרשמו') || x.includes('מיוחד שנ')),
+          large: labels.findIndex((x) => x.includes('גדול')),
+        };
+      }
+      continue;
+    }
+    const s = norm(row[cols.sym]);
+    if (!/^\d{3,}$/.test(s)) continue;
+    out[s] = {
+      reg: num(row[cols.reg]) || 0,
+      spec: cols.spec >= 0 ? (num(row[cols.spec]) || 0) : 0,
+      large: cols.large >= 0 && norm(row[cols.large]).includes('כן'),
+    };
+  }
+  return out;
+}
+
 /* מפענח קובץ דוח ביצוע → רשימת מוסדות עם תקציב מחושב לכל סל.
    opts.program ('base15'/'extension') משמש את תעריפי הגיבוי של בתי הספר. */
 function parseBudgetFile(buf, opts = {}) {
@@ -359,10 +392,17 @@ function parseBudgetFile(buf, opts = {}) {
   // מטבלת התעריפים הרשמית שבקובץ: לתלמיד × ילדים + קבוע למוסד (רכז/סגן/ניהול)
   if (institutions.length && institutions.every((i) => !(i.total > 0))) {
     const rates = parseSchoolRates(wb, opts.program);
+    const regCounts = parseRegistrationCounts(wb);
     if (rates) {
       for (const inst of institutions) {
-        const kids = inst.reported > 0 ? inst.reported : (inst.eligibleReg || 0);
+        const regInfo = regCounts[String(inst.symbol)] || null;
+        // עדיפויות לכמות הילדים: דיווח בבלוק ← זכאים ← נרשמים מלשונית ההרשמה
+        const kids = inst.reported > 0 ? inst.reported
+          : inst.eligibleReg > 0 ? inst.eligibleReg
+          : regInfo ? regInfo.reg : 0;
         if (!(kids > 0)) continue;
+        if (regInfo && regInfo.large) inst.size = 'large';
+        if (!(inst.eligibleSpec > 0) && regInfo && regInfo.spec > 0) inst.eligibleSpec = regInfo.spec;
         const fx = rates.fixed[inst.size === 'large' ? 'large' : 'small'] || rates.fixed.small || { coordinator: 0, deputy: 0, management: 0 };
         const b = inst.baskets;
         b.instruction = Math.round(rates.perChild.instruction * kids * 100) / 100;

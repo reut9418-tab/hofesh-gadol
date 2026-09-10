@@ -89,19 +89,25 @@ export default function PrepSection({ reportId }: { reportId: number }) {
           משייכים כל עובד לגן/מוסד, איש צוות ותפקיד — והמערכת ממלאת את קובץ המשרד.
         </span>
         <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {data.framework === 'gardens' && missing > 0 && (
-            <button style={btn('ghost')}
-              title='משלים סמלים לעובדים שטרם שויכו, כך שבכל גן תהיה גננת וסייעת — ובקרת "איוש משרות" של המשרד תעבור'
-              onClick={async () => {
-                if (!window.confirm(`להשלים שיוך אוטומטית? ${missing} עובדים ללא שיוך יחולקו בין הגנים מלשונית דוח הביצוע, עם גננת וסייעת בכל גן. אפשר לתקן ידנית אחר כך.`)) return;
-                setBusy(true);
-                try { const r = await autoAssign(reportId); await load(); setMsg(`שויכו ${r.assigned} עובדים בין ${r.gardens} גנים.`); }
-                catch (e: any) { setMsg(e?.response?.data?.error || 'השיוך האוטומטי נכשל.'); }
-                finally { setBusy(false); }
-              }}>
-              🪄 השלמת שיוך אוטומטית
-            </button>
-          )}
+          <button style={btn('ghost')}
+            title={data.framework === 'gardens'
+              ? 'משלים סמלים לעובדים שטרם שויכו, כך שבכל גן תהיה גננת וסייעת — ובקרת "איוש משרות" של המשרד תעבור'
+              : 'מוודא שלכל בית ספר יש רכז/ת (מי שמעל 114 שעות; אם אין — בעל/ת השעות הגבוהות בבי"ס מקודם/ת לרכז/ת)'}
+            onClick={async () => {
+              const q = data.framework === 'gardens'
+                ? `להשלים שיוך אוטומטית? ${missing} עובדים ללא שיוך יחולקו בין הגנים, עם גננת וסייעת בכל גן. אפשר לתקן ידנית אחר כך.`
+                : 'לוודא רכז/ת בכל בית ספר? בבתי ספר ללא רכז, העובד/ת עם הכי הרבה שעות יוגדר כרכז/ת. אפשר לתקן ידנית אחר כך.';
+              if (!window.confirm(q)) return;
+              setBusy(true);
+              try {
+                const r = await autoAssign(reportId); await load();
+                setMsg(r.mode === 'schools' ? `הוגדרו ${r.assigned} רכזים ב-${r.gardens} בתי ספר.` : `שויכו ${r.assigned} עובדים בין ${r.gardens} גנים.`);
+              }
+              catch (e: any) { setMsg(e?.response?.data?.error || 'השיוך האוטומטי נכשל.'); }
+              finally { setBusy(false); }
+            }}>
+            🪄 השלמת שיוך אוטומטית
+          </button>
           <button onClick={() => window.open(stage1DocUrl(reportId), '_blank')} style={btn('ghost')}
             title="סיכום הבדיקות ללקוח — להדפסה או שמירה כ-PDF">📄 מסמך שלב 1 ללקוח</button>
           <button onClick={() => window.open(costMatchDocUrl(reportId), '_blank')} style={btn('ghost')}

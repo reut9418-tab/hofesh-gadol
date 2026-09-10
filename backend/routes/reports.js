@@ -375,9 +375,46 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
   const id = parseInt(req.params.id);
   const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
   if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
-  if (report.framework !== 'gardens') return res.status(400).json({ error: 'שיוך אוטומטי מלא זמין כרגע לדוחות גנים.' });
   const aaMd = await ministryData(db, report);
   if (!aaMd.buf) return res.status(422).json({ error: 'אין קובץ דוח ביצוע שמור — יש להעלות קודם את קובץ המשרד.' });
+
+  /* בתי ספר: מוודאים שלכל בי"ס יש רכז — מי שמעל 114 שעות מזוהה ממילא;
+     בבי"ס בלי רכז, העובד/ת עם הכי הרבה שעות (ואז עלות) מקודם/ת לרכז/ת. */
+  if (report.framework !== 'gardens') {
+    const schoolSyms = (await db.prepare('SELECT symbol FROM institutions WHERE report_id = ?').all(id)).map((i) => String(i.symbol));
+    if (!schoolSyms.length) return res.status(422).json({ error: 'אין מוסדות לדוח — יש להעלות קודם את קובץ המשרד.' });
+    const rows2 = await db.prepare('SELECT * FROM cost_rows WHERE report_id = ?').all(id);
+    const nameSym = aaMd.institutions.length
+      ? matchDeptsToInstitutions(aaMd.institutions, [...new Set(rows2.map((r) => r.inst_name).filter(Boolean))]) : {};
+    const validS = new Set(schoolSyms);
+    const symOf = (r) => {
+      const s = r.symbol_override
+        || (r.inst_symbol && validS.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
+        || (r.inst_name && nameSym[r.inst_name]) || null;
+      return s ? (aaMd.redirect.get(String(s)) || s) : null;
+    };
+    const isCoord = (r) => {
+      const st = r.staff_type || (schoolsRoleByHours(r.hours) || {}).staffType;
+      return st === 'רכזת תכנית בבית הספר';
+    };
+    const bySchool = new Map();
+    for (const r of rows2) {
+      const s = symOf(r);
+      if (!s) continue;
+      if (!bySchool.has(s)) bySchool.set(s, []);
+      bySchool.get(s).push(r);
+    }
+    let promoted = 0;
+    for (const [, list] of bySchool) {
+      if (list.some(isCoord)) continue;
+      const pick = list.slice().sort((a, b) => (b.hours || 0) - (a.hours || 0) || (b.cost || 0) - (a.cost || 0))[0];
+      if (!pick) continue;
+      await db.prepare("UPDATE cost_rows SET staff_type = 'רכזת תכנית בבית הספר', role = 'רכז/ת תכנית בבית הספר' WHERE id = ?").run(pick.id);
+      promoted++;
+    }
+    return res.json({ ok: true, assigned: promoted, gardens: bySchool.size, mode: 'schools' });
+  }
+
   let gardens = aaMd.execGardens.length ? aaMd.execGardens : aaMd.institutions.map((i) => i.symbol);
   if (!gardens.length) return res.status(422).json({ error: 'לא נמצאו סמלי גנים בלשונית "גנים - דוח ביצוע" של הקובץ.' });
 
