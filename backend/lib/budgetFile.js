@@ -53,7 +53,7 @@ function reconColumns(row) {
 
 /* גיליון "ריכוז נתונים" של הגנים: אין בלוקים פר-גן — המשרד מתקצב את גני הרשות כמקשה אחת.
    נבנה "מוסד" מצרפי אחד לכל הרשות עם התקציב, הילדים והסלים מהריכוז. */
-function parseAggregateSheet(rows, sheetName) {
+function parseAggregateSheet(rows, sheetName, wb = null, opts = {}) {
   const firstNumAfter = (row, k) => numNear(row, k, 4);
   let authority = '', symbol = '';
   let reg = null, afterControl = null, effectiveTotal = null, spec = null, gardens = null, coordinators = null;
@@ -182,10 +182,30 @@ function parseAggregateSheet(rows, sheetName) {
   // עבדו — חשוב בהרחבה!) ← ההרשמה הגולמית. בדיקת סבירות: הפחתת ימים לא
   // מוחקת את רוב הילדים — תא שמחושב מתחת למחצית ההרשמה הוא שריד נוסחה שבורה
   const effOk = effectiveTotal > 0 && (!(reg > 0) || effectiveTotal >= reg * 0.5);
-  const kids = (afterControl > 0 ? afterControl : null) ?? (effOk ? effectiveTotal : null) ?? reg;
+  let kids = (afterControl > 0 ? afterControl : null) ?? (effOk ? effectiveTotal : null) ?? reg;
   // בקרת האיוש של המשרד איפסה את כל החישוב אך ההרשמה מולאה — בונים את
   // התקציב בעצמנו: ילדים × תעריף המשרד לילד, והסלים לפי תעריפי-הסל לילד
   let ratesFallback = false;
+  // מסלול אחרון (אור עקיבא): גם תאי העזר בריכוז קפואים — סך הנרשמים מלשונית
+  // ההרשמה × תעריפי "מבנה תקציבי גנים" הסטטיים
+  if (!(budget > 0) && !(kids > 0 && perChildShare > 0) && wb) {
+    const rates = parseGardenStructureRates(wb, opts.program);
+    const regInfo = parseGardenRegistration(wb);
+    const kidsReg = (kids > 0 ? kids : 0) || (regInfo ? regInfo.total : 0);
+    if (rates && kidsReg > 0) {
+      kids = kidsReg;
+      budget = 0;
+      for (const [key, rate] of Object.entries(rates.perChild)) {
+        baskets[key] = Math.round(kidsReg * rate * 100) / 100;
+        actual[key] = actual[key] || 0;
+        budget += baskets[key];
+      }
+      budget = Math.round(budget * 100) / 100;
+      if (!(reg > 0)) reg = kidsReg;
+      if (gardens == null && regInfo) gardens = regInfo.gardens;
+      ratesFallback = true;
+    }
+  }
   if (!(budget > 0) && kids > 0 && perChildShare > 0) {
     budget = Math.round(kids * perChildShare * 100) / 100;
     ratesFallback = true;
@@ -271,6 +291,60 @@ function parseSchoolRates(wb, program) {
   return { perChild, fixed };
 }
 
+/* גנים: תעריפי "מבנה תקציבי גנים" (סטטיים בכל קובץ) + סך הנרשמים מלשונית
+   "גנים - מצבת והרשמה" — מסלול אחרון כשגם תאי העזר בריכוז קפואים (אור עקיבא) */
+function parseGardenStructureRates(wb, program) {
+  const sn = wb.SheetNames.find((n) => norm(n).includes('מבנה תקציב'));
+  if (!sn) return null;
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  const daysNeedle = program === 'extension' ? 'ל- 7 ימים' : 'ל- 15 ימים';
+  const wantExt = program === 'extension';
+  let inGardens = false, cols = null, inExtBlock = false, perChild = null, perGarden = null;
+  for (const row of rows) {
+    const labels = (row || []).map(norm);
+    const has = (t) => labels.findIndex((x) => x.includes(t));
+    if (has('מבנה תקציבי גנים') >= 0) { inGardens = true; continue; }
+    if (has('מבנה תקציבי בתי ספר') >= 0) break;
+    if (!inGardens) continue;
+    if (!cols && has('סל ניהול') >= 0 && has('סל הדרכה') >= 0) {
+      cols = { management: has('סל ניהול'), instruction: has('סל הדרכה'), enrichment: has('סל העשרה'), flexible: has('סל גמיש') };
+      continue;
+    }
+    if (labels.some((x) => x === 'הרחבה')) inExtBlock = true;
+    if (cols && !perChild && inExtBlock === wantExt && has(daysNeedle) >= 0) {
+      const v = Object.fromEntries(Object.entries(cols).map(([k, i]) => [k, num(row[i]) || 0]));
+      if (v.instruction > 0) perChild = v;
+    }
+    if (perGarden == null && has('עלות לגן') >= 0) { /* כותרת — הערך בשורה הבאה */ }
+    if (perGarden == null && has('שכר עבור ריכוז') >= 0) {
+      const nums = row.map((c) => num(c)).filter((v) => v > 0);
+      if (nums.length >= 2) perGarden = nums[nums.length - 1]; // "עלות לגן" — האחרון בשורה
+    }
+  }
+  return perChild ? { perChild, perGarden: perGarden || 0 } : null;
+}
+
+function parseGardenRegistration(wb) {
+  const sn = wb.SheetNames.find((n) => norm(n).includes('מצבת והרשמה') && norm(n).includes('גנים'));
+  if (!sn) return null;
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  let cols = null;
+  let total = 0, gardens = 0;
+  for (const row of rows) {
+    const labels = (row || []).map(norm);
+    if (!cols) {
+      const sym = labels.findIndex((x) => x === 'סמל גן');
+      const reg = labels.findIndex((x) => x.includes('שנרשמו'));
+      if (sym >= 0 && reg >= 0) cols = { sym, reg };
+      continue;
+    }
+    if (!/^\d{4,7}$/.test(norm(row[cols.sym]))) continue;
+    total += num(row[cols.reg]) || 0;
+    gardens++;
+  }
+  return cols ? { total, gardens } : null;
+}
+
 /* כמות הנרשמים פר בית ספר מלשונית "מצבת והרשמה" — גיבוי כשגם "דיווח
    הרשות" בבלוקים ריק (קרית מוצקין): המשרד מתקצב לפי הנרשמים. */
 function parseRegistrationCounts(wb) {
@@ -314,7 +388,7 @@ function parseBudgetFile(buf, opts = {}) {
 
   // גנים: גיליון ריכוז ללא בלוקים פר-מוסד → מסלול מצרפי
   const hasInstBlocks = rows.some((r) => (r || []).some((c) => norm(c) === 'סמל המוסד'));
-  if (!hasInstBlocks) return parseAggregateSheet(rows, sheetName);
+  if (!hasInstBlocks) return parseAggregateSheet(rows, sheetName, wb, opts);
 
   const institutions = [];
   let cur = null;
