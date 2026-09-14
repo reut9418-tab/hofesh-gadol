@@ -114,6 +114,8 @@ async function stage1Data(db, report, client, authority) {
       name, symbol, children: children || 0,
       salaryBudget, salaryActual, salaryUnused, overflow,
       instrBudget, instrActual, coordBudget, coordActual,
+      // ניצול הדרכה מתחת ל-75% מהסל (ללא הגמיש) — המשרד צפוי לקזז
+      instrUnderCut: instrBudget > 0 && instrActual < instrBudget * 0.75,
       enrichBudget: enrichB, flexBudget: flexB, breakfastBudget: breakfastB,
       flexConsumed, flexAvailable, uncovered, enrichShift,
       management: baskets.management || 0,
@@ -192,6 +194,8 @@ function renderStage1Html(d) {
   if (d.idIssues.length) highlights.push(`נמצאו <b>${d.idIssues.length} עובדים</b> עם תעודת זהות שאינה תקינה (פירוט בסעיף 1).`);
   const hasOverflow = d.units.some((u) => u.overflow > 0) || (d.recs && d.recs.relevant && (d.recs.moves || []).length > 0);
   if (hasOverflow) highlights.push(`קיימת <b>חריגת שכר</b> מול התקציב — מצורפות המלצות לניוד דיווח בין מוסדות (סעיף 3).`);
+  const cutUnits = d.units.filter((u) => u.instrUnderCut).length;
+  if (cutUnits > 0) highlights.push(`ב-<b>${cutUnits} ${cutUnits === 1 ? 'מוסד' : 'מוסדות'}</b> ניצול סל ההדרכה נמוך מ-75% מהתקציב — <b>צפוי קיזוז מהמשרד</b> (פירוט בסעיף 4).`);
   if (d.units.some((u) => u.enrichShift > 0))
     highlights.push(`בשל היקף חריגת השכר אנו ממליצים <b>להכיר ב-75% מתקציב ההעשרה</b> ולנתב 25% ממנו לכיסוי החריגה — פירוט והשוואת האופציות בסעיפים 4–5.`);
   const totalUnused = d.units.reduce((s, u) => s + u.salaryUnused, 0);
@@ -245,7 +249,10 @@ function renderStage1Html(d) {
         ? `₪${fmt(u.flexConsumed)} מכסים את חריגות השכר${u.uncovered > 0 ? ` <span class="red">(₪${fmt(u.uncovered)} נותרים ללא כיסוי ולא יוכרו)</span>` : ''}; `
         : ''
     }יתרה <b>₪${fmt(u.flexAvailable)}</b> — לשכר או למלגות/ארוחות בוקר (האופציות למטה).</div>`;
-    const salaryLine = `${basketLine('סל הדרכה — שכר הצוות החינוכי', u.instrActual, u.instrBudget)}
+    const instrCutNote = u.instrUnderCut
+      ? ` <span class="red">ניצול ${Math.round((u.instrActual / u.instrBudget) * 100)}% בלבד מסל ההדרכה (מתחת ל-75%) — צפוי קיזוז מהמשרד.</span>`
+      : '';
+    const salaryLine = `${basketLine('סל הדרכה — שכר הצוות החינוכי', u.instrActual, u.instrBudget).replace('</div>', instrCutNote + '</div>')}
       ${basketLine(u.symbol == null ? 'סל ריכוז — רכזות גנים' : 'סל ריכוז — רכז/ת וסגן/ית', u.coordActual, u.coordBudget)}
       ${flexLine}${booksNote ? `<div>${booksNote}</div>` : ''}`;
     // כשהסל הגמיש נבלע כולו בחריגת השכר — אין שתי אופציות, רק מצב נתון
