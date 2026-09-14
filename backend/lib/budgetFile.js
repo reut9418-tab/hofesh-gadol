@@ -449,6 +449,7 @@ function parseGardenExecKids(wb) {
   let cols = null;
   let total = 0, gardens = 0, daysSum = 0;
   const daysBySymbol = {};
+  const kidsBySymbol = {};
   for (const row of rows) {
     const labels = (row || []).map(norm);
     if (!cols) {
@@ -477,10 +478,11 @@ function parseGardenExecKids(wb) {
     }
     if (v > 0) { total += v; gardens++; daysSum += Math.min(days, 7) / 7; }
     daysBySymbol[s] = Math.min(days, 7) / 7;
+    kidsBySymbol[s] = v > 0 ? Math.round(v * 10000) / 10000 : 0;
   }
   if (!cols || !(total > 0)) return null;
   total = Math.round(total * 100) / 100;
-  return { total, gardens, dayRatio: gardens > 0 ? daysSum / gardens : 1, daysBySymbol };
+  return { total, gardens, dayRatio: gardens > 0 ? daysSum / gardens : 1, daysBySymbol, kidsBySymbol };
 }
 
 function parseGardenRegistration(wb) {

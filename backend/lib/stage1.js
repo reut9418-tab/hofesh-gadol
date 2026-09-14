@@ -17,18 +17,49 @@ const clientName = (client, authority) => (authority && authority.name) || (clie
 /* מוסדות קובץ המשרד (לשונית ההרשמה) + מפת ההפניות של בתי ספר מאוחדים —
    כדי ששיוך הסמלים במכתב יהיה זהה במדויק לזה של הייצוא (resolveSymbol) */
 const { extractInstitutions } = require('./fillMinistry');
-const fileMetaCache = new Map(); // reportId -> { fileName, insts, redirect }
+const { norm: normCell, parseGardenExecKids } = require('./budgetFile');
+const XLSX = require('xlsx');
+const fileMetaCache = new Map(); // reportId -> { fileName, insts, redirect, depEntitled, gardensExec }
+
+/* עמודת "זכאות לסגן/נית רכז/ת" בלשונית איוש המשרות — קובעת אם דיווח
+   הסגן מוכר בסל הריכוז (מוסד קטן: לא זכאי — העלות לא נזקפת לאף סל) */
+function parseDeputyEntitlement(buf) {
+  const wb = XLSX.read(buf, { type: 'buffer' });
+  const sn = wb.SheetNames.find((n) => normCell(n).includes('איוש משרות'));
+  if (!sn) return {};
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  let cols = null;
+  const out = {};
+  for (const row of rows) {
+    const labels = (row || []).map(normCell);
+    if (!cols) {
+      const s = labels.findIndex((x) => x.includes('סמל בית ספר'));
+      const z = labels.findIndex((x) => x.includes('זכאות לסגן'));
+      if (s >= 0 && z >= 0) cols = { s, z };
+      continue;
+    }
+    const sym = normCell(row[cols.s]);
+    if (!/^\d{4,7}$/.test(sym)) continue;
+    out[sym] = normCell(row[cols.z]) === 'זכאי';
+  }
+  return out;
+}
+
 async function fileMeta(db, report) {
   const fn = report.budget_file_name || '';
   const cached = fileMetaCache.get(report.id);
   if (cached && cached.fileName === fn) return cached;
-  const entry = { fileName: fn, insts: [], redirect: new Map() };
+  const entry = { fileName: fn, insts: [], redirect: new Map(), depEntitled: {}, gardensExec: null };
   try {
     const row = await db.prepare('SELECT data FROM report_files WHERE report_id = ?').get(report.id);
     if (row && row.data) {
       const buf = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
       entry.insts = extractInstitutions(buf);
       entry.redirect = new Map(entry.insts.filter((i) => i.activitySymbol).map((i) => [String(i.symbol), String(i.activitySymbol)]));
+      if (report.framework !== 'gardens') entry.depEntitled = parseDeputyEntitlement(buf);
+      else {
+        try { entry.gardensExec = parseGardenExecKids(XLSX.read(buf, { type: 'buffer' })); } catch { /* בלי הלשונית */ }
+      }
     }
   } catch { /* אין קובץ — שיוך לפי מוסדות המסד בלבד */ }
   fileMetaCache.set(report.id, entry);
@@ -108,15 +139,19 @@ async function stage1Data(db, report, client, authority) {
       const na = String(a.emp_name || ''), nb = String(b.emp_name || '');
       return na < nb ? -1 : na > nb ? 1 : 0;
     });
+    const staffOf = (r) => {
+      const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
+      return r.staff_type || (byHours && byHours.staffType) || suggestRole(r.dept).staffType;
+    };
+    // דיווח הסגן מוכר רק כשמדווח גם רכז (תנאי הנוסחה בלשונית האיוש)
+    const hasCoordRow = ordered.some((r) => basketForStaff(staffOf(r)) === 'coordinator');
     let depTaken = false;
     for (const r of ordered) {
-      const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
-      const st = r.staff_type || (byHours && byHours.staffType) || suggestRole(r.dept).staffType;
       const v = recognizedRowCost(r, vatFactor);
-      const basket = basketForStaff(st);
+      const basket = basketForStaff(staffOf(r));
       if (basket === 'coordinator') coord += v;
       else if (basket === 'deputy' && report.framework === 'gardens') coord += v;
-      else if (basket === 'deputy' && !depTaken) { depTaken = true; if (deputyEntitled) coord += v; }
+      else if (basket === 'deputy' && !depTaken) { depTaken = true; if (deputyEntitled && hasCoordRow) coord += v; }
       else instr += v;
     }
     return { instr, coord };
@@ -207,14 +242,51 @@ async function stage1Data(db, report, client, authority) {
       const b = await basketsOf(i.id);
       Object.entries(b).forEach(([k, v]) => { baskets[k] = (baskets[k] || 0) + v; });
     }
+    // הרחבה: "סה"כ תלמידים לתקצוב לאחר בקרת איוש משרות" הסופי = רק גנים
+    // שאוישו בפועל (יש להם שורות שכר אצלנו) — סכום "מס ילדים לחישוב
+    // התקציב" של הגנים המאוישים; הסלים לתלמיד נגזרים מהכמות הזו
+    if (report.program === 'extension' && meta.gardensExec && meta.gardensExec.kidsBySymbol && kids > 0) {
+      // בקרת האיוש של הקובץ פר גן: חייבת שורת שכר של גננת/רכזת גן; בגן
+      // עם יותר מ-30 ילדים — גם שורת סייעת (נוסחאות בדיקת האיוש בלשונית 8)
+      const roleBySym = new Map(); // symbol -> { gannet, sayaat }
+      for (const r of rows) {
+        const sym = rowSymbol(r);
+        if (!sym) continue;
+        const st = String(r.staff_type || suggestRole(r.dept).staffType || '');
+        const e = roleBySym.get(String(sym)) || { gannet: false, sayaat: false };
+        if (/גננת|מוביל|רכזת גן/.test(st)) e.gannet = true;
+        if (/סייע/.test(st)) e.sayaat = true;
+        roleBySym.set(String(sym), e);
+      }
+      let acKids = 0, anyMatch = false;
+      for (const [sym, k13] of Object.entries(meta.gardensExec.kidsBySymbol)) {
+        const e = roleBySym.get(String(sym));
+        if (!e) continue;
+        anyMatch = true;
+        const valid = e.gannet && (k13 <= 30 || e.sayaat);
+        if (valid) acKids += k13;
+      }
+      acKids = Math.round(acKids * 100) / 100;
+      // בלי חפיפה בין סמלי הגנים לשורות השכר — אין שער איוש להפעיל.
+      // הערך יכול גם לעלות: התא בקובץ המקורי משקף חישוב ישן של הרשות,
+      // ואילו אחרי מילוי השכר שלנו גנים נוספים נהיים מאוישים-תקינים
+      if (anyMatch && acKids > 0 && Math.abs(acKids - kids) > 1) {
+        const factor = acKids / kids;
+        for (const key of ['instruction', 'enrichment', 'management', 'flexible', 'breakfast']) {
+          if (baskets[key] > 0) baskets[key] = Math.round(baskets[key] * factor * 100) / 100;
+        }
+        kids = Math.round(acKids);
+      }
+    }
     units = [mkUnit('כל הגנים (במרוכז)', null, baskets, cost.summary.totalCost, splitRecognized(rows), kids, payerSplit(rows))];
   } else {
     for (const i of insts) {
       const unitRows = rows.filter((r) => rowSymbol(r) === String(i.symbol));
       const actual = unitRows.reduce((s, r) => s + (r.cost || 0), 0);
       const bkts = await basketsOf(i.id);
-      // זכאות לסגן — רק מוסד עם תקציב סגן (גדול); כמו עמודת הזכאות באיוש
-      let split = splitRecognized(unitRows, (bkts.deputy || 0) > 0);
+      // זכאות לסגן — עמודת "זכאות לסגן/נית" בלשונית האיוש; גיבוי: תקציב סגן קיים
+      const ent = meta.depEntitled[String(i.symbol)];
+      let split = splitRecognized(unitRows, ent != null ? ent : (bkts.deputy || 0) > 0);
       // דוח הביצוע מפצל את הניצול לפי לשונית איוש המשרות: "שכר רכזים/סגנים" =
       // התקציב המוכר מהלשונית, ו"שכר צוות חינוכי" = כלל העלות בניכוי הדיווח —
       // לא לפי סיווג התפקידים בדוח העלות. כשקיימים דיווחי איוש, מיישרים אליהם
