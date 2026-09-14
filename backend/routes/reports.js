@@ -180,6 +180,22 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
     return res.status(422).json({ error: 'לא נמצאו מוסדות עם תקציב מחושב בקובץ. ודאי שכמות הילדים מולאה ב"מצבת והרשמה" ושהקובץ נשמר ב-Excel.' });
   }
 
+  // גנים: כשבקרת הזכאות בקובץ איפסה את תקציב הרכזות אך יש גנים מסומנים
+  // בלשונית "רכזות גנים - דוח ביצוע" — תקציב הריכוז = מס' הגנים × התעריף לגן
+  if (report.framework === 'gardens') {
+    const inst0 = parsed.institutions[0];
+    if (inst0 && !(inst0.baskets.coordinator > 0) && inst0.coordRatePerGarden > 0) {
+      try {
+        const cg = extractCoordinatorGardens(req.file.buffer);
+        if (cg.length) {
+          const add = Math.round(cg.length * inst0.coordRatePerGarden * 100) / 100;
+          inst0.baskets.coordinator = add;
+          inst0.total = (inst0.total || 0) + add;
+        }
+      } catch { /* בלי הלשונית — נשאר כפי שחישב המשרד */ }
+    }
+  }
+
   // כל המוסדות עם תקציב 0 — הקובץ נקרא, אבל האקסל של המשרד חישב זכאות אפס.
   const allZero = parsed.institutions.every((i) => !(i.total > 0));
   if (allZero) {

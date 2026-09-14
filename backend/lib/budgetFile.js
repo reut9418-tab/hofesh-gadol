@@ -65,6 +65,7 @@ function parseAggregateSheet(rows, sheetName) {
   // כשבקרת האיוש של המשרד מאפסת את החישוב, בונים תקציב = הרשמה × תעריף
   let tariffCol = -1, perChildShare = null;
   let rateCols = null, perChildRates = null;
+  let coordRatePerGarden = null, sawCoordHeader = false;
   const RATE_KEYS = [['סל ניהול', 'management'], ['סל הדרכה', 'instruction'], ['סל העשרה', 'enrichment'], ['סל גמיש', 'flexible']];
 
   for (let i = 0; i < rows.length; i++) {
@@ -92,6 +93,14 @@ function parseAggregateSheet(rows, sheetName) {
       const v = num(row[tariffCol]);
       if (v > 0) perChildShare = v;
     }
+    // תעריף רכזת גנים לגן (מקטע העזר "רכזות גנים" → שורת "גנים") —
+    // משמש לבניית תקציב הריכוז כשבקרת הזכאות בקובץ אופסה
+    if (coordRatePerGarden == null && sawCoordHeader && (k = labels.findIndex((x) => x === 'גנים')) >= 0) {
+      const v = num(row[k + 1]);
+      if (v > 0) coordRatePerGarden = v;
+    }
+    if (labels.some((x) => x === 'רכזות גנים')) sawCoordHeader = true;
+
     // תעריפי הסלים לילד (מקטע "נתוני עזר"): שורת כותרות עם ≥3 שמות סלים,
     // ואחריה שורת המספרים ("גנים")
     if (!rateCols) {
@@ -172,6 +181,7 @@ function parseAggregateSheet(rows, sheetName) {
     reported: reg, // כמות שדווחה בהרשמה — משמשת להסבר כשהתקצוב אופס בבקרה
     afterControlZero: afterControl === 0 && reg > 0, // המשרד איפס את "לתקצוב לאחר בקרת איוש"
     ratesFallback, // התקציב חושב אצלנו מהרשמה×תעריף כי חישוב המשרד אופס
+    coordRatePerGarden, // תעריף רכזת לגן — להשלמת תקציב הריכוז מלשונית הרכזות
     eligibleReg: kids, eligibleSpec: spec,
     gardensCount: gardens, coordinators,
     baskets, actual, unused,

@@ -110,7 +110,9 @@ ${bodyRows}
 </body></html>`;
 }
 
-/* דוח ההתאמה כקובץ אקסל (xlsx) — אותם נתונים וחישובים כמו גרסת ה-PDF */
+/* דוח ההתאמה כקובץ אקסל (xlsx) — אותם נתונים וחישובים כמו גרסת ה-PDF,
+   מעוצב: טבלה עם גבולות, כותרות בצבעי המותג, פסי-זברה ושורת סה"כ */
+const XLSXS = require('xlsx-js-style');
 function buildCostMatchXlsx({ report, client, authority, rows, label }) {
   const hasVat = !!(client && client.has_vat);
   const vatFactor = hasVat ? 1.18 : 1;
@@ -119,44 +121,69 @@ function buildCostMatchXlsx({ report, client, authority, rows, label }) {
   const { calc, totals, cappedCount } = computeCostMatch(rows, vatFactor);
   const r2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
 
+  // צבעי המותג (הלוגו): זהב, שמפניה, גרפיט
+  const GOLD = '9A7B2F', CHAMP = 'F4ECDA', SOFT = 'FBF7EC', LINE = 'D9CDB3', INK = '413A2F', CAPPED = 'FDEBD0';
+  const border = { top: { style: 'thin', color: { rgb: LINE } }, bottom: { style: 'thin', color: { rgb: LINE } }, left: { style: 'thin', color: { rgb: LINE } }, right: { style: 'thin', color: { rgb: LINE } } };
+  const S = {
+    title: { font: { bold: true, sz: 14, color: { rgb: INK } }, alignment: { horizontal: 'right' } },
+    sub: { font: { bold: true, sz: 11, color: { rgb: GOLD } }, alignment: { horizontal: 'right' } },
+    method: { font: { sz: 10, color: { rgb: INK } }, alignment: { horizontal: 'right', wrapText: true, vertical: 'top' }, fill: { fgColor: { rgb: SOFT } } },
+    head: { font: { bold: true, sz: 10, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: GOLD } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: true }, border },
+    cellR: (z) => ({ font: { sz: 10, color: { rgb: INK } }, alignment: { horizontal: 'right' }, border, ...(z ? { fill: { fgColor: { rgb: SOFT } } } : {}) }),
+    cellN: (z, capped) => ({ font: { sz: 10, color: { rgb: INK } }, alignment: { horizontal: 'center' }, border, numFmt: '#,##0.00', ...(capped ? { fill: { fgColor: { rgb: CAPPED } } } : z ? { fill: { fgColor: { rgb: SOFT } } } : {}) }),
+    total: { font: { bold: true, sz: 10, color: { rgb: INK } }, fill: { fgColor: { rgb: CHAMP } }, alignment: { horizontal: 'center' }, border: { ...border, top: { style: 'medium', color: { rgb: GOLD } } }, numFmt: '#,##0.00' },
+    note: { font: { sz: 9, color: { rgb: '7A7062' } }, alignment: { horizontal: 'right' } },
+  };
+  const cell = (v, s) => ({ v: v == null ? '' : v, t: typeof v === 'number' ? 'n' : 's', s });
+
   const head = [
     'עובד/ת', 'ת.ז', 'מחלקה', 'שעות', 'ברוטו שעתי', 'עלות שעתית (דוח עלות)',
     ...(hasVat ? ['עלות שעתית כולל מע"מ 18%'] : []),
     'תקרה: ברוטו + 40%', 'עלות שעתית שדווחה', 'הוגבל לתקרה', 'הפרש לשעה', 'הפרש כולל',
   ];
+  const W = head.length;
+
   const aoa = [
-    [`דוח התאמה — דוח עלות השכר מול העלות השעתית שדווחה בדוח הביצוע`],
-    [`${who} — ${label} · ${today}`],
-    [`שיטת הדיווח: העלות השעתית שדווחה לכל עובד/ת היא הנמוך מבין (א) עלות השכר השעתית לפי דוח העלות${hasVat ? ' בתוספת מע"מ 18%' : ''}, לבין (ב) שכר הברוטו השעתי בתוספת 40% — תקרת ההכרה של משרד החינוך.`],
-    [`סיכום: ${calc.length} עובדים · ${cappedCount} הוגבלו לתקרת ה-140% · עלות בדוח העלות: ₪${Math.round(totals.booksNet).toLocaleString('he-IL')}${hasVat ? ` (כולל מע"מ: ₪${Math.round(totals.booksVat).toLocaleString('he-IL')})` : ''} · דווח בדוח הביצוע: ₪${Math.round(totals.reported).toLocaleString('he-IL')} · הפרש בגין התקרה: ₪${Math.round(totals.diff).toLocaleString('he-IL')}`],
+    [cell('דוח התאמה — דוח עלות השכר מול העלות השעתית שדווחה בדוח הביצוע', S.title)],
+    [cell(`${who} — ${label} · ${today}`, S.sub)],
+    [cell(`שיטת הדיווח: העלות השעתית שדווחה לכל עובד/ת היא הנמוך מבין (א) עלות השכר השעתית לפי דוח העלות${hasVat ? ' בתוספת מע"מ 18%' : ''}, לבין (ב) שכר הברוטו השעתי בתוספת 40% — תקרת ההכרה של משרד החינוך.`, S.method)],
+    [cell(`סיכום: ${calc.length} עובדים · ${cappedCount} הוגבלו לתקרת ה-140% · עלות בדוח העלות: ₪${Math.round(totals.booksNet).toLocaleString('he-IL')}${hasVat ? ` (כולל מע"מ: ₪${Math.round(totals.booksVat).toLocaleString('he-IL')})` : ''} · דווח בדוח הביצוע: ₪${Math.round(totals.reported).toLocaleString('he-IL')} · הפרש בגין התקרה: ₪${Math.round(totals.diff).toLocaleString('he-IL')}`, S.method)],
     [],
-    head,
-    ...calc.map((c) => [
-      c.r.emp_name || '—', String(c.r.emp_id || ''), c.r.dept || '', r2(c.r.hours),
-      r2(c.hourlyGross), r2(c.hourlyCostNet),
-      ...(hasVat ? [r2(c.hourlyCostVat)] : []),
-      r2(c.cap140), r2(c.reported), c.capped ? 'כן' : '', c.capped ? r2(c.hourlyCostVat - c.reported) : null,
-      c.capped ? r2(c.totalDiff) : null,
-    ]),
+    head.map((h) => cell(h, S.head)),
+    ...calc.map((c, i) => {
+      const z = i % 2 === 1;
+      return [
+        cell(c.r.emp_name || '—', S.cellR(z)), cell(String(c.r.emp_id || ''), { ...S.cellN(z), numFmt: undefined }), cell(c.r.dept || '', S.cellR(z)),
+        cell(r2(c.r.hours), S.cellN(z)), cell(r2(c.hourlyGross), S.cellN(z)), cell(r2(c.hourlyCostNet), S.cellN(z)),
+        ...(hasVat ? [cell(r2(c.hourlyCostVat), S.cellN(z))] : []),
+        cell(r2(c.cap140), S.cellN(z)), cell(r2(c.reported), { ...S.cellN(z, c.capped), font: { bold: true, sz: 10, color: { rgb: INK } } }),
+        cell(c.capped ? 'כן' : '', S.cellN(z, c.capped)),
+        cell(c.capped ? r2(c.hourlyCostVat - c.reported) : null, S.cellN(z, c.capped)),
+        cell(c.capped ? r2(c.totalDiff) : null, S.cellN(z, c.capped)),
+      ];
+    }),
     [
-      'סה"כ', '', '', r2(totals.hours), '', '',
-      ...(hasVat ? [''] : []),
-      '', r2(totals.reported), '', '', r2(totals.diff),
+      cell('סה"כ', S.total), cell('', S.total), cell('', S.total), cell(r2(totals.hours), S.total),
+      cell('', S.total), cell('', S.total), ...(hasVat ? [cell('', S.total)] : []),
+      cell('', S.total), cell(r2(totals.reported), S.total), cell('', S.total), cell('', S.total), cell(r2(totals.diff), S.total),
     ],
     [],
-    ['הופק ע"י גוטליב את ביטון, רו"ח · על בסיס דוח עלות השכר של המפעיל ודוח הביצוע של משרד החינוך' + (hasVat ? ' · הכרטסות בהנהלת החשבונות מתנהלות לפני מע"מ' : '')],
+    [cell('הופק ע"י גוטליב את ביטון, רו"ח · על בסיס דוח עלות השכר של המפעיל ודוח הביצוע של משרד החינוך' + (hasVat ? ' · הכרטסות בהנהלת החשבונות מתנהלות לפני מע"מ' : ''), S.note)],
   ];
 
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const ws = XLSXS.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [
-    { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 8 }, { wch: 11 }, { wch: 18 },
-    ...(hasVat ? [{ wch: 18 }] : []),
-    { wch: 16 }, { wch: 16 }, { wch: 11 }, { wch: 11 }, { wch: 11 },
+    { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 8 }, { wch: 11 }, { wch: 17 },
+    ...(hasVat ? [{ wch: 17 }] : []),
+    { wch: 15 }, { wch: 15 }, { wch: 10 }, { wch: 10 }, { wch: 11 },
   ];
-  const wb = XLSX.utils.book_new();
+  ws['!rows'] = [{ hpt: 22 }, { hpt: 16 }, { hpt: 30 }, { hpt: 30 }, { hpt: 6 }, { hpt: 30 }];
+  // הכותרות העליונות נמתחות על כל רוחב הטבלה
+  ws['!merges'] = [0, 1, 2, 3].map((r) => ({ s: { r, c: 0 }, e: { r, c: W - 1 } }));
+  const wb = XLSXS.utils.book_new();
   wb.Workbook = { Views: [{ RTL: true }] }; // גיליון מימין לשמאל
-  XLSX.utils.book_append_sheet(wb, ws, 'דוח התאמה');
-  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  XLSXS.utils.book_append_sheet(wb, ws, 'דוח התאמה');
+  return XLSXS.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
 
 module.exports = { renderCostMatchHtml, buildCostMatchXlsx };
