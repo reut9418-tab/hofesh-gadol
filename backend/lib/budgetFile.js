@@ -337,11 +337,14 @@ function parseHelperRates(rows) {
 function parseStaffing(wb) {
   const sn = wb.SheetNames.find((n) => norm(n).includes('איוש משרות'));
   if (!sn) return {};
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  const ws = wb.Sheets[sn];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  const base = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).s : { r: 0, c: 0 };
   let cols = null;
   const out = {};
-  for (const row of rows) {
-    const labels = (row || []).map(norm);
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri] || [];
+    const labels = row.map(norm);
     if (!cols) {
       const sym = labels.findIndex((x) => x.includes('סמל בית ספר'));
       const coordRep = labels.findIndex((x) => x.includes('דיווח שכר רכז'));
@@ -357,6 +360,11 @@ function parseStaffing(wb) {
     }
     const s = norm(row[cols.sym]);
     if (!/^\d{4,7}$/.test(s)) continue;
+    // יש תבניות (ביתר, חולון) שבהן "דיווח שכר רכז" הוא נוסחת SUMIFS על שורות
+    // כח האדם לפי סימון "רכ"/"סג" — שם הפיצול נגזר מהסיווג שלנו וערכי הלשונית
+    // ישתנו עם כל ייצוא; שומרים דיווחי איוש רק כשהם ערכים שהרשות הקלידה
+    const cell = ws[XLSX.utils.encode_cell({ r: base.r + ri, c: base.c + cols.coordRep })];
+    if (cell && cell.f) return {};
     out[s] = {
       coordReported: num(row[cols.coordRep]) || 0,
       depReported: cols.depRep >= 0 ? (num(row[cols.depRep]) || 0) : 0,

@@ -66,11 +66,24 @@ async function stage1Data(db, report, client, authority) {
   // ההשוואה במכתב היא סל-מול-סל, לא סך שכר מול סך תקציבים
   const splitRecognized = (unitRows) => {
     let instr = 0, coord = 0;
-    for (const r of unitRows) {
+    // בבתי הספר קובץ המשרד מזהה את דיווח הסגן ב-VLOOKUP — נתפסת רק שורת
+    // הסגן הראשונה בסדר הכתיבה (סמל ואז שם עובד); סגנים נוספים באותו מוסד
+    // נשארים ב"שכר צוות חינוכי". רכזים נספרים כולם (SUMIFS). משחזרים במדויק
+    const ordered = report.framework === 'gardens' ? unitRows : [...unitRows].sort((a, b) => {
+      const ka = String(a.symbol_override || a.inst_symbol || ''), kb = String(b.symbol_override || b.inst_symbol || '');
+      if (ka !== kb) return ka < kb ? -1 : 1;
+      const na = String(a.emp_name || ''), nb = String(b.emp_name || '');
+      return na < nb ? -1 : na > nb ? 1 : 0;
+    });
+    let depTaken = false;
+    for (const r of ordered) {
       const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
       const st = r.staff_type || (byHours && byHours.staffType) || suggestRole(r.dept).staffType;
       const v = recognizedRowCost(r, vatFactor);
-      if (basketForStaff(st) === 'instruction') instr += v; else coord += v;
+      const basket = basketForStaff(st);
+      if (basket === 'coordinator') coord += v;
+      else if (basket === 'deputy' && (report.framework === 'gardens' || !depTaken)) { coord += v; depTaken = true; }
+      else instr += v;
     }
     return { instr, coord };
   };
