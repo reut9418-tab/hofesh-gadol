@@ -182,7 +182,13 @@ function parseAggregateSheet(rows, sheetName, wb = null, opts = {}) {
   // עבדו — חשוב בהרחבה!) ← ההרשמה הגולמית. בדיקת סבירות: הפחתת ימים לא
   // מוחקת את רוב הילדים — תא שמחושב מתחת למחצית ההרשמה הוא שריד נוסחה שבורה
   const effOk = effectiveTotal > 0 && (!(reg > 0) || effectiveTotal >= reg * 0.5);
-  let kids = (afterControl > 0 ? afterControl : null) ?? (effOk ? effectiveTotal : null) ?? reg;
+  // כשהתא המרוכז קפוא (0) — משחזרים אותו מלשונית "גנים - דוח ביצוע" (סכום
+  // "מס ילדים לחישוב התקציב" פר גן, שמגלם את הפחתת ימי הפעילות בהרחבה)
+  const execInfo = !(afterControl > 0) && wb ? parseGardenExecKids(wb) : null;
+  const execOk = execInfo && execInfo.total > 0 && (!(reg > 0) || execInfo.total >= reg * 0.5);
+  let kids = (afterControl > 0 ? afterControl : null)
+    ?? (execOk ? execInfo.total : null)
+    ?? (effOk ? effectiveTotal : null) ?? reg;
   // בקרת האיוש של המשרד איפסה את כל החישוב אך ההרשמה מולאה — בונים את
   // התקציב בעצמנו: ילדים × תעריף המשרד לילד, והסלים לפי תעריפי-הסל לילד
   let ratesFallback = false;
@@ -430,6 +436,51 @@ function parseGardenStructureRates(wb, program) {
     }
   }
   return perChild ? { perChild, perGarden: perGarden || 0 } : null;
+}
+
+/* לשונית "גנים - דוח ביצוע (5)": שחזור התא "סה"כ תלמידים לתקצוב לאחר בקרת
+   איוש משרות" כשהוא קפוא — פר גן "מס ילדים לחישוב התקציב" (מגלם הפחתת
+   ימי-פעילות: min(ביצוע, רשומים) × ימים/7); הערכים סטטיים וזמינים גם
+   בקובץ שלא חושב. מחזיר גם את יחס-הימים לסל הרכזות. */
+function parseGardenExecKids(wb) {
+  const sn = wb.SheetNames.find((n) => norm(n).includes('גנים - דוח ביצוע') || (norm(n).includes('דוח ביצוע') && norm(n).includes('גנים')));
+  if (!sn) return null;
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  let cols = null;
+  let total = 0, gardens = 0, daysSum = 0;
+  const daysBySymbol = {};
+  for (const row of rows) {
+    const labels = (row || []).map(norm);
+    if (!cols) {
+      const sym = labels.findIndex((x) => x.includes('סמל גן'));
+      const kids = labels.findIndex((x) => x.includes('מס ילדים לחישוב'));
+      if (sym >= 0 && kids >= 0) {
+        cols = {
+          sym, kids,
+          reg: labels.findIndex((x) => x.includes('תלמידים רשומים')),
+          act: labels.findIndex((x) => x.includes('ביצוע בפועל')),
+          days: labels.findIndex((x) => x.includes('ימי פעילות בפועל')),
+        };
+      }
+      continue;
+    }
+    const s = norm(row[cols.sym]);
+    if (!/^\d{4,7}$/.test(s)) continue;
+    const days = cols.days >= 0 ? (num(row[cols.days]) || 7) : 7;
+    let v = num(row[cols.kids]);
+    if (!(v > 0)) {
+      // התא קפוא — משחזרים מהגלם: min(ביצוע, רשומים) × ימים/7
+      const reg = cols.reg >= 0 ? (num(row[cols.reg]) || 0) : 0;
+      const act = cols.act >= 0 ? (num(row[cols.act]) || 0) : 0;
+      const base = act > 0 && reg > 0 ? Math.min(act, reg) : (act || reg);
+      v = base > 0 ? (base * Math.min(days, 7)) / 7 : 0;
+    }
+    if (v > 0) { total += v; gardens++; daysSum += Math.min(days, 7) / 7; }
+    daysBySymbol[s] = Math.min(days, 7) / 7;
+  }
+  if (!cols || !(total > 0)) return null;
+  total = Math.round(total * 100) / 100;
+  return { total, gardens, dayRatio: gardens > 0 ? daysSum / gardens : 1, daysBySymbol };
 }
 
 function parseGardenRegistration(wb) {
@@ -719,4 +770,4 @@ function extractTariff(buf) {
   return null;
 }
 
-module.exports = { parseBudgetFile, findBudgetSheet, extractTariff, norm };
+module.exports = { parseBudgetFile, findBudgetSheet, extractTariff, parseGardenExecKids, norm };

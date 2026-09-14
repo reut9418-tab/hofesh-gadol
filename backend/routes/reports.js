@@ -10,7 +10,7 @@ const { shapeReport } = require('../lib/reportShape');
 const { cascadeReport } = require('./clients');
 const { costDataForReport } = require('../lib/reportCosts');
 const { reportHealth } = require('../lib/status');
-const { parseBudgetFile, extractTariff } = require('../lib/budgetFile');
+const { parseBudgetFile, extractTariff, parseGardenExecKids } = require('../lib/budgetFile');
 const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes } = require('../lib/fillMinistry');
 
 /* בבתי ספר אין "גננת"/"סייעת" — תרגום סוגי צוות של גנים (שמגיעים מדוח
@@ -188,7 +188,14 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
       try {
         const cg = extractCoordinatorGardens(req.file.buffer);
         if (cg.length) {
-          const add = Math.round(cg.length * inst0.coordRatePerGarden * 100) / 100;
+          // בהרחבה גן שעבד 6 מתוך 7 ימים נספר יחסית (6/7) — כמו בקובץ המשרד
+          let eligible = cg.length;
+          try {
+            const XLSX2 = require('xlsx');
+            const exec = parseGardenExecKids(XLSX2.read(req.file.buffer, { type: 'buffer' }));
+            if (exec && exec.daysBySymbol) eligible = cg.reduce((s, sym) => s + (exec.daysBySymbol[String(sym)] ?? 1), 0);
+          } catch { /* בלי יחס ימים — ספירה מלאה */ }
+          const add = Math.round(eligible * inst0.coordRatePerGarden * 100) / 100;
           inst0.baskets.coordinator = add;
           inst0.total = (inst0.total || 0) + add;
         }
