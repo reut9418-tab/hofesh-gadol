@@ -96,12 +96,12 @@ export default function PrepSection({ reportId }: { reportId: number }) {
             onClick={async () => {
               const q = data.framework === 'gardens'
                 ? `להשלים שיוך אוטומטית? ${missing} עובדים ללא שיוך יחולקו בין הגנים, עם גננת וסייעת בכל גן. אפשר לתקן ידנית אחר כך.`
-                : 'לוודא רכז/ת בכל בית ספר? בבתי ספר ללא רכז, העובד/ת עם הכי הרבה שעות יוגדר כרכז/ת. אפשר לתקן ידנית אחר כך.';
+                : 'להשלים שיוך? עובדים לא-משויכים (כגון מילוי מקום) ישובצו בין בתי הספר לפי יתרות השכר והסל הגמיש, ובכל בי"ס ללא רכז — בעל/ת השעות הגבוהות יוגדר כרכז/ת.';
               if (!window.confirm(q)) return;
               setBusy(true);
               try {
                 const r = await autoAssign(reportId); await load();
-                setMsg(r.mode === 'schools' ? `הוגדרו ${r.assigned} רכזים ב-${r.gardens} בתי ספר.` : `שויכו ${r.assigned} עובדים בין ${r.gardens} גנים.`);
+                setMsg(r.mode === 'schools' ? `שובצו ${r.placed ?? 0} עובדים לפי היתרות והוגדרו ${r.promoted ?? 0} רכזים ב-${r.gardens} בתי ספר.` : `שויכו ${r.assigned} עובדים בין ${r.gardens} גנים.`);
               }
               catch (e: any) { setMsg(e?.response?.data?.error || 'השיוך האוטומטי נכשל.'); }
               finally { setBusy(false); }
