@@ -23,8 +23,7 @@ const fileMetaCache = new Map(); // reportId -> { fileName, insts, redirect, dep
 
 /* עמודת "זכאות לסגן/נית רכז/ת" בלשונית איוש המשרות — קובעת אם דיווח
    הסגן מוכר בסל הריכוז (מוסד קטן: לא זכאי — העלות לא נזקפת לאף סל) */
-function parseDeputyEntitlement(buf) {
-  const wb = XLSX.read(buf, { type: 'buffer' });
+function parseDeputyEntitlement(wb) {
   const sn = wb.SheetNames.find((n) => normCell(n).includes('איוש משרות'));
   if (!sn) return {};
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
@@ -54,11 +53,13 @@ async function fileMeta(db, report) {
     const row = await db.prepare('SELECT data FROM report_files WHERE report_id = ?').get(report.id);
     if (row && row.data) {
       const buf = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
-      entry.insts = extractInstitutions(buf);
+      // פענוח אחד של הקובץ משרת את כל החילוצים (פענוח מלא אורך שניות)
+      const wb = XLSX.read(buf, { type: 'buffer' });
+      entry.insts = extractInstitutions(wb);
       entry.redirect = new Map(entry.insts.filter((i) => i.activitySymbol).map((i) => [String(i.symbol), String(i.activitySymbol)]));
-      if (report.framework !== 'gardens') entry.depEntitled = parseDeputyEntitlement(buf);
+      if (report.framework !== 'gardens') entry.depEntitled = parseDeputyEntitlement(wb);
       else {
-        try { entry.gardensExec = parseGardenExecKids(XLSX.read(buf, { type: 'buffer' })); } catch { /* בלי הלשונית */ }
+        try { entry.gardensExec = parseGardenExecKids(wb); } catch { /* בלי הלשונית */ }
       }
     }
   } catch { /* אין קובץ — שיוך לפי מוסדות המסד בלבד */ }
@@ -554,4 +555,5 @@ ${d.unassignedCost > 0 ? `<p class="note">⚠ עלות של ₪${fmt(d.unassigne
 </body></html>`;
 }
 
-module.exports = { stage1Data, renderStage1Html };
+const invalidateFileMeta = (reportId) => { fileMetaCache.delete(reportId); };
+module.exports = { stage1Data, renderStage1Html, invalidateFileMeta };

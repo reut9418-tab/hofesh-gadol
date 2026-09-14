@@ -11,6 +11,10 @@ const { norm } = require('./budgetFile');
 // בגנים הלשונית נקראת "פירוט עלויות כח אדם", בבתי"ס "עלויות כח אדם" — המכנה המשותף
 const MINISTRY_SHEET_HINT = 'עלויות כח אדם';
 
+// פענוח קובץ 2-3MB אורך שניות — פונקציות החילוץ מקבלות גם workbook מפוענח
+// כדי שקריאה אחת תשרת את כולן (במקום 4 פענוחים מלאים בכל טעינה קרה)
+const asWb = (bufOrWb) => (bufOrWb && bufOrWb.SheetNames ? bufOrWb : XLSX.read(bufOrWb, { type: 'buffer' }));
+
 /* אינדקס בשורת הייצוא → היסט מעמודת הסמל (גנים: הסמל ב-B, בתי"ס: ב-A —
    סדר העמודות זהה, רק ההתחלה זזה). היסטים 1 (שם מוסד) ו-11 (עלות לתקופה)
    הן נוסחאות של המשרד — לא נוגעים. */
@@ -382,7 +386,7 @@ function detectCoordStart(buf) {
 /* הגנים הזכאים לרכזת: מלשונית "גנים - דוח ביצוע" — סמלי הגנים שבהם
    "המובילה אינה גננת. סייעת=1" (עמודת הדגל = 1). */
 function extractCoordinatorGardens(buf) {
-  const wb = XLSX.read(buf, { type: 'buffer' });
+  const wb = asWb(buf);
   const sheetName = wb.SheetNames.find((n) => n.includes('דוח ביצוע') && n.includes('גנים') && !n.includes('רכזות'));
   if (!sheetName) return [];
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: null });
@@ -407,7 +411,7 @@ function extractCoordinatorGardens(buf) {
 /* כל סמלי הגנים הפעילים מלשונית "גנים - דוח ביצוע" — לשיוך אוטומטי של
    עובדים לגנים (איוש משרות דורש גננת + סייעת בכל גן) */
 function extractExecGardens(buf) {
-  const wb = XLSX.read(buf, { type: 'buffer' });
+  const wb = asWb(buf);
   const sheetName = wb.SheetNames.find((n) => n.includes('דוח ביצוע') && n.includes('גנים') && !n.includes('רכזות'));
   if (!sheetName) return [];
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: null });
@@ -458,7 +462,7 @@ const SCHOOL_STAFF_TYPES = [
    הקובץ, אחרת בקרות התעריף המינימלי שבו נשברות. */
 function extractSchoolStaffTypes(buf) {
   try {
-    const wb = XLSX.read(buf, { type: 'buffer' });
+    const wb = asWb(buf);
     const sn = wb.SheetNames.find((n) => norm(n).includes('סיווג התפקידים'));
     if (!sn) return null;
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
@@ -487,7 +491,7 @@ function extractSchoolStaffTypes(buf) {
 /* רשימת המוסדות (סמל + שם) מקובץ דוח הביצוע — מגיליון "מצבת והרשמה" של הרשות.
    נעצרים בגיליון הראשון שמניב תוצאות כדי לא לגרוף את הרשימה הארצית הנסתרת. */
 function extractInstitutions(buf) {
-  const wb = XLSX.read(buf, { type: 'buffer' });
+  const wb = asWb(buf);
   const fromSheet = (n) => {
     const out = new Map();
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: null });

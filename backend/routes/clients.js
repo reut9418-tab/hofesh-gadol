@@ -69,17 +69,22 @@ router.get('/dashboard', ah(async (req, res) => {
 
 router.get('/', ah(async (req, res) => {
   const db = getDB();
-  const clients = await db.prepare('SELECT * FROM clients ORDER BY name').all();
-  const out = [];
-  for (const c of clients) {
-    out.push({
-      ...c,
-      has_vat: !!c.has_vat,
-      authorityCount: Number((await db.prepare('SELECT COUNT(*) c FROM authorities WHERE client_id = ?').get(c.id)).c),
-      reportCount: Number((await db.prepare('SELECT COUNT(*) c FROM reports WHERE client_id = ?').get(c.id)).c),
-    });
-  }
-  res.json(out);
+  // שאילתה מצרפת אחת במקום שתי ספירות פר לקוח (N+1 — האט את המסך פי 10)
+  const clients = await db.prepare(`
+    SELECT c.*,
+           COUNT(DISTINCT a.id) AS authority_count,
+           COUNT(DISTINCT r.id) AS report_count
+    FROM clients c
+    LEFT JOIN authorities a ON a.client_id = c.id
+    LEFT JOIN reports r ON r.client_id = c.id
+    GROUP BY c.id
+    ORDER BY c.name`).all();
+  res.json(clients.map(({ authority_count, report_count, ...c }) => ({
+    ...c,
+    has_vat: !!c.has_vat,
+    authorityCount: Number(authority_count),
+    reportCount: Number(report_count),
+  })));
 }));
 
 /* ---------- ניוד עובדים בין פרויקטים (15 יום ↔ הרחבה באותה רשות) ---------- */

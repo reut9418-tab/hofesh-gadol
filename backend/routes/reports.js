@@ -41,7 +41,7 @@ const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
 const { recommendations } = require('../lib/recommend');
 const { matchDeptsToInstitutions } = require('../lib/nameMatch');
-const { stage1Data, renderStage1Html } = require('../lib/stage1');
+const { stage1Data, renderStage1Html, invalidateFileMeta } = require('../lib/stage1');
 
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -57,14 +57,19 @@ async function ministryData(db, report) {
   const buf = await budgetFileBuf(db, report);
   const entry = { fileName: report.budget_file_name || '', buf, institutions: [], schoolTypes: null, redirect: new Map(), coordGardens: [], execGardens: [] };
   if (buf) {
-    try { entry.institutions = extractInstitutions(buf); } catch { /* בלי רשימה */ }
+    // פענוח אחד של הקובץ (2-3MB, שניות) משרת את כל פונקציות החילוץ —
+    // עד עכשיו כל אחת פענחה את הקובץ מחדש והטעינה הקרה ארכה >10 שניות
+    let wb = null;
+    try { wb = require('xlsx').read(buf, { type: 'buffer' }); } catch { /* קובץ פגום — ננסה פר פונקציה */ }
+    const src = wb || buf;
+    try { entry.institutions = extractInstitutions(src); } catch { /* בלי רשימה */ }
     // בתי ספר מאוחדים: הסמל הרשמי מפנה לסמל שבו מתקיימת הפעילות
     entry.redirect = new Map(entry.institutions.filter((i) => i.activitySymbol).map((i) => [String(i.symbol), String(i.activitySymbol)]));
     if (report.framework !== 'gardens') {
-      try { entry.schoolTypes = extractSchoolStaffTypes(buf); } catch { /* ברירת מחדל */ }
+      try { entry.schoolTypes = extractSchoolStaffTypes(src); } catch { /* ברירת מחדל */ }
     } else {
-      try { entry.coordGardens = extractCoordinatorGardens(buf); } catch { /* ריק */ }
-      try { entry.execGardens = extractExecGardens(buf); } catch { /* ריק */ }
+      try { entry.coordGardens = extractCoordinatorGardens(src); } catch { /* ריק */ }
+      try { entry.execGardens = extractExecGardens(src); } catch { /* ריק */ }
     }
   }
   ministryCache.set(key, entry);
@@ -261,6 +266,7 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   await db.prepare('DELETE FROM report_files WHERE report_id = ?').run(id);
   await db.prepare('INSERT INTO report_files (report_id, data) VALUES (?, ?)').run(id, req.file.buffer);
   ministryCache.delete(id); // הקובץ התחלף — הנגזרות ייבנו מחדש
+  invalidateFileMeta(id); // גם המטמון של מחולל המכתב
 
   const totalBudget = parsed.institutions.reduce((s, i) => s + (i.total || 0), 0);
   const fallbackInst = parsed.institutions.find((i) => i.ratesFallback);
@@ -273,6 +279,28 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
       : undefined,
     health: await reportHealth(db, await db.prepare('SELECT * FROM reports WHERE id = ?').get(id)),
   });
+
+  // חימום המטמון ברקע, אחרי שהתשובה כבר נשלחה: הפותחת הראשונה של מסך
+  // ההכנה לא תספוג את פענוח הקובץ הקר (שניות) — הוא ייבנה עכשיו
+  setImmediate(async () => {
+    try {
+      const fresh = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+      if (fresh) await ministryData(db, fresh);
+    } catch { /* חימום בלבד — כישלון לא מפריע לעבודה */ }
+  });
+}));
+
+/* הורדת קובץ דוח הביצוע השמור (המקור שהועלה) */
+router.get('/:id/budget-file', ah(async (req, res) => {
+  const db = getDB();
+  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(parseInt(req.params.id));
+  if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
+  const buf = await budgetFileBuf(db, report);
+  if (!buf) return res.status(404).json({ error: 'לדוח זה עדיין לא הועלה קובץ דוח ביצוע.' });
+  const name = report.budget_file_name || `budget_${report.id}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="budget_${report.id}.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.send(buf);
 }));
 
 /* ---------- תקציב הדוח: מוסדות + תקציב מול ניצול ---------- */
@@ -301,11 +329,13 @@ router.get('/:id/budget', ah(async (req, res) => {
 router.get('/:id/prep', ah(async (req, res) => {
   const db = getDB();
   const id = parseInt(req.params.id);
+  const t0 = Date.now();
   const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
   if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
 
   // רשימת המוסדות מקובץ המשרד השמור (מצבת והרשמה) — לבחירת סמל מקום פעילות
   const md = await ministryData(db, report);
+  const tMinistry = Date.now();
   const institutions = md.institutions;
   const prepBuf = md.buf;
   const validSymbols = new Set(institutions.map((i) => i.symbol));
@@ -353,12 +383,17 @@ router.get('/:id/prep', ah(async (req, res) => {
   });
 
   // הבדיקות רצות במקביל — כל אחת עושה כמה סבבי-רשת ל-DB בענן
+  const tRows = Date.now();
   const [client, authority, salaryRes, recsRes] = await Promise.all([
     db.prepare('SELECT name, has_vat FROM clients WHERE id = ?').get(report.client_id),
     report.authority_id ? db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null,
     salaryCheck(db, report),
     recommendations(db, report),
   ]);
+  // תזמון שלבים — לאיתור צוואר הבקבוק בטעינה קרה (משימות הביצועים)
+  if (Date.now() - t0 > 3000) {
+    console.log(`[prep ${id}] ${Date.now() - t0}ms סה"כ | קובץ משרד ${tMinistry - t0}ms | שורות ${tRows - tMinistry}ms | בדיקות ${Date.now() - tRows}ms`);
+  }
 
   // מועמדים להתאמת ברוטו (עד 5 ₪ לשעה): העלות המוכרת חורגת מ-140% מהברוטו,
   // והגדלה קטנה של הברוטו מיישרת את בקרת המשרד בלי לוותר על הכרה בעלות
