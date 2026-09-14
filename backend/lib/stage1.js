@@ -60,7 +60,13 @@ async function stage1Data(db, report, client, authority) {
   const nameSymbol = insts.length
     ? matchDeptsToInstitutions(insts, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))])
     : {};
-  const rowSymbol = (r) => r.symbol_override || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null;
+  // כמו resolveSymbol של הייצוא: גם סמל גולמי מדוח העלות (inst_symbol) נחשב
+  // כשהוא סמל מוסד מוכר — אחרת המכתב "מאבד" עובדים שהקובץ כן משייך
+  const validSyms = new Set(insts.map((i) => String(i.symbol)));
+  const rowSymbol = (r) => r.symbol_override
+    || (r.inst_symbol && validSyms.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
+    || (r.inst_name && nameSymbol[r.inst_name])
+    || deptSymbol[r.dept] || null;
 
   // פיצול הניצול המוכר של יחידה לסל הדרכה מול סל הריכוז (רכז+סגן) —
   // ההשוואה במכתב היא סל-מול-סל, לא סך שכר מול סך תקציבים
