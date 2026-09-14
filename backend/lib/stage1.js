@@ -14,6 +14,27 @@ const fmt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const clientName = (client, authority) => (authority && authority.name) || (client && client.name) || 'המפעיל';
 
+/* מוסדות קובץ המשרד (לשונית ההרשמה) + מפת ההפניות של בתי ספר מאוחדים —
+   כדי ששיוך הסמלים במכתב יהיה זהה במדויק לזה של הייצוא (resolveSymbol) */
+const { extractInstitutions } = require('./fillMinistry');
+const fileMetaCache = new Map(); // reportId -> { fileName, insts, redirect }
+async function fileMeta(db, report) {
+  const fn = report.budget_file_name || '';
+  const cached = fileMetaCache.get(report.id);
+  if (cached && cached.fileName === fn) return cached;
+  const entry = { fileName: fn, insts: [], redirect: new Map() };
+  try {
+    const row = await db.prepare('SELECT data FROM report_files WHERE report_id = ?').get(report.id);
+    if (row && row.data) {
+      const buf = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
+      entry.insts = extractInstitutions(buf);
+      entry.redirect = new Map(entry.insts.filter((i) => i.activitySymbol).map((i) => [String(i.symbol), String(i.activitySymbol)]));
+    }
+  } catch { /* אין קובץ — שיוך לפי מוסדות המסד בלבד */ }
+  fileMetaCache.set(report.id, entry);
+  return entry;
+}
+
 /* ---------- איסוף הנתונים ---------- */
 async function stage1Data(db, report, client, authority) {
   const cost = await costDataForReport(db, report);
@@ -54,27 +75,33 @@ async function stage1Data(db, report, client, authority) {
   // עמודות שכר נפרדות רק כשבאמת מוגדרים שני משלמים שונים
   const definedPayers = new Set(rows.map((r) => r.payer).filter(Boolean));
   const payers = definedPayers.size >= 2 ? [...new Set(rows.map((r) => r.payer || DEFAULT_PAYER))] : [DEFAULT_PAYER];
-  const deptSymbol = report.framework !== 'gardens' && insts.length
-    ? matchDeptsToInstitutions(insts, [...new Set(rows.map((r) => r.dept))])
+  // שיוך זהה לזה של הייצוא: התאמת שמות מול מוסדות קובץ המשרד (לשונית
+  // ההרשמה — שמות מלאים), סמל גולמי מדוח העלות כשהוא מוכר, והפניית
+  // בתי ספר מאוחדים לסמל מקום הפעילות
+  const meta = await fileMeta(db, report);
+  const matchInsts = meta.insts.length ? meta.insts : insts;
+  const deptSymbol = report.framework !== 'gardens' && matchInsts.length
+    ? matchDeptsToInstitutions(matchInsts, [...new Set(rows.map((r) => r.dept))])
     : {};
-  const nameSymbol = insts.length
-    ? matchDeptsToInstitutions(insts, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))])
+  const nameSymbol = matchInsts.length
+    ? matchDeptsToInstitutions(matchInsts, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))])
     : {};
-  // כמו resolveSymbol של הייצוא: גם סמל גולמי מדוח העלות (inst_symbol) נחשב
-  // כשהוא סמל מוסד מוכר — אחרת המכתב "מאבד" עובדים שהקובץ כן משייך
-  const validSyms = new Set(insts.map((i) => String(i.symbol)));
-  const rowSymbol = (r) => r.symbol_override
+  const validSyms = new Set(matchInsts.map((i) => String(i.symbol)));
+  const toActivity = (s) => (s ? (meta.redirect.get(String(s)) || String(s)) : null);
+  const rowSymbol = (r) => toActivity(r.symbol_override
     || (r.inst_symbol && validSyms.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
     || (r.inst_name && nameSymbol[r.inst_name])
-    || deptSymbol[r.dept] || null;
+    || deptSymbol[r.dept] || null);
 
   // פיצול הניצול המוכר של יחידה לסל הדרכה מול סל הריכוז (רכז+סגן) —
   // ההשוואה במכתב היא סל-מול-סל, לא סך שכר מול סך תקציבים
-  const splitRecognized = (unitRows) => {
+  const splitRecognized = (unitRows, deputyEntitled = true) => {
     let instr = 0, coord = 0;
     // בבתי הספר קובץ המשרד מזהה את דיווח הסגן ב-VLOOKUP — נתפסת רק שורת
     // הסגן הראשונה בסדר הכתיבה (סמל ואז שם עובד); סגנים נוספים באותו מוסד
-    // נשארים ב"שכר צוות חינוכי". רכזים נספרים כולם (SUMIFS). משחזרים במדויק
+    // נשארים ב"שכר צוות חינוכי". רכזים נספרים כולם (SUMIFS). במוסד ללא
+    // זכאות לסגן (קטן) — דיווח הסגן מוחסר מהצוות אך אינו מוכר בריכוז:
+    // העלות אינה נזקפת לאף סל, בדיוק כמו בקובץ. משחזרים במדויק
     const ordered = report.framework === 'gardens' ? unitRows : [...unitRows].sort((a, b) => {
       const ka = String(a.symbol_override || a.inst_symbol || ''), kb = String(b.symbol_override || b.inst_symbol || '');
       if (ka !== kb) return ka < kb ? -1 : 1;
@@ -88,7 +115,8 @@ async function stage1Data(db, report, client, authority) {
       const v = recognizedRowCost(r, vatFactor);
       const basket = basketForStaff(st);
       if (basket === 'coordinator') coord += v;
-      else if (basket === 'deputy' && (report.framework === 'gardens' || !depTaken)) { coord += v; depTaken = true; }
+      else if (basket === 'deputy' && report.framework === 'gardens') coord += v;
+      else if (basket === 'deputy' && !depTaken) { depTaken = true; if (deputyEntitled) coord += v; }
       else instr += v;
     }
     return { instr, coord };
@@ -184,7 +212,9 @@ async function stage1Data(db, report, client, authority) {
     for (const i of insts) {
       const unitRows = rows.filter((r) => rowSymbol(r) === String(i.symbol));
       const actual = unitRows.reduce((s, r) => s + (r.cost || 0), 0);
-      let split = splitRecognized(unitRows);
+      const bkts = await basketsOf(i.id);
+      // זכאות לסגן — רק מוסד עם תקציב סגן (גדול); כמו עמודת הזכאות באיוש
+      let split = splitRecognized(unitRows, (bkts.deputy || 0) > 0);
       // דוח הביצוע מפצל את הניצול לפי לשונית איוש המשרות: "שכר רכזים/סגנים" =
       // התקציב המוכר מהלשונית, ו"שכר צוות חינוכי" = כלל העלות בניכוי הדיווח —
       // לא לפי סיווג התפקידים בדוח העלות. כשקיימים דיווחי איוש, מיישרים אליהם
@@ -194,7 +224,7 @@ async function stage1Data(db, report, client, authority) {
         const total = split.instr + split.coord;
         split = { instr: Math.max(0, total - stRep), coord: stBud };
       }
-      units.push(mkUnit(i.name || i.symbol, String(i.symbol), await basketsOf(i.id), actual, split, i.children_count || 0, payerSplit(unitRows)));
+      units.push(mkUnit(i.name || i.symbol, String(i.symbol), bkts, actual, split, i.children_count || 0, payerSplit(unitRows)));
     }
   }
 
