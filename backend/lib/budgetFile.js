@@ -200,6 +200,13 @@ function parseAggregateSheet(rows, sheetName, wb = null, opts = {}) {
         actual[key] = actual[key] || 0;
         budget += baskets[key];
       }
+      // סל ריכוז: "שכר עבור ריכוז" הוא תעריף לגן (מוגדר בטבלה רק ל-15 ימים)
+      // — כפול מספר הגנים במצבה; בהרחבה אין סל ריכוז (כמו בקבצים שכן חושבו)
+      if (opts.program !== 'extension' && rates.perGarden > 0 && regInfo && regInfo.gardens > 0 && !(baskets.coordinator > 0)) {
+        baskets.coordinator = Math.round(regInfo.gardens * rates.perGarden * 100) / 100;
+        actual.coordinator = actual.coordinator || 0;
+        budget += baskets.coordinator;
+      }
       budget = Math.round(budget * 100) / 100;
       if (!(reg > 0)) reg = kidsReg;
       if (gardens == null && regInfo) gardens = regInfo.gardens;
