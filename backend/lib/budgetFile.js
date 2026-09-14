@@ -323,6 +323,7 @@ function parseBudgetFile(buf, opts = {}) {
   let blockCount = 0, validBlocks = 0; // אבחון: בלוקים קיימים אך בלי סמלים = קובץ לא חוּשב
   let pendingFlexAlloc = null; // "תקצוב סל גמיש לשכר רגיל/רכזים" — הערך בשורה הבאה
 
+  const seenSymbols = new Set();
   const pushCur = () => {
     if (!cur) return;
     // הפחתת הקצאות הגמיש-לשכר מהסלים (הן כלולות בשורות ההתאמה) — הגמיש מוצג בנפרד
@@ -331,7 +332,13 @@ function parseBudgetFile(buf, opts = {}) {
         if (v > 0 && cur.baskets[key] > 0) cur.baskets[key] = Math.max(0, cur.baskets[key] - v);
       }
     }
-    if (cur.total > 0 || Object.keys(cur.baskets).length) institutions.push(cur);
+    // תבניות מסוימות מכילות בלוקים כפולים ובלוקי-מילוי ריקים שמציגים את
+    // הסמל האחרון — מוסד אחד לכל סמל, הבלוק הראשון (האמיתי) גובר
+    if (seenSymbols.has(cur.symbol)) return;
+    if (cur.total > 0 || Object.keys(cur.baskets).length) {
+      seenSymbols.add(cur.symbol);
+      institutions.push(cur);
+    }
   };
 
   for (let i = 0; i < rows.length; i++) {
