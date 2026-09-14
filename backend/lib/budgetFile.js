@@ -305,8 +305,18 @@ function parseBudgetFile(buf, opts = {}) {
   let cols = null; // עמודות מקטע ההתאמה (נקבעות מהכותרת האחרונה שנראתה)
   let flexMode = false, flexCols = null; // מקטע "בדיקת ניצול תקציב סל גמיש" בתוך הבלוק
   let blockCount = 0, validBlocks = 0; // אבחון: בלוקים קיימים אך בלי סמלים = קובץ לא חוּשב
+  let pendingFlexAlloc = null; // "תקצוב סל גמיש לשכר רגיל/רכזים" — הערך בשורה הבאה
 
-  const pushCur = () => { if (cur && (cur.total > 0 || Object.keys(cur.baskets).length)) institutions.push(cur); };
+  const pushCur = () => {
+    if (!cur) return;
+    // הפחתת הקצאות הגמיש-לשכר מהסלים (הן כלולות בשורות ההתאמה) — הגמיש מוצג בנפרד
+    if (cur.flexAlloc) {
+      for (const [key, v] of Object.entries(cur.flexAlloc)) {
+        if (v > 0 && cur.baskets[key] > 0) cur.baskets[key] = Math.max(0, cur.baskets[key] - v);
+      }
+    }
+    if (cur.total > 0 || Object.keys(cur.baskets).length) institutions.push(cur);
+  };
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i] || [];
@@ -322,8 +332,8 @@ function parseBudgetFile(buf, opts = {}) {
         pushCur();
         // שם המוסד — התא הטקסטואלי הראשון באותה שורה (לרוב לפני "סמל המוסד")
         const name = row.slice(0, symIdx).map(norm).filter((x) => x && !/^\d+$/.test(x)).pop() || '';
-        cur = { symbol: symVal, name: name.replace(/^בית הספר\s*/, ''), size: null, days: null, eligibleReg: null, eligibleSpec: null, baskets: {}, actual: {}, unused: {}, total: 0, totalActual: 0, totalUnused: 0 };
-        cols = null; flexMode = false; flexCols = null; // בלוק חדש — לא יורשים עמודות מהבלוק הקודם
+        cur = { symbol: symVal, name: name.replace(/^בית הספר\s*/, ''), size: null, days: null, eligibleReg: null, eligibleSpec: null, baskets: {}, actual: {}, unused: {}, total: 0, totalActual: 0, totalUnused: 0, flexAlloc: { instruction: 0, coordinator: 0 } };
+        cols = null; flexMode = false; flexCols = null; pendingFlexAlloc = null; // בלוק חדש — לא יורשים מהקודם
         continue;
       }
     }
@@ -338,6 +348,20 @@ function parseBudgetFile(buf, opts = {}) {
     if ((k = li('ילדים זכאים ח.מיוחד')) >= 0 && cur.eligibleSpec == null) cur.eligibleSpec = numNear(row, k);
     // תבנית ההרחבה: המשרד מסמן "לא תקין" כשגיליון איוש המשרות לא מולא → הזכאות מתאפסת
     if ((k = li('איוש משרות')) >= 0 && norm(row[k + 1]).includes('לא תקין')) cur.staffingInvalid = true;
+
+    // "תקצוב סל גמיש לשכר רגיל/רכזים": שורת ההתאמה "שכר צוות חינוכי" כוללת
+    // כבר את הקצאת הגמיש — נחסיר אותה כדי לא לספור את הסל הגמיש פעמיים
+    if (pendingFlexAlloc && row[pendingFlexAlloc.col] != null) {
+      const v = num(row[pendingFlexAlloc.col]);
+      if (v != null) cur.flexAlloc[pendingFlexAlloc.key] += v;
+      pendingFlexAlloc = null;
+    }
+    {
+      const jInstr = labels.findIndex((x) => x.includes('תקצוב סל גמיש לשכר רגיל'));
+      const jCoord = labels.findIndex((x) => x.includes('תקצוב סל גמיש לשכר רכזים'));
+      if (jInstr >= 0) pendingFlexAlloc = { col: jInstr, key: 'instruction' };
+      else if (jCoord >= 0) pendingFlexAlloc = { col: jCoord, key: 'coordinator' };
+    }
     // "דיווח הרשות" — כמות הילדים שהרשות דיווחה (גם כשהזכאות המחושבת 0)
     if ((k = li('דיווח הרשות')) >= 0 && cur.reported == null) cur.reported = num(row[k + 1]);
 
