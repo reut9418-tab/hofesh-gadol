@@ -100,9 +100,14 @@ async function stage1Data(db, report, client, authority) {
     // לא תקציב נפרד — אין לספור פעמיים, והיתרה לארוחות בוקר = יתרת הסל הגמיש
     const breakfastPot = Math.abs(breakfastB - flexB) < 1 ? flexB : breakfastB + flexB;
     const breakfastAvailable = Math.max(0, breakfastPot - flexConsumed);
-    // אופציה א: הסל הגמיש לארוחות בוקר/מלגות → תוספת העשרה = הנמוך מבין
-    // 25% מתקציב ההעשרה לבין יתרת השכר שטרם נוצלה (רק כשאין חריגות סליות)
-    const enrichBonus = overflow === 0 && salaryUnused > 0 ? Math.min(0.25 * enrichB, salaryUnused) : 0;
+    // אופציה א: יתרת השכר מנוידת להעשרה. כלל הניוד: מותר להעביר עד 25%
+    // מתקציב סל *המקור* (חייבים להשאיר בו 75% ניצול); הסל המקבל אינו
+    // מוגבל — יכול לקבל תוספת של יותר מ-25% מגודלו
+    const instrUnused = Math.max(0, instrBudget - instrActual);
+    const coordUnused = Math.max(0, coordBudget - coordActual);
+    const enrichBonus = overflow === 0 && salaryUnused > 0
+      ? Math.min(instrUnused, 0.25 * instrBudget) + Math.min(coordUnused, 0.25 * coordBudget)
+      : 0;
     // חריגת שכר גדולה (מעבר לסל הגמיש): ממליצים להכיר ב-75% מתקציב ההעשרה
     // ולנתב 25% ממנו לכיסוי החריגה
     const uncovered = Math.max(0, overflow - flexConsumed);
@@ -283,7 +288,7 @@ function renderStage1Html(d) {
         <ul>
           <li>ארוחות בוקר ומלגות: עד <b>₪${fmt(u.optionA.flexForFood)}</b> ${u.flexConsumed > 0 ? `<span class="soft">(יתרת הסל הגמיש אחרי כיסוי חריגת השכר)</span>` : '(מלוא הסל הגמיש)'}</li>
           <li>העשרה: עד <b>₪${fmt(u.optionA.enrich)}</b>${u.optionA.enrichBonus > 0
-            ? `<br><span class="soft">(תקציב ₪${fmt(u.enrichBudget)} + תוספת 25% בסך ₪${fmt(u.optionA.enrichBonus)}, המתאפשרת בזכות יתרת השכר)</span>`
+            ? `<br><span class="soft">(תקציב ₪${fmt(u.enrichBudget)} + ניוד יתרת שכר בסך ₪${fmt(u.optionA.enrichBonus)} — עד 25% מתקציב סל השכר ניתן לניוד)</span>`
             : ` <span class="soft">(לפי התקציב)</span>`}</li>
         </ul>
       </div>
@@ -357,7 +362,7 @@ function renderStage1Html(d) {
     <thead><tr><th>${d.units.length > 1 ? 'בית ספר' : 'מסגרת'}</th>${headCols.map((h) => `<th class="num">${h}</th>`).join('')}</tr></thead>
     <tbody>${d.units.map(unitRow).join('')}${totalsRow}</tbody>
   </table>
-  <p class="note">שכר — הסכום שדווח בדוח הביצוע בניכוי מע"מ (יעד הכרטסת), לצד העלות בספרים${multiPayer ? ', בהפרדה לפי המשלם (כרטסת נפרדת בספרי כל משלם)' : ''}. ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש שנותרה אחרי בליעת חריגת השכר (בהנחת אופציה א'); אם יוחלט אחרת, ראו סעיף 4. העשרה — כולל תוספת 25% היכן שקיימת יתרת שכר${anyShift ? '; בשל חריגת השכר מוצגות שתי אופציות — 75% מהתקציב (מומלץ: 25% מנותבים לכיסוי חריגת השכר) או 100% מהתקציב (החריגה נותרת ללא כיסוי)' : ''}. הכנסות משתתפים — כמות הילדים בדוח הביצוע × תעריף המשרד${d.tariff ? ` (₪${fmt(d.tariff)} לילד)` : ''}.${d.hasVat ? ' <b>כל היעדים בטבלה רשומים נטו, ללא מע"מ</b> — כפי שנרשם בכרטסת; בדוח הביצוע למשרד הסכומים מדווחים בתוספת מע"מ 18%.' : ''}</p>`;
+  <p class="note">שכר — הסכום שדווח בדוח הביצוע בניכוי מע"מ (יעד הכרטסת), לצד העלות בספרים${multiPayer ? ', בהפרדה לפי המשלם (כרטסת נפרדת בספרי כל משלם)' : ''}. ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש שנותרה אחרי בליעת חריגת השכר (בהנחת אופציה א'); אם יוחלט אחרת, ראו סעיף 4. העשרה — כולל ניוד יתרת שכר היכן שקיימת (עד 25% מתקציב סל המקור ניתן לניוד; הסל המקבל אינו מוגבל)${anyShift ? '; בשל חריגת השכר מוצגות שתי אופציות — 75% מהתקציב (מומלץ: 25% מנותבים לכיסוי חריגת השכר) או 100% מהתקציב (החריגה נותרת ללא כיסוי)' : ''}. הכנסות משתתפים — כמות הילדים בדוח הביצוע × תעריף המשרד${d.tariff ? ` (₪${fmt(d.tariff)} לילד)` : ''}.${d.hasVat ? ' <b>כל היעדים בטבלה רשומים נטו, ללא מע"מ</b> — כפי שנרשם בכרטסת; בדוח הביצוע למשרד הסכומים מדווחים בתוספת מע"מ 18%.' : ''}</p>`;
 
   return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
 <title>מכתב שלב 1 — ${esc(to)} — ${esc(d.label)}</title>
