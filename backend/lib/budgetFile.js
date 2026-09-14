@@ -56,7 +56,7 @@ function reconColumns(row) {
 function parseAggregateSheet(rows, sheetName) {
   const firstNumAfter = (row, k) => numNear(row, k, 4);
   let authority = '', symbol = '';
-  let reg = null, afterControl = null, spec = null, gardens = null, coordinators = null;
+  let reg = null, afterControl = null, effectiveTotal = null, spec = null, gardens = null, coordinators = null;
   let cols = null, total = 0, totalNet = null, totalActual = 0, netActual = null, totalUnused = 0;
   let totalNormative = 0; // גיבוי: "סה"כ תקציב נורמטיבי" ממקטע העלויות
   let flexMode = false, flexCols = null; // מקטע "בדיקת ניצול תקציב סל גמיש"
@@ -81,6 +81,9 @@ function parseAggregateSheet(rows, sheetName) {
     if (reg == null && (k = labels.findIndex((x) => x.includes('תלמידים') && x.includes('הרשמה'))) >= 0) reg = firstNumAfter(row, k);
     if (spec == null && (k = li('תלמידים ח.מיוחד')) >= 0) spec = firstNumAfter(row, k);
     if (afterControl == null && (k = li('תלמידים לתקצוב')) >= 0) afterControl = firstNumAfter(row, k);
+    // הרחבה: "סה"כ תלמידים" = ההרשמה אחרי הפחתת ימי-תלמיד על ימים שלא עבדו —
+    // זו הכמות הנכונה לתקצוב כשבקרת האיוש איפסה את התא הסופי
+    if (effectiveTotal == null && (k = labels.findIndex((x) => x === 'סהכ תלמידים' || x === 'סה"כ תלמידים')) >= 0) effectiveTotal = firstNumAfter(row, k);
     // מקור גיבוי לתקציב: "סה"כ תקציב נורמטיבי" ממקטע העלויות הנורמטיביות
     if ((k = li('סהכ תקציב נורמטיבי')) >= 0) { const v = firstNumAfter(row, k); if (v > 0 && !totalNormative) totalNormative = v; }
     if (gardens == null && (k = li('מספר מוסדות שפעלו')) >= 0) gardens = firstNumAfter(row, k);
@@ -158,9 +161,10 @@ function parseAggregateSheet(rows, sheetName) {
 
   // "סה"כ תקצוב" של הגנים = סה"כ נטו (אחרי השתתפות הורים); גיבוי: התקציב הנורמטיבי
   let budget = (totalNet != null && totalNet > 0 ? totalNet : 0) || total || totalNormative;
-  // "לאחר בקרת איוש" יכול להיות 0 (אין רכזות מאוישות) בעוד המשרד מתקצב לפי ההרשמה —
-  // לכן מעדיפים אותו רק כשהוא חיובי
-  const kids = (afterControl > 0 ? afterControl : null) ?? reg;
+  // סדר עדיפויות לכמות הילדים: "לתקצוב לאחר בקרת איוש" (מגלם גם הפחתת ימים
+  // וגם בקרה) כשחיובי ← "סה"כ תלמידים" (אחרי הפחתת ימי-תלמיד על ימים שלא
+  // עבדו — חשוב בהרחבה!) ← ההרשמה הגולמית
+  const kids = (afterControl > 0 ? afterControl : null) ?? (effectiveTotal > 0 ? effectiveTotal : null) ?? reg;
   // בקרת האיוש של המשרד איפסה את כל החישוב אך ההרשמה מולאה — בונים את
   // התקציב בעצמנו: ילדים × תעריף המשרד לילד, והסלים לפי תעריפי-הסל לילד
   let ratesFallback = false;
@@ -406,9 +410,10 @@ function parseBudgetFile(buf, opts = {}) {
     if (rates) {
       for (const inst of institutions) {
         const regInfo = regCounts[String(inst.symbol)] || null;
-        // עדיפויות לכמות הילדים: דיווח בבלוק ← זכאים ← נרשמים מלשונית ההרשמה
-        const kids = inst.reported > 0 ? inst.reported
-          : inst.eligibleReg > 0 ? inst.eligibleReg
+        // עדיפויות לכמות הילדים: זכאים לאחר בקרה (מגלם הפחתת ימים בהרחבה!)
+        // ← דיווח הרשות בבלוק ← נרשמים מלשונית ההרשמה
+        const kids = inst.eligibleReg > 0 ? inst.eligibleReg
+          : inst.reported > 0 ? inst.reported
           : regInfo ? regInfo.reg : 0;
         if (!(kids > 0)) continue;
         if (regInfo && regInfo.large) inst.size = 'large';
