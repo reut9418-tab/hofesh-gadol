@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { T } from '../theme';
 import { btn, card, input } from '../ui';
-import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, applyMove, applyBumps, autoAssign, PrepData, Assignment } from '../api';
+import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, applyMove, applyBumps, autoAssign, PrepData, Assignment } from '../api';
 
 const fmt = (n: number | null, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -110,8 +110,15 @@ export default function PrepSection({ reportId }: { reportId: number }) {
           </button>
           <button onClick={() => window.open(stage1DocUrl(reportId), '_blank')} style={btn('ghost')}
             title="סיכום הבדיקות ללקוח — להדפסה או שמירה כ-PDF">📄 מסמך שלב 1 ללקוח</button>
+          <button style={btn('ghost')}
+            title="הסבר למשרד החינוך: העלות השעתית שדווחה = הנמוך מבין עלות + מע&quot;מ לבין ברוטו + 40% — יורד כקובץ אקסל"
+            onClick={async () => {
+              setMsg('מכין את דוח ההתאמה…');
+              try { await downloadCostMatchXlsx(reportId); setMsg('✓ דוח ההתאמה ירד לתיקיית ההורדות.'); }
+              catch (e: any) { setMsg(e?.response?.data?.error || 'הורדת דוח ההתאמה נכשלה.'); }
+            }}>🧾 דוח התאמה (אקסל)</button>
           <button onClick={() => window.open(costMatchDocUrl(reportId), '_blank')} style={btn('ghost')}
-            title="הסבר למשרד החינוך: העלות השעתית שדווחה = הנמוך מבין עלות + מע&quot;מ לבין ברוטו + 40%">🧾 דוח התאמה לדוח עלות</button>
+            title="דוח ההתאמה כדף להדפסה / שמירה כ-PDF">🖨 PDF</button>
           <button onClick={save} disabled={busy} style={btn('ghost')}>{busy ? 'שומר…' : 'שמירת שיוכים'}</button>
           <button onClick={doExport} disabled={busy || exporting || !data.hasBudgetFile}
             title={data.hasBudgetFile ? '' : 'קודם מעלים דוח ביצוע של המשרד (בסקשן התקציב)'}

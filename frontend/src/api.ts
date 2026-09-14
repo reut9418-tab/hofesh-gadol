@@ -261,6 +261,19 @@ export const applyBumps = (reportId: number, rowIds: number[]) =>
 export const autoAssign = (reportId: number) =>
   api.post(`/reports/${reportId}/auto-assign`).then((r) => r.data);
 export const costMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/cost-match-doc`;
+
+/* דוח ההתאמה כקובץ אקסל — הורדה ישירה (blob) */
+export const downloadCostMatchXlsx = async (reportId: number) => {
+  const res = await api.get(`/reports/${reportId}/cost-match-xlsx`, { responseType: 'blob' });
+  const dispo: string = res.headers['content-disposition'] || '';
+  const m = /filename\*=UTF-8''([^;]+)/.exec(dispo);
+  const name = m ? decodeURIComponent(m[1]) : `דוח התאמה לדוח עלות - ${reportId}.xlsx`;
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+};
 export const applyMove = (reportId: number, rowId: number, decision: 'move' | 'decline', toSymbol?: string) =>
   api.post(`/reports/${reportId}/apply-move`, { rowId, decision, toSymbol }).then((r) => r.data);
 

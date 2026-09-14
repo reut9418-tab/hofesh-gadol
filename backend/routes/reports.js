@@ -38,7 +38,7 @@ function mapSchoolsStaff(staffType, role, schoolTypes) {
 }
 const { salaryCheck, suggestRole, schoolsRoleByHours } = require('../lib/salaryCheck');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
-const { renderCostMatchHtml } = require('../lib/costMatch');
+const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
 const { recommendations } = require('../lib/recommend');
 const { matchDeptsToInstitutions } = require('../lib/nameMatch');
 const { stage1Data, renderStage1Html } = require('../lib/stage1');
@@ -672,6 +672,26 @@ router.get('/:id/cost-match-doc', ah(async (req, res) => {
   const html = renderCostMatchHtml({ report, client, authority, rows, label: reportLabel(report.framework, report.program) });
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
+}));
+
+/* דוח ההתאמה כקובץ אקסל להורדה (בנוסף לגרסת ה-PDF/הדפסה) */
+router.get('/:id/cost-match-xlsx', ah(async (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+  if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
+  const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(report.client_id);
+  const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  const rows = await db.prepare('SELECT * FROM cost_rows WHERE report_id = ? ORDER BY emp_name').all(id);
+  if (!rows.length) return res.status(422).json({ error: 'אין שורות שכר מנותבות לדוח זה.' });
+  const { reportLabel } = require('../lib/domain');
+  const label = reportLabel(report.framework, report.program);
+  const buf = buildCostMatchXlsx({ report, client, authority, rows, label });
+  const who = (authority && authority.name) || (client && client.name) || '';
+  const outName = `דוח התאמה לדוח עלות - ${who} - ${label}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="cost_match_${id}.xlsx"; filename*=UTF-8''${encodeURIComponent(outName)}`);
+  res.send(buf);
 }));
 
 /* ---------- ייצוא: מילוי קובץ המשרד (כח אדם + רכזות + הוצאות + הכנסות) ---------- */

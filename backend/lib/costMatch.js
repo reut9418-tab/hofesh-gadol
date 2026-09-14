@@ -3,18 +3,15 @@
    השכר: הנמוך מבין עלות שכר שעתית (בתוספת מע"מ 18% ללקוח חייב) לבין
    שכר ברוטו שעתי בתוספת 40% (תקרת המשרד). מופק כדף HTML להדפסה/PDF. */
 
+const XLSX = require('xlsx');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('./ingest');
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const fmt0 = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
 const fmt2 = (n) => (n == null ? '—' : (Math.round(n * 100) / 100).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
-function renderCostMatchHtml({ report, client, authority, rows, label }) {
-  const hasVat = !!(client && client.has_vat);
-  const vatFactor = hasVat ? 1.18 : 1;
-  const today = new Date().toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' });
-  const who = (authority && authority.name) || (client && client.name) || '';
-
+/* החישוב המשותף לשני הפורמטים (HTML/PDF ואקסל) */
+function computeCostMatch(rows, vatFactor) {
   const calc = rows.map((r) => {
     // הברוטו האפקטיבי כולל התאמת ברוטו שאושרה (עד 5 ₪ לשעה)
     const hourlyGross = r.gross != null && r.hours ? effectiveGross(r) / r.hours : null;
@@ -36,6 +33,15 @@ function renderCostMatchHtml({ report, client, authority, rows, label }) {
     reported: a.reported + (c.totalReported || 0),
     diff: a.diff + c.totalDiff,
   }), { hours: 0, booksNet: 0, booksVat: 0, reported: 0, diff: 0 });
+  return { calc, totals, cappedCount };
+}
+
+function renderCostMatchHtml({ report, client, authority, rows, label }) {
+  const hasVat = !!(client && client.has_vat);
+  const vatFactor = hasVat ? 1.18 : 1;
+  const today = new Date().toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' });
+  const who = (authority && authority.name) || (client && client.name) || '';
+  const { calc, totals, cappedCount } = computeCostMatch(rows, vatFactor);
 
   const vatCols = hasVat ? '<th class="num">עלות שעתית כולל מע"מ 18%</th>' : '';
   const bodyRows = calc.map((c) => `<tr${c.capped ? ' class="capped"' : ''}>
@@ -104,4 +110,53 @@ ${bodyRows}
 </body></html>`;
 }
 
-module.exports = { renderCostMatchHtml };
+/* דוח ההתאמה כקובץ אקסל (xlsx) — אותם נתונים וחישובים כמו גרסת ה-PDF */
+function buildCostMatchXlsx({ report, client, authority, rows, label }) {
+  const hasVat = !!(client && client.has_vat);
+  const vatFactor = hasVat ? 1.18 : 1;
+  const today = new Date().toLocaleDateString('he-IL');
+  const who = (authority && authority.name) || (client && client.name) || '';
+  const { calc, totals, cappedCount } = computeCostMatch(rows, vatFactor);
+  const r2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
+
+  const head = [
+    'עובד/ת', 'ת.ז', 'מחלקה', 'שעות', 'ברוטו שעתי', 'עלות שעתית (דוח עלות)',
+    ...(hasVat ? ['עלות שעתית כולל מע"מ 18%'] : []),
+    'תקרה: ברוטו + 40%', 'עלות שעתית שדווחה', 'הוגבל לתקרה', 'הפרש לשעה', 'הפרש כולל',
+  ];
+  const aoa = [
+    [`דוח התאמה — דוח עלות השכר מול העלות השעתית שדווחה בדוח הביצוע`],
+    [`${who} — ${label} · ${today}`],
+    [`שיטת הדיווח: העלות השעתית שדווחה לכל עובד/ת היא הנמוך מבין (א) עלות השכר השעתית לפי דוח העלות${hasVat ? ' בתוספת מע"מ 18%' : ''}, לבין (ב) שכר הברוטו השעתי בתוספת 40% — תקרת ההכרה של משרד החינוך.`],
+    [`סיכום: ${calc.length} עובדים · ${cappedCount} הוגבלו לתקרת ה-140% · עלות בדוח העלות: ₪${Math.round(totals.booksNet).toLocaleString('he-IL')}${hasVat ? ` (כולל מע"מ: ₪${Math.round(totals.booksVat).toLocaleString('he-IL')})` : ''} · דווח בדוח הביצוע: ₪${Math.round(totals.reported).toLocaleString('he-IL')} · הפרש בגין התקרה: ₪${Math.round(totals.diff).toLocaleString('he-IL')}`],
+    [],
+    head,
+    ...calc.map((c) => [
+      c.r.emp_name || '—', String(c.r.emp_id || ''), c.r.dept || '', r2(c.r.hours),
+      r2(c.hourlyGross), r2(c.hourlyCostNet),
+      ...(hasVat ? [r2(c.hourlyCostVat)] : []),
+      r2(c.cap140), r2(c.reported), c.capped ? 'כן' : '', c.capped ? r2(c.hourlyCostVat - c.reported) : null,
+      c.capped ? r2(c.totalDiff) : null,
+    ]),
+    [
+      'סה"כ', '', '', r2(totals.hours), '', '',
+      ...(hasVat ? [''] : []),
+      '', r2(totals.reported), '', '', r2(totals.diff),
+    ],
+    [],
+    ['הופק ע"י גוטליב את ביטון, רו"ח · על בסיס דוח עלות השכר של המפעיל ודוח הביצוע של משרד החינוך' + (hasVat ? ' · הכרטסות בהנהלת החשבונות מתנהלות לפני מע"מ' : '')],
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [
+    { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 8 }, { wch: 11 }, { wch: 18 },
+    ...(hasVat ? [{ wch: 18 }] : []),
+    { wch: 16 }, { wch: 16 }, { wch: 11 }, { wch: 11 }, { wch: 11 },
+  ];
+  const wb = XLSX.utils.book_new();
+  wb.Workbook = { Views: [{ RTL: true }] }; // גיליון מימין לשמאל
+  XLSX.utils.book_append_sheet(wb, ws, 'דוח התאמה');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+module.exports = { renderCostMatchHtml, buildCostMatchXlsx };
