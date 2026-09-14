@@ -304,6 +304,69 @@ function parseSchoolRates(wb, program) {
   return { perChild, perChildSpecial, fixed };
 }
 
+/* טבלת "נתוני עזר" בגיליון התקצוב עצמו — התעריפים המדויקים שבהם הקובץ
+   משתמש (בהרחבה: סה"כ מעוגל לש"ח שלם ומפוצל לפי חלקי הסלים, ולכן שונה
+   מעט מטבלת המבנה). ערכים סטטיים — זמינים גם בקובץ קפוא. */
+function parseHelperRates(rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const labels = (rows[i] || []).map(norm);
+    const hd = labels.findIndex((x) => x === 'תקציב לילד');
+    if (hd < 0 || !labels.some((x) => x === 'סל הדרכה')) continue;
+    const cols = {
+      management: labels.findIndex((x) => x === 'סל ניהול'),
+      instruction: labels.findIndex((x) => x === 'סל הדרכה'),
+      enrichment: labels.findIndex((x) => x === 'סל העשרה'),
+      flexible: labels.findIndex((x) => x === 'סל גמיש'),
+    };
+    const grab = (row) => Object.fromEntries(Object.entries(cols).map(([k, j]) => [k, j >= 0 ? (num(row[j]) || 0) : 0]));
+    let perChild = null, perChildSpecial = null;
+    for (let j = i + 1; j <= i + 4 && j < rows.length; j++) {
+      const l2 = (rows[j] || []).map(norm);
+      if (!perChild && l2.some((x) => x.includes('רגיל'))) perChild = grab(rows[j]);
+      else if (!perChildSpecial && l2.some((x) => x.includes('חנמ'))) perChildSpecial = grab(rows[j]);
+    }
+    if (perChild && perChild.instruction > 0) return { perChild, perChildSpecial };
+  }
+  return null;
+}
+
+/* לשונית "איוש משרות (8)" — שכר הרכז/סגן שהרשות דיווחה ותקציבם המוכר.
+   דוח הביצוע גוזר מהם את פיצול הניצול: "שכר רכזים/סגנים" = התקציב המוכר
+   מהלשונית, ו"שכר צוות חינוכי" = כלל העלות בניכוי הדיווח — לא לפי סיווג
+   התפקידים בדוח העלות. הערכים גולמיים וזמינים גם בקובץ קפוא. */
+function parseStaffing(wb) {
+  const sn = wb.SheetNames.find((n) => norm(n).includes('איוש משרות'));
+  if (!sn) return {};
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  let cols = null;
+  const out = {};
+  for (const row of rows) {
+    const labels = (row || []).map(norm);
+    if (!cols) {
+      const sym = labels.findIndex((x) => x.includes('סמל בית ספר'));
+      const coordRep = labels.findIndex((x) => x.includes('דיווח שכר רכז'));
+      if (sym >= 0 && coordRep >= 0) {
+        cols = {
+          sym, coordRep,
+          depRep: labels.findIndex((x) => x.includes('דיווח שכר סגן')),
+          coordBud: labels.findIndex((x) => x.includes('תקציב שכר רכז')),
+          depBud: labels.findIndex((x) => x.includes('תקציב שכר סגן')),
+        };
+      }
+      continue;
+    }
+    const s = norm(row[cols.sym]);
+    if (!/^\d{4,7}$/.test(s)) continue;
+    out[s] = {
+      coordReported: num(row[cols.coordRep]) || 0,
+      depReported: cols.depRep >= 0 ? (num(row[cols.depRep]) || 0) : 0,
+      coordBudget: cols.coordBud >= 0 ? (num(row[cols.coordBud]) || 0) : 0,
+      depBudget: cols.depBud >= 0 ? (num(row[cols.depBud]) || 0) : 0,
+    };
+  }
+  return out;
+}
+
 /* תוספת תקצוב רכז ד-ו פר בי"ס — עמודת "תוספת תקצוב רכז בית ספר ד-ו"
    בלשונית "דוח ביצוע (3)"; ערכיה סטטיים וזמינים גם בקובץ קפוא */
 function parseCoordSupplements(wb) {
@@ -577,6 +640,12 @@ function parseBudgetFile(buf, opts = {}) {
     const rates = parseSchoolRates(wb, opts.program);
     const regCounts = parseRegistrationCounts(wb);
     const coordSup = parseCoordSupplements(wb);
+    // "נתוני עזר" שבגיליון התקצוב — התעריפים המדויקים של הקובץ (עדיף על טבלת המבנה)
+    const helper = parseHelperRates(rows);
+    if (helper && rates) {
+      rates.perChild = helper.perChild;
+      if (helper.perChildSpecial && helper.perChildSpecial.instruction > 0) rates.perChildSpecial = helper.perChildSpecial;
+    }
     if (rates) {
       for (const inst of institutions) {
         const regInfo = regCounts[String(inst.symbol)] || null;
@@ -613,6 +682,13 @@ function parseBudgetFile(buf, opts = {}) {
         inst.ratesFallback = true;
       }
     }
+  }
+
+  // דיווחי שכר רכז/סגן מלשונית איוש המשרות — לפיצול הניצול במכתב כמו בקובץ
+  const staffing = parseStaffing(wb);
+  for (const inst of institutions) {
+    const st = staffing[String(inst.symbol)];
+    if (st && (st.coordReported > 0 || st.depReported > 0 || st.coordBudget > 0 || st.depBudget > 0)) inst.staffing = st;
   }
 
   return { sheetName, authority, institutions, schoolsNotComputed };

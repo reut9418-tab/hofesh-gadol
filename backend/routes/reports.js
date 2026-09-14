@@ -228,10 +228,13 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
     // קבצי המשרד מחשבים לעיתים זכאים כמספר עשרוני (אחוז בקרה × ילדים) —
     // עמודות הילדים במסד הן מספרים שלמים, מעגלים
     const reg = Math.round(inst.eligibleReg || 0), spec = Math.round(inst.eligibleSpec || 0);
+    const st = inst.staffing || {};
     const iid = (await db.prepare(
-      `INSERT INTO institutions (report_id, symbol, name, size_type, children_count, children_regular, children_special, budget_total, actual_total)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, inst.symbol, inst.name || '', inst.size || 'small', reg + spec, reg, spec, inst.total || 0, inst.totalActual || 0)).lastInsertRowid;
+      `INSERT INTO institutions (report_id, symbol, name, size_type, children_count, children_regular, children_special, budget_total, actual_total,
+        staff_coord_reported, staff_dep_reported, staff_coord_budget, staff_dep_budget)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, inst.symbol, inst.name || '', inst.size || 'small', reg + spec, reg, spec, inst.total || 0, inst.totalActual || 0,
+      st.coordReported || 0, st.depReported || 0, st.coordBudget || 0, st.depBudget || 0)).lastInsertRowid;
     for (const [type, amount] of Object.entries(inst.baskets || {})) {
       if (amount > 0) await db.prepare('INSERT INTO baskets (institution_id, basket_type, budget_amount) VALUES (?, ?, ?)').run(iid, type, amount);
     }

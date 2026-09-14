@@ -160,7 +160,17 @@ async function stage1Data(db, report, client, authority) {
     for (const i of insts) {
       const unitRows = rows.filter((r) => rowSymbol(r) === String(i.symbol));
       const actual = unitRows.reduce((s, r) => s + (r.cost || 0), 0);
-      units.push(mkUnit(i.name || i.symbol, String(i.symbol), await basketsOf(i.id), actual, splitRecognized(unitRows), i.children_count || 0, payerSplit(unitRows)));
+      let split = splitRecognized(unitRows);
+      // דוח הביצוע מפצל את הניצול לפי לשונית איוש המשרות: "שכר רכזים/סגנים" =
+      // התקציב המוכר מהלשונית, ו"שכר צוות חינוכי" = כלל העלות בניכוי הדיווח —
+      // לא לפי סיווג התפקידים בדוח העלות. כשקיימים דיווחי איוש, מיישרים אליהם
+      const stRep = (i.staff_coord_reported || 0) + (i.staff_dep_reported || 0);
+      const stBud = (i.staff_coord_budget || 0) + (i.staff_dep_budget || 0);
+      if (stRep > 0 || stBud > 0) {
+        const total = split.instr + split.coord;
+        split = { instr: Math.max(0, total - stRep), coord: stBud };
+      }
+      units.push(mkUnit(i.name || i.symbol, String(i.symbol), await basketsOf(i.id), actual, split, i.children_count || 0, payerSplit(unitRows)));
     }
   }
 
