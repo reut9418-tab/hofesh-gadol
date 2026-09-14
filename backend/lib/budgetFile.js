@@ -66,6 +66,7 @@ function parseAggregateSheet(rows, sheetName) {
   let tariffCol = -1, perChildShare = null;
   let rateCols = null, perChildRates = null;
   let coordRatePerGarden = null, sawCoordHeader = false;
+  let flexAllocSalary = 0; // הקצאת הגמיש שנכללה בתקציב השכר (מקטע ג, "שימוש אפשרי")
   const RATE_KEYS = [['סל ניהול', 'management'], ['סל הדרכה', 'instruction'], ['סל העשרה', 'enrichment'], ['סל גמיש', 'flexible']];
 
   for (let i = 0; i < rows.length; i++) {
@@ -124,12 +125,22 @@ function parseAggregateSheet(rows, sheetName) {
     }
 
     if (flexMode) {
-      if (labels.some((x) => x.includes('תקציב נורמטיבי'))) { flexCols = reconColumns(labels); continue; }
+      if (labels.some((x) => x.includes('תקציב נורמטיבי'))) {
+        flexCols = reconColumns(labels);
+        flexCols.possible = labels.findIndex((x) => x.includes('שימוש אפשרי'));
+        continue;
+      }
       if (flexCols && flexCols.normative >= 0) {
         const nb = num(row[flexCols.normative]);
         if (nb != null && nb > (baskets.flexible || 0)) {
           baskets.flexible = nb; // סכום הסל (מופיע בשורה הראשונה עם ערך)
           actual.flexible = flexCols.actual >= 0 ? (num(row[flexCols.actual]) || 0) : 0;
+        }
+        // שורת "שכר": "שימוש אפשרי בסל" = כמה מהגמיש הוקצה לתוך תקציב השכר
+        // (שורת ההתאמה "שכר מובילות" כוללת אותו — נחסיר כדי לא לספור פעמיים)
+        if (labels.some((x) => x === 'שכר') && flexCols.possible >= 0) {
+          const fa = num(row[flexCols.possible]);
+          if (fa > 0) flexAllocSalary = fa;
         }
       }
       continue;
@@ -157,6 +168,11 @@ function parseAggregateSheet(rows, sheetName) {
         }
       }
     }
+  }
+
+  // הקצאת הגמיש שנכללה בתקציב השכר מופחתת ממנו — הסל הגמיש מוצג פעם אחת, בנפרד
+  if (flexAllocSalary > 0 && baskets.instruction > flexAllocSalary) {
+    baskets.instruction -= flexAllocSalary;
   }
 
   // "סה"כ תקצוב" של הגנים = סה"כ נטו (אחרי השתתפות הורים); גיבוי: התקציב הנורמטיבי
