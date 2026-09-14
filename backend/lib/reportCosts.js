@@ -18,10 +18,11 @@ async function costDataForReport(db, report) {
     dept: r.dept, instSymbol: r.inst_symbol, component: null,
     gross: r.gross, cost: r.cost, hours: r.hours, source: r.filename,
     payer: r.payer || null, // המשלם (מתנ"ס/רשות) — מוגדר ברמת הקובץ
+    staffType: r.staff_type || null, // רכז/סגן — שעותיהם מעל 90 תקינות מובנה
   }));
   const aggregated = aggregateComponents(shaped);
   const grossCap = programType(report.framework) === 'summer_prep' ? GROSS_CAP.summer_prep : GROSS_CAP.schools_gardens;
-  const rows = runChecks(aggregated, { grossCap, vatFactor });
+  const rows = runChecks(aggregated, { grossCap, vatFactor, framework: report.framework });
 
   const totalCost = rows.reduce((s, r) => s + (r.cost || 0), 0);
   const summary = {

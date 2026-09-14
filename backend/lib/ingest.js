@@ -240,7 +240,16 @@ function recognizedRowCost(row, vatFactor = 1) {
   const g = effectiveGross(row);
   return g > 0 ? Math.min(full, g * COST_MARKUP_LIMIT) : full;
 }
-function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOURS_CAP, vatFactor = 1 } = {}) {
+function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOURS_CAP, vatFactor = 1, framework = null } = {}) {
+  // רכז בי"ס (114 שעות) וסגן רכז (~93) עובדים מעל 90 שעות באופן מובנה —
+  // תקרת השעות לא חלה עליהם ואין מה להציף
+  const isCoordinator = (r) => {
+    if (/רכז|סגן/.test(String(r.staffType || ''))) return true;
+    if (framework && framework !== 'gardens' && r.hours != null) {
+      return (r.hours >= 114 && r.hours <= 135) || (r.hours >= 90 && r.hours <= 96);
+    }
+    return false;
+  };
   const costCap = grossCap * EMPLOYER_FACTOR;
   const seen = new Map();
   const hoursById = new Map();
@@ -259,7 +268,7 @@ function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOUR
     if (r.cost !== null && r.gross !== null && r.gross > 0 && r.cost < r.gross)
       flags.push({ level: 'warn', text: 'עלות מעביד נמוכה מהברוטו — לבדוק' });
     if (r.cost !== null && (r.hours === null || r.hours === 0)) flags.push({ level: 'warn', text: 'חסרות שעות — אין עלות שעתית' });
-    if ((hoursById.get(r.id) || 0) > hoursCap) flags.push({ level: 'warn', text: `סה"כ שעות מעל ${hoursCap} — לבדוק` });
+    if (!isCoordinator(r) && (hoursById.get(r.id) || 0) > hoursCap) flags.push({ level: 'warn', text: `סה"כ שעות מעל ${hoursCap} — לבדוק` });
     if (hourlyGross !== null && hourlyGross > grossCap) flags.push({ level: 'err', text: `ברוטו שעתי מעל ${grossCap} ₪` });
     // בדיקת תקרת העלות רצה על מה שמדווח בפועל — אחרי כלל הנמוך-מבין (עלות
     // חריגה בקובץ השכר שנבלמת בתקרת ברוטו+40% אינה חריגה בדיווח; היא עדיין
