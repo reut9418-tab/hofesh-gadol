@@ -106,9 +106,16 @@ function detectStructure(rows, learned = {}) {
         return { textScore: total ? text / total : 0, distinct: distinct.size };
       };
       // מבין העמודות הטקסטואליות — המפורטת ביותר (הכי הרבה ערכים שונים):
-      // "מחלקה" גסה ("צהרונים") מול "תאור סעיף" מפורט — הציר המפורט הוא ציר הניתוב
+      // "מחלקה" גסה ("צהרונים") מול "תאור סעיף" מפורט — הציר המפורט הוא ציר הניתוב.
+      // בשוויון — לפי סדר העדיפות של שמות העמודות ("מחלקה" לפני "שלוחה"):
+      // בקובץ יבנה כל לשונית היא מחלקה אחת, והשוויון בחר בטעות את עמודת השלוחה
+      const synRank = (c) => {
+        const h = headerRow[c] || '';
+        const idx = deptField.syn.findIndex((s) => h === norm(s) || h.includes(norm(s)));
+        return idx < 0 ? deptField.syn.length : idx;
+      };
       const scored = candidates.map((c) => ({ c, ...stat(c) })).filter((s) => s.textScore > 0.5);
-      scored.sort((a, b) => b.distinct - a.distinct || a.c - b.c);
+      scored.sort((a, b) => b.distinct - a.distinct || synRank(a.c) - synRank(b.c) || a.c - b.c);
       if (scored.length) best.mapping.dept = scored[0].c;
     }
   }
@@ -236,8 +243,15 @@ function effectiveGross(row) {
    משמש בכל השוואת "ביצוע מוכר" מול תקציב: מכתב, בקרת שכר, המלצות, ייצוא. */
 function recognizedRowCost(row, vatFactor = 1) {
   if (row.cost == null) return 0;
-  const full = row.cost * vatFactor;
   const g = effectiveGross(row);
+  // כמו בדוח הביצוע: העלות השעתית (אחרי תקרת 140%) נכתבת מעוגלת ל-2
+  // ספרות, ועלות התקופה בקובץ היא המעוגל × שעות — משחזרים כדי להתאים לאגורה
+  if (row.hours > 0) {
+    const rawHourly = (row.cost / row.hours) * vatFactor;
+    const hourly = g > 0 ? Math.min(rawHourly, (g / row.hours) * COST_MARKUP_LIMIT) : rawHourly;
+    return (Math.round(hourly * 100) / 100) * row.hours;
+  }
+  const full = row.cost * vatFactor;
   return g > 0 ? Math.min(full, g * COST_MARKUP_LIMIT) : full;
 }
 function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOURS_CAP, vatFactor = 1, framework = null } = {}) {
@@ -307,12 +321,31 @@ function hasMojibake(rows) {
   return suspicious && !hebrew;
 }
 
+/* קבצים "מתוחים": עיצוב/נוסחאות שנגררו עד סוף הגיליון גורמים ל-!ref להצהיר
+   על מיליון+ שורות בעוד הנתונים מסתיימים אחרי כמה מאות (קרה בקובץ יבנה) —
+   sheet_to_json מייצר אז מיליוני שורות ריקות והקליטה נחנקת. מכווצים את
+   הטווח המוצהר לתא האמיתי האחרון לפני העיבוד. */
+function clampSheetRef(ws) {
+  if (!ws['!ref']) return ws;
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  if (range.e.r < 10000) return ws; // טווח סביר — אין מה לכווץ
+  let maxRow = 0, maxCol = 0;
+  for (const k of Object.keys(ws)) {
+    if (k[0] === '!') continue;
+    const { r, c } = XLSX.utils.decode_cell(k);
+    if (r > maxRow) maxRow = r;
+    if (c > maxCol) maxCol = c;
+  }
+  ws['!ref'] = XLSX.utils.encode_range({ s: { r: range.s.r, c: range.s.c }, e: { r: maxRow, c: Math.max(maxCol, range.e.c > 200 ? maxCol : range.e.c) } });
+  return ws;
+}
+
 /* מחזיר [{ sheetName, rows }] — כל לשונית בעלת נתונים בנפרד */
 function readWorkbookSheets(buf) {
   const extract = (wb) =>
     wb.SheetNames.map((n) => ({
       sheetName: n,
-      rows: XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: null }),
+      rows: XLSX.utils.sheet_to_json(clampSheetRef(wb.Sheets[n]), { header: 1, defval: null }),
     })).filter((s) => s.rows.some((r) => r && r.some((c) => c !== null && c !== '')));
 
   let sheets = extract(XLSX.read(buf, { type: 'buffer' }));
@@ -372,6 +405,11 @@ function parseCostFile(buf, learned = {}) {
   const sheets = readWorkbookSheets(buf);
   const detected = sheets.map((s) => ({ ...s, det: inferMissingColumns(s.rows, detectStructure(s.rows, learned)) }));
   let chosen = detected.filter((s) => isPayrollSheet(s.det));
+  // כשיש בקובץ גם לשוניות מלאות (ת"ז + שעות) וגם לשונית-מקור חלקית שמשכפלת
+  // את אותם עובדים בלי שעות (כמו "דוח תמחיר מפוצל" של יבנה) — הלשוניות
+  // המלאות הן שהוכנו לחופש הגדול; קליטת שתיהן תכפיל את העלויות
+  const complete = chosen.filter((s) => s.det.mapping.id !== undefined && s.det.mapping.hours !== undefined);
+  if (complete.length && complete.length < chosen.length) chosen = complete;
   if (chosen.length === 0 && detected.length) {
     chosen = [detected.reduce((a, b) => (b.rows.length > a.rows.length ? b : a))];
   }
