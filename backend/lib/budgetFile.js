@@ -250,7 +250,7 @@ function parseSchoolRates(wb, program) {
   const daysNeedle = program === 'extension' ? 'ל- 7 ימים' : 'ל- 15 ימים';
   const wantExt = program === 'extension';
 
-  let inSchools = false, perCols = null, perChild = null, inSpecial = false;
+  let inSchools = false, perCols = null, perChild = null, perChildSpecial = null, inSpecial = false;
   let fixedCols = null, curSize = null, curExt = false;
   const fixed = {};
   for (const row of rows) {
@@ -267,10 +267,16 @@ function parseSchoolRates(wb, program) {
       };
       continue;
     }
-    if (has('חנמ') >= 0 || has('חנ"מ') >= 0) inSpecial = true; // לא לוקחים תעריפי חינוך מיוחד
+    if (has('חנמ') >= 0 || has('חנ"מ') >= 0) inSpecial = true; // מכאן — תעריפי חינוך מיוחד
     if (perCols && !perChild && !inSpecial && has(daysNeedle) >= 0) {
       const vals = Object.fromEntries(Object.entries(perCols).map(([k, idx]) => [k, num(row[idx]) || 0]));
       if (vals.instruction > 0) perChild = vals;
+      continue;
+    }
+    // תלמידי חינוך מיוחד מתוקצבים בתעריף גבוה יותר — נדרש לזכאי ח.מיוחד
+    if (perCols && inSpecial && !perChildSpecial && has(daysNeedle) >= 0) {
+      const vals = Object.fromEntries(Object.entries(perCols).map(([k, idx]) => [k, num(row[idx]) || 0]));
+      if (vals.instruction > 0) perChildSpecial = vals;
       continue;
     }
 
@@ -295,7 +301,31 @@ function parseSchoolRates(wb, program) {
     }
   }
   if (!perChild) return null;
-  return { perChild, fixed };
+  return { perChild, perChildSpecial, fixed };
+}
+
+/* תוספת תקצוב רכז ד-ו פר בי"ס — עמודת "תוספת תקצוב רכז בית ספר ד-ו"
+   בלשונית "דוח ביצוע (3)"; ערכיה סטטיים וזמינים גם בקובץ קפוא */
+function parseCoordSupplements(wb) {
+  const sn = wb.SheetNames.find((n) => norm(n).includes('דוח ביצוע'));
+  if (!sn) return {};
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  let cols = null;
+  const out = {};
+  for (const row of rows) {
+    const labels = (row || []).map(norm);
+    if (!cols) {
+      const sup = labels.findIndex((x) => x.includes('תוספת תקצוב רכז') && !x.includes('תקורה'));
+      const sym = labels.findIndex((x) => x.includes('סמל בית ספר'));
+      if (sup >= 0 && sym >= 0) cols = { sym, sup };
+      continue;
+    }
+    const s = norm(row[cols.sym]);
+    if (!/^\d{4,7}$/.test(s)) continue;
+    const v = num(row[cols.sup]);
+    if (v > 0) out[s] = v;
+  }
+  return out;
 }
 
 /* גנים: תעריפי "מבנה תקציבי גנים" (סטטיים בכל קובץ) + סך הנרשמים מלשונית
@@ -466,8 +496,17 @@ function parseBudgetFile(buf, opts = {}) {
       if (jInstr >= 0) pendingFlexAlloc = { col: jInstr, key: 'instruction' };
       else if (jCoord >= 0) pendingFlexAlloc = { col: jCoord, key: 'coordinator' };
     }
-    // "דיווח הרשות" — כמות הילדים שהרשות דיווחה (גם כשהזכאות המחושבת 0)
-    if ((k = li('דיווח הרשות')) >= 0 && cur.reported == null) cur.reported = num(row[k + 1]);
+    // "דיווח הרשות" — כמות הילדים שהרשות דיווחה (גם כשהזכאות המחושבת 0);
+    // העמודה השנייה — תלמידי חינוך מיוחד (מתוקצבים בתעריף גבוה יותר)
+    if ((k = li('דיווח הרשות')) >= 0 && cur.reported == null) {
+      cur.reported = num(row[k + 1]);
+      cur.reportedSpec = num(row[k + 2]);
+    }
+    // "ממוצע בקרה" — לתקרת התקצוב: המשרד מתקצב את הנמוך מבין הדיווח לבין בקרה+25%
+    if ((k = li('ממוצע בקרה')) >= 0 && cur.controlReg == null) {
+      cur.controlReg = num(row[k + 1]);
+      cur.controlSpec = num(row[k + 2]);
+    }
 
     // מקטע הסל הגמיש: "בדיקת ניצול תקציב סל גמיש" — תקציבו נלכד כסל flexible
     if (labels.some((x) => x.includes('בדיקת ניצול') && x.includes('סל גמיש'))) { flexMode = true; flexCols = null; continue; }
@@ -537,25 +576,38 @@ function parseBudgetFile(buf, opts = {}) {
   if (institutions.length && institutions.every((i) => !(i.total > 0))) {
     const rates = parseSchoolRates(wb, opts.program);
     const regCounts = parseRegistrationCounts(wb);
+    const coordSup = parseCoordSupplements(wb);
     if (rates) {
       for (const inst of institutions) {
         const regInfo = regCounts[String(inst.symbol)] || null;
         // עדיפויות לכמות הילדים: זכאים לאחר בקרה (מגלם הפחתת ימים בהרחבה!)
         // ← דיווח הרשות בבלוק ← נרשמים מלשונית ההרשמה
-        const kids = inst.eligibleReg > 0 ? inst.eligibleReg
+        let kids = inst.eligibleReg > 0 ? inst.eligibleReg
           : inst.reported > 0 ? inst.reported
           : regInfo ? regInfo.reg : 0;
         if (!(kids > 0)) continue;
+        // המשרד מתקצב את הנמוך מבין הדיווח לבין ממוצע הבקרה בתוספת 25%
+        if (inst.controlReg > 0) kids = Math.min(kids, inst.controlReg * 1.25);
+        // תלמידי חינוך מיוחד — מתוקצבים בנפרד בתעריף הגבוה של חנ"מ
+        let kidsSpec = inst.eligibleSpec > 0 ? inst.eligibleSpec
+          : inst.reportedSpec > 0 ? inst.reportedSpec
+          : regInfo ? regInfo.spec : 0;
+        if (kidsSpec > 0 && inst.controlSpec > 0) kidsSpec = Math.min(kidsSpec, inst.controlSpec * 1.25);
         if (regInfo && regInfo.large) inst.size = 'large';
-        if (!(inst.eligibleSpec > 0) && regInfo && regInfo.spec > 0) inst.eligibleSpec = regInfo.spec;
+        inst.eligibleSpec = kidsSpec;
         const fx = rates.fixed[inst.size === 'large' ? 'large' : 'small'] || rates.fixed.small || { coordinator: 0, deputy: 0, management: 0 };
+        const spec = rates.perChildSpecial;
+        const per = (key) => rates.perChild[key] * kids + (kidsSpec > 0 && spec ? spec[key] * kidsSpec : 0);
         const b = inst.baskets;
-        b.instruction = Math.round(rates.perChild.instruction * kids * 100) / 100;
-        b.enrichment = Math.round(rates.perChild.enrichment * kids * 100) / 100;
-        b.flexible = Math.round(rates.perChild.flexible * kids * 100) / 100;
-        b.management = Math.round((rates.perChild.management * kids + fx.management) * 100) / 100;
+        b.instruction = Math.round(per('instruction') * 100) / 100;
+        b.enrichment = Math.round(per('enrichment') * 100) / 100;
+        b.flexible = Math.round(per('flexible') * 100) / 100;
+        b.management = Math.round((per('management') + fx.management) * 100) / 100;
         if (fx.coordinator > 0) b.coordinator = fx.coordinator;
         if (fx.deputy > 0) b.deputy = fx.deputy;
+        // תוספת תקצוב רכז ד-ו (קיץ פלוס) — ערך פר בי"ס מלשונית "דוח ביצוע (3)"
+        const sup = coordSup[String(inst.symbol)];
+        if (sup > 0) b.coordinator = Math.round(((b.coordinator || 0) + sup) * 100) / 100;
         inst.total = Math.round(Object.values(b).reduce((s, v) => s + (v || 0), 0) * 100) / 100;
         inst.eligibleReg = kids;
         inst.ratesFallback = true;
