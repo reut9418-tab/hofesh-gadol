@@ -163,8 +163,10 @@ function parseAggregateSheet(rows, sheetName) {
   let budget = (totalNet != null && totalNet > 0 ? totalNet : 0) || total || totalNormative;
   // סדר עדיפויות לכמות הילדים: "לתקצוב לאחר בקרת איוש" (מגלם גם הפחתת ימים
   // וגם בקרה) כשחיובי ← "סה"כ תלמידים" (אחרי הפחתת ימי-תלמיד על ימים שלא
-  // עבדו — חשוב בהרחבה!) ← ההרשמה הגולמית
-  const kids = (afterControl > 0 ? afterControl : null) ?? (effectiveTotal > 0 ? effectiveTotal : null) ?? reg;
+  // עבדו — חשוב בהרחבה!) ← ההרשמה הגולמית. בדיקת סבירות: הפחתת ימים לא
+  // מוחקת את רוב הילדים — תא שמחושב מתחת למחצית ההרשמה הוא שריד נוסחה שבורה
+  const effOk = effectiveTotal > 0 && (!(reg > 0) || effectiveTotal >= reg * 0.5);
+  const kids = (afterControl > 0 ? afterControl : null) ?? (effOk ? effectiveTotal : null) ?? reg;
   // בקרת האיוש של המשרד איפסה את כל החישוב אך ההרשמה מולאה — בונים את
   // התקציב בעצמנו: ילדים × תעריף המשרד לילד, והסלים לפי תעריפי-הסל לילד
   let ratesFallback = false;
