@@ -17,32 +17,10 @@ const clientName = (client, authority) => (authority && authority.name) || (clie
 /* מוסדות קובץ המשרד (לשונית ההרשמה) + מפת ההפניות של בתי ספר מאוחדים —
    כדי ששיוך הסמלים במכתב יהיה זהה במדויק לזה של הייצוא (resolveSymbol) */
 const { extractInstitutions } = require('./fillMinistry');
-const { norm: normCell, parseGardenExecKids } = require('./budgetFile');
+const { parseGardenExecKids, parseDeputyEntitlement } = require('./budgetFile');
+const { parseXlsxOffloaded } = require('./xlsxOffload');
 const XLSX = require('xlsx');
 const fileMetaCache = new Map(); // reportId -> { fileName, insts, redirect, depEntitled, gardensExec }
-
-/* עמודת "זכאות לסגן/נית רכז/ת" בלשונית איוש המשרות — קובעת אם דיווח
-   הסגן מוכר בסל הריכוז (מוסד קטן: לא זכאי — העלות לא נזקפת לאף סל) */
-function parseDeputyEntitlement(wb) {
-  const sn = wb.SheetNames.find((n) => normCell(n).includes('איוש משרות'));
-  if (!sn) return {};
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
-  let cols = null;
-  const out = {};
-  for (const row of rows) {
-    const labels = (row || []).map(normCell);
-    if (!cols) {
-      const s = labels.findIndex((x) => x.includes('סמל בית ספר'));
-      const z = labels.findIndex((x) => x.includes('זכאות לסגן'));
-      if (s >= 0 && z >= 0) cols = { s, z };
-      continue;
-    }
-    const sym = normCell(row[cols.s]);
-    if (!/^\d{4,7}$/.test(sym)) continue;
-    out[sym] = normCell(row[cols.z]) === 'זכאי';
-  }
-  return out;
-}
 
 async function fileMeta(db, report) {
   const fn = report.budget_file_name || '';
@@ -53,14 +31,22 @@ async function fileMeta(db, report) {
     const row = await db.prepare('SELECT data FROM report_files WHERE report_id = ?').get(report.id);
     if (row && row.data) {
       const buf = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
-      // פענוח אחד של הקובץ משרת את כל החילוצים (פענוח מלא אורך שניות)
-      const wb = XLSX.read(buf, { type: 'buffer' });
-      entry.insts = extractInstitutions(wb);
-      entry.redirect = new Map(entry.insts.filter((i) => i.activitySymbol).map((i) => [String(i.symbol), String(i.activitySymbol)]));
-      if (report.framework !== 'gardens') entry.depEntitled = parseDeputyEntitlement(wb);
-      else {
-        try { entry.gardensExec = parseGardenExecKids(wb); } catch { /* בלי הלשונית */ }
+      // הפענוח (שניות של CPU) רץ ב-worker thread כדי לא לחסום את השרת;
+      // נפילה חזרה לנתיב סינכרוני אם ה-worker לא זמין
+      let parsed = null;
+      try { parsed = await parseXlsxOffloaded({ mode: 'letter', framework: report.framework, buf }); } catch { /* סינכרוני */ }
+      if (!parsed) {
+        const wb = XLSX.read(buf, { type: 'buffer' });
+        parsed = {
+          insts: extractInstitutions(wb),
+          depEntitled: report.framework !== 'gardens' ? parseDeputyEntitlement(wb) : {},
+          gardensExec: report.framework === 'gardens' ? parseGardenExecKids(wb) : null,
+        };
       }
+      entry.insts = parsed.insts || [];
+      entry.depEntitled = parsed.depEntitled || {};
+      entry.gardensExec = parsed.gardensExec || null;
+      entry.redirect = new Map(entry.insts.filter((i) => i.activitySymbol).map((i) => [String(i.symbol), String(i.activitySymbol)]));
     }
   } catch { /* אין קובץ — שיוך לפי מוסדות המסד בלבד */ }
   fileMetaCache.set(report.id, entry);

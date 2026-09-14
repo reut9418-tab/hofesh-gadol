@@ -42,6 +42,7 @@ const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
 const { recommendations } = require('../lib/recommend');
 const { matchDeptsToInstitutions } = require('../lib/nameMatch');
 const { stage1Data, renderStage1Html, invalidateFileMeta } = require('../lib/stage1');
+const { parseXlsxOffloaded } = require('../lib/xlsxOffload');
 
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -57,20 +58,30 @@ async function ministryData(db, report) {
   const buf = await budgetFileBuf(db, report);
   const entry = { fileName: report.budget_file_name || '', buf, institutions: [], schoolTypes: null, redirect: new Map(), coordGardens: [], execGardens: [] };
   if (buf) {
-    // פענוח אחד של הקובץ (2-3MB, שניות) משרת את כל פונקציות החילוץ —
-    // עד עכשיו כל אחת פענחה את הקובץ מחדש והטעינה הקרה ארכה >10 שניות
-    let wb = null;
-    try { wb = require('xlsx').read(buf, { type: 'buffer' }); } catch { /* קובץ פגום — ננסה פר פונקציה */ }
-    const src = wb || buf;
-    try { entry.institutions = extractInstitutions(src); } catch { /* בלי רשימה */ }
+    // פענוח אחד של הקובץ (2-3MB, שניות של CPU) משרת את כל פונקציות החילוץ,
+    // ורץ ב-worker thread כדי לא לחסום את שאר המשתמשים; נפילה חזרה לנתיב
+    // סינכרוני אם ה-worker לא זמין
+    let parsed = null;
+    try { parsed = await parseXlsxOffloaded({ mode: 'ministry', framework: report.framework, buf }); } catch { /* סינכרוני */ }
+    if (!parsed) {
+      let wb = null;
+      try { wb = require('xlsx').read(buf, { type: 'buffer' }); } catch { /* קובץ פגום — ננסה פר פונקציה */ }
+      const src = wb || buf;
+      parsed = { institutions: [], schoolTypes: null, coordGardens: [], execGardens: [] };
+      try { parsed.institutions = extractInstitutions(src); } catch { /* בלי רשימה */ }
+      if (report.framework !== 'gardens') {
+        try { parsed.schoolTypes = extractSchoolStaffTypes(src); } catch { /* ברירת מחדל */ }
+      } else {
+        try { parsed.coordGardens = extractCoordinatorGardens(src); } catch { /* ריק */ }
+        try { parsed.execGardens = extractExecGardens(src); } catch { /* ריק */ }
+      }
+    }
+    entry.institutions = parsed.institutions || [];
+    entry.schoolTypes = parsed.schoolTypes || null;
+    entry.coordGardens = parsed.coordGardens || [];
+    entry.execGardens = parsed.execGardens || [];
     // בתי ספר מאוחדים: הסמל הרשמי מפנה לסמל שבו מתקיימת הפעילות
     entry.redirect = new Map(entry.institutions.filter((i) => i.activitySymbol).map((i) => [String(i.symbol), String(i.activitySymbol)]));
-    if (report.framework !== 'gardens') {
-      try { entry.schoolTypes = extractSchoolStaffTypes(src); } catch { /* ברירת מחדל */ }
-    } else {
-      try { entry.coordGardens = extractCoordinatorGardens(src); } catch { /* ריק */ }
-      try { entry.execGardens = extractExecGardens(src); } catch { /* ריק */ }
-    }
   }
   ministryCache.set(key, entry);
   return entry;

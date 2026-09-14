@@ -772,4 +772,27 @@ function extractTariff(buf) {
   return null;
 }
 
-module.exports = { parseBudgetFile, findBudgetSheet, extractTariff, parseGardenExecKids, norm };
+/* עמודת "זכאות לסגן/נית רכז/ת" בלשונית איוש המשרות — קובעת אם דיווח
+   הסגן מוכר בסל הריכוז (מוסד קטן: לא זכאי — העלות לא נזקפת לאף סל) */
+function parseDeputyEntitlement(wb) {
+  const sn = wb.SheetNames.find((n) => norm(n).includes('איוש משרות'));
+  if (!sn) return {};
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  let cols = null;
+  const out = {};
+  for (const row of rows) {
+    const labels = (row || []).map(norm);
+    if (!cols) {
+      const s = labels.findIndex((x) => x.includes('סמל בית ספר'));
+      const z = labels.findIndex((x) => x.includes('זכאות לסגן'));
+      if (s >= 0 && z >= 0) cols = { s, z };
+      continue;
+    }
+    const sym = norm(row[cols.s]);
+    if (!/^\d{4,7}$/.test(sym)) continue;
+    out[sym] = norm(row[cols.z]) === 'זכאי';
+  }
+  return out;
+}
+
+module.exports = { parseBudgetFile, findBudgetSheet, extractTariff, parseGardenExecKids, parseDeputyEntitlement, norm };
