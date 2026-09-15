@@ -56,21 +56,33 @@ function detectStructure(rows, learned = {}) {
   for (let r = 0; r < scanLimit; r++) {
     const row = rows[r] || [];
     const mapping = {};
+    const learnedFields = new Set();
     let score = 0;
+    // מעבר 1: השיוך הידני של המשתמשת — תמיד מנצח, בלי תלות בסדר העמודות
+    // (קודם לכן עמודה מוקדמת שזוהתה אוטומטית "תפסה" את השדה, והבחירה
+    // הידנית בעמודה מאוחרת יותר נדחתה — "עלות מס שכר" גברה על "סכום כולל עלות")
+    row.forEach((cell, c) => {
+      const cellN = norm(cell);
+      if (!cellN) return;
+      const learnedKey = learned[cellN];
+      if (learnedKey && learnedKey !== 'none' && FIELD_DEFS.some((f) => f.key === learnedKey) && mapping[learnedKey] === undefined) {
+        mapping[learnedKey] = c; learnedFields.add(learnedKey); score += 2;
+      }
+    });
+    // מעבר 2: זיהוי אוטומטי רק לשדות שנותרו, ורק על עמודות בלי הוראה ידנית
     row.forEach((cell, c) => {
       const cellN = norm(cell);
       if (!cellN) return;
       const learnedKey = learned[cellN];
       if (learnedKey === 'none') return; // המשתמשת סימנה: לא להשתמש בעמודה הזו
-      if (learnedKey && FIELD_DEFS.some((f) => f.key === learnedKey) && mapping[learnedKey] === undefined) {
-        mapping[learnedKey] = c; score += 2; return;
-      }
+      if (learnedKey && FIELD_DEFS.some((f) => f.key === learnedKey)) return; // כבר טופל במעבר 1
+      if (Object.values(mapping).includes(c)) return;
       for (const f of FIELD_DEFS) {
         if (mapping[f.key] !== undefined) continue;
         if (f.syn.some((s) => cellN === norm(s) || cellN.includes(norm(s)))) { mapping[f.key] = c; score++; break; }
       }
     });
-    if (score > best.score) best = { rowIdx: r, mapping, score };
+    if (score > best.score) best = { rowIdx: r, mapping, score, learnedFields };
   }
   if (best.rowIdx < 0) {
     const firstData = rows.findIndex((r) => (r || []).filter((c) => norm(c) !== '').length >= 2);
@@ -84,7 +96,8 @@ function detectStructure(rows, learned = {}) {
   }
   // עידון מחלקה: כשיש כמה עמודות מתאימות (קוד + שם), ניתוב עובד לפי טקסט,
   // לכן בוחרים את העמודה עם הערכים הטקסטואליים ביותר (שם מחלקה ולא קוד).
-  if (best.rowIdx >= 0) {
+  // מחלקה שנבחרה ידנית — לא נוגעים
+  if (best.rowIdx >= 0 && !(best.learnedFields && best.learnedFields.has('dept'))) {
     const headerRow = (rows[best.rowIdx] || []).map(norm);
     const deptField = FIELD_DEFS.find((f) => f.key === 'dept');
     const candidates = [];
@@ -133,10 +146,14 @@ function detectStructure(rows, learned = {}) {
     }
     // סכומים: עדיפות לעמודות "סה"כ" על פני תעריפי "לשעה" ("סכום 100"/"ברוטו לשעה")
     for (const key of ['gross', 'cost', 'hours']) {
+      // שדה שנבחר ידנית — העידון לא נוגע בו (הבחירה של המשתמשת גוברת)
+      if (best.learnedFields && best.learnedFields.has(key)) continue;
       const f = FIELD_DEFS.find((x) => x.key === key);
       const cands = [];
       headerRowN.forEach((h, c) => {
-        if (h && f.syn.some((s) => h === norm(s) || h.includes(norm(s)))) cands.push(c);
+        if (!h) return;
+        if (learned[h] === 'none') return; // עמודה שסומנה ידנית "ללא שימוש"
+        if (f.syn.some((s) => h === norm(s) || h.includes(norm(s)))) cands.push(c);
       });
       if (cands.length > 1) {
         const score = (c) => {
