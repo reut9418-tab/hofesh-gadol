@@ -261,6 +261,7 @@ export const applyBumps = (reportId: number, rowIds: number[]) =>
 export const autoAssign = (reportId: number) =>
   api.post(`/reports/${reportId}/auto-assign`).then((r) => r.data);
 export const costMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/cost-match-doc`;
+export const enrichMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/enrich-match-doc`;
 
 /* דוח ההתאמה כקובץ אקסל — הורדה ישירה (blob) */
 export const downloadCostMatchXlsx = async (reportId: number) => {

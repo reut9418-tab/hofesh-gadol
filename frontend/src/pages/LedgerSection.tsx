@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { T } from '../theme';
 import { btn, card } from '../ui';
-import { getReportLedger, uploadLedgerFile, setLedgerCardBasket, deleteLedgerFile, setLedgerFilePayer, LedgerData } from '../api';
+import { getReportLedger, uploadLedgerFile, setLedgerCardBasket, deleteLedgerFile, setLedgerFilePayer, enrichMatchDocUrl, LedgerData } from '../api';
 
 const fmt = (n: number | null | undefined, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -45,7 +45,12 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
         <span style={{ fontWeight: 700, fontSize: 14 }}>כרטסות הנהלת חשבונות</span>
         <span style={{ fontSize: 11.5, color: T.inkSoft }}>כל כרטיס משויך לסל לפי שמו — והשיוך נלמד להעלאה הבאה.</span>
-        <span style={{ marginInlineStart: 'auto' }}>
+        <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 8 }}>
+          {(data?.cards || []).some((c) => c.basket_type === 'enrichment') && (
+            <button onClick={() => window.open(enrichMatchDocUrl(reportId), '_blank')}
+              title="ייחוס כרטסות ההעשרה למוסדות — מספר ושם הכרטסת, טבלת סמל/בי&quot;ס/סכום וסה&quot;כ תואם לכרטסת"
+              style={btn('ghost')}>🎨 דוח התאמת העשרה</button>
+          )}
           <input ref={inputRef} type="file" accept=".xlsx,.xls" multiple style={{ display: 'none' }} onChange={(e) => onPick(e.target.files)} />
           <button onClick={() => inputRef.current?.click()} disabled={busy}
             style={{ ...btn(data?.cards.length ? 'ghost' : 'primary'), opacity: busy ? 0.6 : 1 }}>

@@ -201,8 +201,10 @@ function Flag({ on, label }: { on: boolean; label: string }) {
 
 export default function ReportView({ reportId, clientId, go }: { reportId: number; clientId: number; go: (n: Nav) => void }) {
   const [rep, setRep] = useState<any>(null);
+  // שלב 1 — הכנה, בדיקות ומכתב; שלב 2 — כרטסות והצלבה (אחרי שהלקוח שלח כרטסות)
+  const [stage, setStage] = useState<1 | 2>(1);
   const load = () => getReport(reportId).then(setRep).catch(() => setRep(null));
-  useEffect(() => { load(); }, [reportId]);
+  useEffect(() => { load(); setStage(1); }, [reportId]);
 
   if (!rep) return <div style={{ color: T.inkSoft, padding: 20 }}>טוען…</div>;
 
@@ -272,13 +274,25 @@ export default function ReportView({ reportId, clientId, go }: { reportId: numbe
         </div>
       </section>
 
-      <BudgetSection reportId={reportId} onChange={load} />
+      {/* לשוניות שלב 1 / שלב 2 — כדי שלא יהיה יותר מדי מידע במסך אחד */}
+      <div style={{ display: 'flex', gap: 8 }}>
+        {([[1, 'שלב 1 — הכנה, בדיקות ומכתב'], [2, 'שלב 2 — כרטסות והצלבה']] as [1 | 2, string][]).map(([s, label]) => (
+          <button key={s} onClick={() => setStage(s)}
+            style={{ ...btn(stage === s ? 'primary' : 'ghost'), fontSize: 13.5, padding: '8px 18px', fontWeight: 700 }}>
+            {label}
+          </button>
+        ))}
+      </div>
 
-      <CostSection reportId={reportId} />
+      {stage === 1 && <>
+        <BudgetSection reportId={reportId} onChange={load} />
+        <CostSection reportId={reportId} />
+        <PrepSection reportId={reportId} />
+      </>}
 
-      <LedgerSection reportId={reportId} onChange={load} />
-
-      <PrepSection reportId={reportId} />
+      {stage === 2 && <>
+        <LedgerSection reportId={reportId} onChange={load} />
+      </>}
 
       <section style={card}>
         <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>סטטוס הדוח</div>

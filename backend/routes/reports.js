@@ -823,6 +823,20 @@ router.get('/:id/cost-match-doc', ah(async (req, res) => {
 }));
 
 /* דוח ההתאמה כקובץ אקסל להורדה (בנוסף לגרסת ה-PDF/הדפסה) */
+/* שלב 2: דוח התאמת העשרה — ייחוס כרטסות ההעשרה למוסדות (דף להדפסה) */
+router.get('/:id/enrich-match-doc', ah(async (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+  if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
+  const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(report.client_id);
+  const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  const { enrichMatchData, renderEnrichMatchHtml } = require('../lib/enrichMatch');
+  const d = await enrichMatchData(db, report, client, authority);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderEnrichMatchHtml(d));
+}));
+
 /* סעיף 5 של המכתב — טבלת יעדי הכרטסות — כקובץ אקסל מעוצב להנה"ח */
 router.get('/:id/targets-xlsx', ah(async (req, res) => {
   const db = getDB();
