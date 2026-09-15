@@ -10,7 +10,7 @@ const { shapeReport } = require('../lib/reportShape');
 const { cascadeReport } = require('./clients');
 const { costDataForReport } = require('../lib/reportCosts');
 const { reportHealth } = require('../lib/status');
-const { parseBudgetFile, extractTariff, parseGardenExecKids } = require('../lib/budgetFile');
+const { parseBudgetFile, extractTariff, parseGardenExecKids, norm } = require('../lib/budgetFile');
 const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes } = require('../lib/fillMinistry');
 
 /* בבתי ספר אין "גננת"/"סייעת" — תרגום סוגי צוות של גנים (שמגיעים מדוח
@@ -547,6 +547,30 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
     || (r.inst_name && exNameSymbol[r.inst_name]) || null;
   const staffOf = (r) => r.staff_type || suggestRole(r.dept).staffType || 'גננת';
 
+  // סימון רכזות גן: מספר המשרות נגזר מלשונית "רכזות גנים - דוח ביצוע"
+  // (רכזת אחת לכל 5 גנים, 0.2 משרה לגן); המועמדות — כ-90 שעות והברוטו
+  // השעתי הגבוה ביותר, מבין עובדות ללא תפקיד שמור. הרכזת מקבלת גם סמל גן
+  // כרגיל (לא משנה איזה) — היא נספרת באיוש הגן ואינה גורעת גננת/סייעת
+  const coordPositions = aaMd.coordGardens.length ? Math.ceil(aaMd.coordGardens.length / 5) : 0;
+  let coordDesignated = 0;
+  if (coordPositions > 0) {
+    const existing = rows.filter((r) => /רכזת גן/.test(String(r.staff_type || ''))).length;
+    const need = coordPositions - existing;
+    if (need > 0) {
+      // מועמדות: בלי תפקיד שמור, או עם ברירת המחדל "גננת" (שיוך אוטומטי קודם);
+      // תפקיד אחר שנקבע במפורש (סייעת, מדצ...) לא נדרס
+      const cands = rows
+        .filter((r) => (!r.staff_type || norm(r.staff_type) === 'גננת') && r.hours >= 85 && r.hours <= 95 && r.gross > 0
+          && !/סייע/.test(String(suggestRole(r.dept).staffType || '')))
+        .sort((a, b) => (a.staff_type ? 1 : 0) - (b.staff_type ? 1 : 0) || (b.gross / b.hours) - (a.gross / a.hours));
+      for (const r of cands.slice(0, need)) {
+        r.staff_type = 'רכזת גן'; r.role = 'רכז/ת גן'; // גם בזיכרון — להמשך השיבוץ
+        await db.prepare("UPDATE cost_rows SET staff_type = 'רכזת גן', role = 'רכז/ת גן' WHERE id = ?").run(r.id);
+        coordDesignated++;
+      }
+    }
+  }
+
   // ספירת האיוש הקיים פר גן
   const staffed = new Map(gardens.map((g) => [g, { gan: 0, say: 0 }]));
   const unassigned = [];
@@ -586,7 +610,7 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
         .run(g, u.st, role, u.r.id);
     }));
   }
-  res.json({ ok: true, assigned, gardens: gardens.length });
+  res.json({ ok: true, assigned, gardens: gardens.length, coordinators: coordDesignated, coordPositions });
 }));
 
 /* אישור התאמות ברוטו: מגדיל את הברוטו השעתי בדיוק כדי לעמוד בתקרת ה-140%

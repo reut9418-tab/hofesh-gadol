@@ -95,13 +95,15 @@ export default function PrepSection({ reportId }: { reportId: number }) {
               : 'מוודא שלכל בית ספר יש רכז/ת (מי שמעל 114 שעות; אם אין — בעל/ת השעות הגבוהות בבי"ס מקודם/ת לרכז/ת)'}
             onClick={async () => {
               const q = data.framework === 'gardens'
-                ? `להשלים שיוך אוטומטית? ${missing} עובדים ללא שיוך יחולקו בין הגנים, עם גננת וסייעת בכל גן. אפשר לתקן ידנית אחר כך.`
+                ? `להשלים שיוך אוטומטית? ${missing} עובדים ללא שיוך יחולקו בין הגנים, עם גננת וסייעת בכל גן; רכזות גן יסומנו לפי מספר המשרות בלשונית הרכזות (עובדות עם כ-90 שעות והברוטו הגבוה). אפשר לתקן ידנית אחר כך.`
                 : 'להשלים שיוך? עובדים לא-משויכים (כגון מילוי מקום) ישובצו בין בתי הספר לפי יתרות השכר והסל הגמיש, ובכל בי"ס ללא רכז — בעל/ת השעות הגבוהות יוגדר כרכז/ת.';
               if (!window.confirm(q)) return;
               setBusy(true);
               try {
                 const r = await autoAssign(reportId); await load();
-                setMsg(r.mode === 'schools' ? `שובצו ${r.placed ?? 0} עובדים לפי היתרות והוגדרו ${r.promoted ?? 0} רכזים ב-${r.gardens} בתי ספר.` : `שויכו ${r.assigned} עובדים בין ${r.gardens} גנים.`);
+                setMsg(r.mode === 'schools'
+                  ? `שובצו ${r.placed ?? 0} עובדים לפי היתרות והוגדרו ${r.promoted ?? 0} רכזים ב-${r.gardens} בתי ספר.`
+                  : `שויכו ${r.assigned} עובדים בין ${r.gardens} גנים${(r.coordinators ?? 0) > 0 ? `, וסומנו ${r.coordinators} רכזות גן (${r.coordPositions} משרות לפי לשונית הרכזות)` : ''}.`);
               }
               catch (e: any) { setMsg(e?.response?.data?.error || 'השיוך האוטומטי נכשל.'); }
               finally { setBusy(false); }
