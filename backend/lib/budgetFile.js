@@ -718,9 +718,11 @@ function parseBudgetFile(buf, opts = {}) {
         if (!(kids > 0)) continue;
         // המשרד מתקצב את הנמוך מבין הדיווח לבין ממוצע הבקרה בתוספת 25%
         if (inst.controlReg > 0) kids = Math.min(kids, inst.controlReg * 1.25);
-        // תלמידי חינוך מיוחד — מתוקצבים בנפרד בתעריף הגבוה של חנ"מ
+        // תלמידי חינוך מיוחד — מתוקצבים בנפרד בתעריף הגבוה של חנ"מ.
+        // "דיווח הרשות" מפורש של 0 נשאר 0 — המשרד מזכה רק את מה שדווח,
+        // גם אם בלשונית ההרשמה רשומים תלמידי חנ"מ (מזכרת בתיה)
         let kidsSpec = inst.eligibleSpec > 0 ? inst.eligibleSpec
-          : inst.reportedSpec > 0 ? inst.reportedSpec
+          : inst.reportedSpec != null ? inst.reportedSpec
           : regInfo ? regInfo.spec : 0;
         if (kidsSpec > 0 && inst.controlSpec > 0) kidsSpec = Math.min(kidsSpec, inst.controlSpec * 1.25);
         if (regInfo && regInfo.large) inst.size = 'large';
