@@ -474,11 +474,16 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
     const rows2 = await db.prepare('SELECT * FROM cost_rows WHERE report_id = ?').all(id);
     const nameSym = aaMd.institutions.length
       ? matchDeptsToInstitutions(aaMd.institutions, [...new Set(rows2.map((r) => r.inst_name).filter(Boolean))]) : {};
+    // גם לפי שם המחלקה — כמו במסך ההכנה ובייצוא; בלעדיו עובדים עם מחלקה
+    // ברורה ("ביהס של החופש הרצוג") נראו "לא משויכים" ופוזרו לפי יתרות
+    const deptSym = aaMd.institutions.length
+      ? matchDeptsToInstitutions(aaMd.institutions, [...new Set(rows2.map((r) => r.dept))]) : {};
     const validS = new Set(insts2.map((i) => String(i.symbol)));
     const symOf = (r) => {
       const s = r.symbol_override
         || (r.inst_symbol && validS.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
-        || (r.inst_name && nameSym[r.inst_name]) || null;
+        || (r.inst_name && nameSym[r.inst_name])
+        || deptSym[r.dept] || null;
       return s ? (aaMd.redirect.get(String(s)) || s) : null;
     };
 
