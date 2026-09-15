@@ -57,6 +57,16 @@ async function buildTree(db) {
 
 router.get('/tree', ah(async (req, res) => res.json(await buildTree(getDB()))));
 
+/* סיכום שלב 2 מרוכז ללקוח — תשלום צפוי בכל הפרויקטים (דף להדפסה) */
+router.get('/:id/stage2-doc', ah(async (req, res) => {
+  const db = getDB();
+  const { clientStage2Data, renderClientStage2Html } = require('../lib/stage2Report');
+  const d = await clientStage2Data(db, parseInt(req.params.id));
+  if (!d) return res.status(404).json({ error: 'לקוח לא נמצא' });
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderClientStage2Html(d));
+}));
+
 router.get('/dashboard', ah(async (req, res) => {
   const db = getDB();
   res.json({

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { T, STATUS_HE, STATUS_COLOR, BUCKET_COLOR } from '../theme';
 import { btn, card, pill } from '../ui';
-import { getReport, updateReport, getReportCosts, getReportBudget, uploadBudgetFile } from '../api';
+import { getReport, updateReport, getReportCosts, getReportBudget, uploadBudgetFile, stage2DocUrl } from '../api';
 import PrepSection from './PrepSection';
 import LedgerSection from './LedgerSection';
 import type { Nav } from '../App';
@@ -292,6 +292,14 @@ export default function ReportView({ reportId, clientId, go }: { reportId: numbe
 
       {stage === 2 && <>
         <LedgerSection reportId={reportId} onChange={load} />
+        <section style={card}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>הפלט של שלב 2</span>
+            <span style={{ fontSize: 11.5, color: T.inkSoft }}>הבקרות שבוצעו והפערים · ניצול מול תקציב בכל סל · התשלום הצפוי מהמשרד פר מוסד ולפרויקט</span>
+            <button onClick={() => window.open(stage2DocUrl(reportId), '_blank')}
+              style={{ ...btn('primary'), marginInlineStart: 'auto' }}>📋 דוח בקרות ותשלום צפוי</button>
+          </div>
+        </section>
       </>}
 
       <section style={card}>

@@ -837,6 +837,20 @@ router.get('/:id/enrich-match-doc', ah(async (req, res) => {
   res.send(renderEnrichMatchHtml(d));
 }));
 
+/* דוח שלב 2 — בקרות ותשלום צפוי (דף להדפסה) */
+router.get('/:id/stage2-doc', ah(async (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+  if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
+  const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(report.client_id);
+  const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  const { stage2Data, renderStage2Html } = require('../lib/stage2Report');
+  const d = await stage2Data(db, report, client, authority);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderStage2Html(d));
+}));
+
 /* דוח התאמת ההעשרה כקובץ אקסל מעוצב */
 router.get('/:id/enrich-match-xlsx', ah(async (req, res) => {
   const db = getDB();
