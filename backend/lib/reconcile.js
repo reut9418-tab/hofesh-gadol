@@ -68,6 +68,7 @@ async function ledgerReconcile(db, report, client) {
       const diff = L - C;
       checks.push({
         id: `ledger_vs_cost:${p}`,
+        title: 'שכר — כרטסת מול דוח עלות',
         level: level(pct(diff, C), diff),
         text: `${p}: כרטסת שכר ₪${fmtN(L)} מול דוח עלות ₪${fmtN(C)} — ${Math.abs(diff) <= 200 ? 'תואם' : `הפרש ₪${fmtN(diff)}`}.`,
         a: L, b: C, diff, payer: p,
@@ -77,6 +78,7 @@ async function ledgerReconcile(db, report, client) {
     const diff = ledgerSalary - costTotal;
     checks.push({
       id: 'ledger_vs_cost',
+      title: 'שכר — כרטסת מול דוח עלות',
       level: level(pct(diff, costTotal), diff),
       text: `כרטסת שכר ₪${fmtN(ledgerSalary)} מול דוח עלות ₪${fmtN(costTotal)} — ${Math.abs(diff) <= 200 ? 'תואם' : `הפרש ₪${fmtN(diff)}`}.`,
       a: ledgerSalary, b: costTotal, diff,
@@ -96,6 +98,7 @@ async function ledgerReconcile(db, report, client) {
       const diff = ledgerIncome - expected;
       checks.push({
         id: 'income_vs_ledger',
+        title: 'הכנסות — כרטסת מול דוח הביצוע',
         level: level(pct(diff, expected), diff),
         text: hasVat
           ? `כרטסת הכנסות ₪${fmtN(ledgerIncome)} מול גבייה מדווחת ₪${fmtN(reported)} בניכוי מע"מ (₪${fmtN(expected)}) — ${Math.abs(diff) <= 200 ? 'תואם (ההפרש מהדיווח הוא המע"מ, כצפוי)' : `הפרש ₪${fmtN(diff)}`}.`
@@ -110,12 +113,36 @@ async function ledgerReconcile(db, report, client) {
     const diff = execActual - expectedExec;
     checks.push({
       id: 'exec_vs_cost',
+      title: 'שכר — דוח ביצוע מול דוח העלות (והכרטסת)',
       level: level(pct(diff, expectedExec), diff),
       text: hasVat
         ? `דוח ביצוע ₪${fmtN(execActual)} מול עלות + מע"מ 18% ₪${fmtN(expectedExec)} — ${Math.abs(diff) <= 200 ? 'תואם (ההפרש מהעלות הוא המע"מ, כצפוי)' : `הפרש ₪${fmtN(diff)}`}.`
         : `דוח ביצוע ₪${fmtN(execActual)} מול דוח העלות ₪${fmtN(expectedExec)} — ${Math.abs(diff) <= 200 ? 'תואם' : `הפרש ₪${fmtN(diff)}`}.`,
       a: execActual, b: expectedExec, diff,
     });
+  }
+
+  // בדיקה 4: כרטסות ההעשרה מול דוח הביצוע — הסכומים מהכרטסות הם שממולאים
+  // בלשונית "דוח הוצאות בפועל" בייצוא (במרוכז בגנים, פר מוסד בבתי"ס)
+  const enrichNet = byBasket.enrichment || 0;
+  if (enrichNet > 0) {
+    const instCount = Number((await db.prepare('SELECT COUNT(*) c FROM institutions WHERE report_id = ?').get(report.id)).c);
+    const enrichGross = enrichNet * vatFactor;
+    checks.push(instCount > 0
+      ? {
+          id: 'enrich_fill',
+          title: 'העשרה — כרטסת מול דוח הביצוע',
+          level: 'ok',
+          text: `כרטסות ההעשרה (₪${fmtN(enrichNet)} נטו) ממולאות בלשונית "דוח הוצאות בפועל" בייצוא${hasVat ? ` בסך ₪${fmtN(enrichGross)} כולל מע"מ` : ''} — ${report.framework === 'gardens' ? 'במרוכז לכל הגנים' : `בחלוקה למוסדות (כרטסת תואמת-שם למוסד שלה, כללית — יחסית לילדים)`}. הפירוט ב"דוח התאמת העשרה".`,
+          a: enrichNet, b: enrichGross, diff: 0,
+        }
+      : {
+          id: 'enrich_fill',
+          title: 'העשרה — כרטסת מול דוח הביצוע',
+          level: 'warn',
+          text: `נקלטו כרטסות העשרה בסך ₪${fmtN(enrichNet)}, אך טרם הועלה קובץ דוח ביצוע — ההעשרה תמולא בלשונית ההוצאות לאחר העלאתו.`,
+          a: enrichNet, b: 0, diff: enrichNet,
+        });
   }
 
   return {

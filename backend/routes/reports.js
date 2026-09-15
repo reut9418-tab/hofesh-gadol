@@ -837,6 +837,25 @@ router.get('/:id/enrich-match-doc', ah(async (req, res) => {
   res.send(renderEnrichMatchHtml(d));
 }));
 
+/* דוח התאמת ההעשרה כקובץ אקסל מעוצב */
+router.get('/:id/enrich-match-xlsx', ah(async (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+  if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
+  const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(report.client_id);
+  const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  const { enrichMatchData, buildEnrichMatchXlsx } = require('../lib/enrichMatch');
+  const d = await enrichMatchData(db, report, client, authority);
+  if (!d.perCard.length) return res.status(422).json({ error: 'לא נקלטו כרטסות העשרה לדוח זה.' });
+  const buf = buildEnrichMatchXlsx(d);
+  const { reportLabel } = require('../lib/domain');
+  const outName = `דוח התאמת העשרה - ${downloadWho(client, authority)} - ${reportLabel(report.framework, report.program)}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="enrich_match_${id}.xlsx"; filename*=UTF-8''${encodeURIComponent(outName)}`);
+  res.send(buf);
+}));
+
 /* סעיף 5 של המכתב — טבלת יעדי הכרטסות — כקובץ אקסל מעוצב להנה"ח */
 router.get('/:id/targets-xlsx', ah(async (req, res) => {
   const db = getDB();

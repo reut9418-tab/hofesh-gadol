@@ -263,6 +263,19 @@ export const autoAssign = (reportId: number) =>
 export const costMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/cost-match-doc`;
 export const enrichMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/enrich-match-doc`;
 
+/* דוח התאמת ההעשרה כקובץ אקסל — הורדה ישירה */
+export const downloadEnrichMatchXlsx = async (reportId: number) => {
+  const res = await api.get(`/reports/${reportId}/enrich-match-xlsx`, { responseType: 'blob' });
+  const dispo: string = res.headers['content-disposition'] || '';
+  const m = /filename\*=UTF-8''([^;]+)/.exec(dispo);
+  const name = m ? decodeURIComponent(m[1]) : `דוח התאמת העשרה - ${reportId}.xlsx`;
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+};
+
 /* דוח ההתאמה כקובץ אקסל — הורדה ישירה (blob) */
 export const downloadCostMatchXlsx = async (reportId: number) => {
   const res = await api.get(`/reports/${reportId}/cost-match-xlsx`, { responseType: 'blob' });

@@ -134,4 +134,80 @@ ${d.perCard.length ? `<div class="summary">סה"כ העשרה בכל הכרטס�
 </body></html>`;
 }
 
-module.exports = { enrichMatchData, renderEnrichMatchHtml };
+/* דוח התאמת ההעשרה כקובץ אקסל מעוצב (מותג המשרד) — בלוק לכל כרטסת:
+   כותרת עם מספר ושם הכרטסת, טבלת סמל/מוסד/סכום, ושורת סה"כ מאומתת */
+const XLSXS = require('xlsx-js-style');
+
+function buildEnrichMatchXlsx(d) {
+  const today = new Date().toLocaleDateString('he-IL');
+  const clientName = (d.client && d.client.name) || '';
+  const authorityName = (d.authority && d.authority.name) || '';
+  const who = authorityName && authorityName !== clientName ? `${clientName} — ${authorityName}` : clientName;
+  const { reportLabel } = require('./domain');
+  const label = reportLabel(d.report.framework, d.report.program);
+
+  const GOLD = '9A7B2F', CHAMP = 'F4ECDA', SOFT = 'FBF7EC', LINE = 'D9CDB3', INK = '413A2F';
+  const border = { top: { style: 'thin', color: { rgb: LINE } }, bottom: { style: 'thin', color: { rgb: LINE } }, left: { style: 'thin', color: { rgb: LINE } }, right: { style: 'thin', color: { rgb: LINE } } };
+  const S = {
+    title: { font: { bold: true, sz: 14, color: { rgb: INK } }, alignment: { horizontal: 'right' } },
+    sub: { font: { bold: true, sz: 11, color: { rgb: GOLD } }, alignment: { horizontal: 'right' } },
+    cardTitle: { font: { bold: true, sz: 12, color: { rgb: GOLD } }, alignment: { horizontal: 'right' } },
+    meta: { font: { sz: 10, color: { rgb: '5C5344' } }, alignment: { horizontal: 'right' } },
+    head: { font: { bold: true, sz: 10, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: GOLD } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: true }, border },
+    cellR: (z) => ({ font: { sz: 10, color: { rgb: INK } }, alignment: { horizontal: 'right' }, border, ...(z ? { fill: { fgColor: { rgb: SOFT } } } : {}) }),
+    cellN: (z) => ({ font: { sz: 10, color: { rgb: INK } }, alignment: { horizontal: 'center' }, border, numFmt: '#,##0.00', ...(z ? { fill: { fgColor: { rgb: SOFT } } } : {}) }),
+    total: { font: { bold: true, sz: 10, color: { rgb: INK } }, fill: { fgColor: { rgb: CHAMP } }, alignment: { horizontal: 'center' }, border: { ...border, top: { style: 'medium', color: { rgb: GOLD } } }, numFmt: '#,##0.00' },
+    totalR: { font: { bold: true, sz: 10, color: { rgb: INK } }, fill: { fgColor: { rgb: CHAMP } }, alignment: { horizontal: 'right' }, border: { ...border, top: { style: 'medium', color: { rgb: GOLD } } } },
+    ok: { font: { bold: true, sz: 10, color: { rgb: '4C7A45' } }, alignment: { horizontal: 'right' } },
+  };
+  const cell = (v, s) => ({ v: v == null ? '' : v, t: typeof v === 'number' ? 'n' : 's', s });
+  const methodHe = { aggregate: 'כל הגנים במרוכז', name: 'שיוך לפי שם הכרטסת', children: 'פיצול יחסי לפי כמות הילדים', budget: 'פיצול יחסי לפי התקציב' };
+
+  const isGardens = d.report.framework === 'gardens';
+  const aoa = [
+    [cell('דוח התאמת העשרה — ייחוס כרטסות ההעשרה למוסדות', S.title)],
+    [cell(`${who} — ${label} · ${today}${d.hasVat ? ' · הסכומים המיוחסים כוללים מע"מ 18% (הכרטסת נטו)' : ''}`, S.sub)],
+    [],
+  ];
+  const merges = [0, 1].map((r) => ({ s: { r, c: 0 }, e: { r, c: 3 } }));
+
+  for (const c of d.perCard) {
+    const withKids = c.method === 'children';
+    aoa.push([cell(`כרטסת ${c.cardKey} — ${c.cardName}`, S.cardTitle)]);
+    merges.push({ s: { r: aoa.length - 1, c: 0 }, e: { r: aoa.length - 1, c: 3 } });
+    aoa.push([cell(`סכום הכרטסת (נטו): ₪${Math.round(c.net).toLocaleString('he-IL')}${d.hasVat ? ` · כולל מע"מ: ₪${Math.round(c.gross).toLocaleString('he-IL')}` : ''} · אופן הייחוס: ${methodHe[c.method]}`, S.meta)]);
+    merges.push({ s: { r: aoa.length - 1, c: 0 }, e: { r: aoa.length - 1, c: 3 } });
+    aoa.push([
+      cell('סמל מוסד', S.head), cell(isGardens ? 'מסגרת' : 'שם בית הספר', S.head),
+      ...(withKids ? [cell('ילדים', S.head)] : []), cell('העשרה שיוחסה', S.head),
+    ]);
+    c.rows.forEach((r, i) => {
+      const z = i % 2 === 1;
+      aoa.push([
+        cell(r.symbol || '—', S.cellR(z)), cell(r.name, S.cellR(z)),
+        ...(withKids ? [cell(r.children || 0, S.cellN(z))] : []), cell(r.amount, S.cellN(z)),
+      ]);
+    });
+    const total = c.rows.reduce((s, r) => s + r.amount, 0);
+    aoa.push([cell('סה"כ', S.totalR), cell('', S.totalR), ...(withKids ? [cell('', S.totalR)] : []), cell(Math.round(total * 100) / 100, S.total)]);
+    aoa.push([cell(Math.abs(total - c.gross) < 1 ? `✓ הסה"כ תואם לסך הכרטסת${d.hasVat ? ' (בתוספת מע"מ)' : ''}` : `⚠ הסה"כ שונה מסך הכרטסת (₪${Math.round(c.gross).toLocaleString('he-IL')})`, S.ok)]);
+    merges.push({ s: { r: aoa.length - 1, c: 0 }, e: { r: aoa.length - 1, c: 3 } });
+    aoa.push([]);
+  }
+  if (d.perCard.length > 1) {
+    const totalNet = d.perCard.reduce((s, c) => s + c.net, 0);
+    const totalGross = d.perCard.reduce((s, c) => s + c.gross, 0);
+    aoa.push([cell(`סה"כ העשרה בכל הכרטסות: נטו ₪${Math.round(totalNet).toLocaleString('he-IL')}${d.hasVat ? ` · כולל מע"מ ₪${Math.round(totalGross).toLocaleString('he-IL')}` : ''} · ${d.perCard.length} כרטסות`, S.sub)]);
+    merges.push({ s: { r: aoa.length - 1, c: 0 }, e: { r: aoa.length - 1, c: 3 } });
+  }
+
+  const ws = XLSXS.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 13 }, { wch: 34 }, { wch: 11 }, { wch: 16 }];
+  ws['!merges'] = merges;
+  const wb = XLSXS.utils.book_new();
+  wb.Workbook = { Views: [{ RTL: true }] };
+  XLSXS.utils.book_append_sheet(wb, ws, 'התאמת העשרה');
+  return XLSXS.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+module.exports = { enrichMatchData, renderEnrichMatchHtml, buildEnrichMatchXlsx };
