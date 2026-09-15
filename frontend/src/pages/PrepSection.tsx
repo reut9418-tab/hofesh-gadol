@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { T } from '../theme';
 import { btn, card, input } from '../ui';
-import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, applyMove, applyBumps, autoAssign, PrepData, Assignment } from '../api';
+import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, downloadTargetsXlsx, applyMove, applyBumps, autoAssign, PrepData, Assignment } from '../api';
 
 const fmt = (n: number | null, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -121,6 +121,13 @@ export default function PrepSection({ reportId }: { reportId: number }) {
             }}>🧾 דוח התאמה (אקסל)</button>
           <button onClick={() => window.open(costMatchDocUrl(reportId), '_blank')} style={btn('ghost')}
             title="דוח ההתאמה כדף להדפסה / שמירה כ-PDF">🖨 PDF</button>
+          <button style={btn('ghost')}
+            title="טבלת יעדי הכרטסות (סעיף 5 במכתב) כקובץ אקסל מעוצב להנהלת החשבונות"
+            onClick={async () => {
+              setMsg('מכין את יעדי הכרטסות…');
+              try { await downloadTargetsXlsx(reportId); setMsg('✓ קובץ יעדי הכרטסות ירד לתיקיית ההורדות.'); }
+              catch (e: any) { setMsg(e?.response?.data?.error || 'הורדת יעדי הכרטסות נכשלה.'); }
+            }}>📊 יעדי כרטסות (אקסל)</button>
           <button onClick={save} disabled={busy} style={btn('ghost')}>{busy ? 'שומר…' : 'שמירת שיוכים'}</button>
           <button onClick={doExport} disabled={busy || exporting || !data.hasBudgetFile}
             title={data.hasBudgetFile ? '' : 'קודם מעלים דוח ביצוע של המשרד (בסקשן התקציב)'}

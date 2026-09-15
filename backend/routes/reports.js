@@ -823,6 +823,24 @@ router.get('/:id/cost-match-doc', ah(async (req, res) => {
 }));
 
 /* דוח ההתאמה כקובץ אקסל להורדה (בנוסף לגרסת ה-PDF/הדפסה) */
+/* סעיף 5 של המכתב — טבלת יעדי הכרטסות — כקובץ אקסל מעוצב להנה"ח */
+router.get('/:id/targets-xlsx', ah(async (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+  if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
+  const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(report.client_id);
+  const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  const d = await stage1Data(db, report, client, authority);
+  if (!d.units.length) return res.status(422).json({ error: 'טרם הועלה קובץ דוח ביצוע — אין יעדי כרטסות להפקה.' });
+  const { buildTargetsXlsx } = require('../lib/targetsXlsx');
+  const buf = buildTargetsXlsx(d);
+  const outName = `יעדי כרטסות - ${downloadWho(client, authority)} - ${d.label}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="targets_${id}.xlsx"; filename*=UTF-8''${encodeURIComponent(outName)}`);
+  res.send(buf);
+}));
+
 router.get('/:id/cost-match-xlsx', ah(async (req, res) => {
   const db = getDB();
   const id = parseInt(req.params.id);
