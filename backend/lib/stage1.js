@@ -157,10 +157,23 @@ async function stage1Data(db, report, client, authority) {
     const enrichB = baskets.enrichment || 0;
     const flexB = baskets.flexible || 0;
     const breakfastB = baskets.breakfast || 0;
-    const instrOver = Math.max(0, instrActual - instrBudget);
-    const coordOver = Math.max(0, coordActual - coordBudget);
-    const salaryUnused = Math.max(0, instrBudget - instrActual) + Math.max(0, coordBudget - coordActual);
-    const overflow = instrOver + coordOver; // סך החריגות הסליות — אותן בולע הגמיש
+    /* מטריצת הניוד בין הסלים (עד 25% מתקציב סל המקור בכל ניוד):
+       שכר → העשרה / גמיש / רכזות / ניהול; רכזות → שכר בלבד;
+       גמיש → ארוחות בוקר / שכר / חריגת רכזות; העשרה ↔ ניהול (ומקבלים משכר) */
+    const instrOver0 = Math.max(0, instrActual - instrBudget);
+    const coordOver0 = Math.max(0, coordActual - coordBudget);
+    let instrUnused = Math.max(0, instrBudget - instrActual);
+    let coordUnused = Math.max(0, coordBudget - coordActual);
+    // ניודים פנימיים בין סלי השכר לפני שהגמיש בולע: יתרת רכזות מכסה חריגת
+    // שכר (רכזות→שכר), ויתרת שכר מכסה חריגת רכזות (שכר→רכזות)
+    const coordToSalary = Math.min(coordUnused, 0.25 * coordBudget, instrOver0);
+    const salaryToCoord = Math.min(instrUnused, 0.25 * instrBudget, coordOver0);
+    const instrOver = instrOver0 - coordToSalary;
+    const coordOver = coordOver0 - salaryToCoord;
+    instrUnused -= salaryToCoord;
+    coordUnused -= coordToSalary;
+    const salaryUnused = instrUnused + coordUnused;
+    const overflow = instrOver + coordOver; // החריגות שנותרו — אותן בולע הגמיש
     // דוח הביצוע של המשרד בולע חריגת שכר בסל הגמיש אוטומטית — היתרה הזמינה
     // באמת לניצול (ארוחות בוקר/מלגות/גמיש) היא מה שנשאר אחרי הבליעה
     const flexConsumed = Math.min(overflow, flexB);
@@ -169,13 +182,10 @@ async function stage1Data(db, report, client, authority) {
     // לא תקציב נפרד — אין לספור פעמיים, והיתרה לארוחות בוקר = יתרת הסל הגמיש
     const breakfastPot = Math.abs(breakfastB - flexB) < 1 ? flexB : breakfastB + flexB;
     const breakfastAvailable = Math.max(0, breakfastPot - flexConsumed);
-    // אופציה א: יתרת השכר מנוידת להעשרה. כלל הניוד: מותר להעביר עד 25%
-    // מתקציב סל *המקור* (חייבים להשאיר בו 75% ניצול); הסל המקבל אינו
-    // מוגבל — יכול לקבל תוספת של יותר מ-25% מגודלו
-    const instrUnused = Math.max(0, instrBudget - instrActual);
-    const coordUnused = Math.max(0, coordBudget - coordActual);
-    const enrichBonus = overflow === 0 && salaryUnused > 0
-      ? Math.min(instrUnused, 0.25 * instrBudget) + Math.min(coordUnused, 0.25 * coordBudget)
+    // אופציה א: להעשרה מנוידת יתרת סל השכר (הדרכה) בלבד — יתרת רכזות
+    // אינה ניתנת לניוד להעשרה (רכזות → שכר בלבד)
+    const enrichBonus = overflow === 0 && instrUnused > 0
+      ? Math.min(instrUnused, 0.25 * instrBudget)
       : 0;
     // חריגת שכר גדולה (מעבר לסל הגמיש): ממליצים להכיר ב-75% מתקציב ההעשרה
     // ולנתב 25% ממנו לכיסוי החריגה
@@ -192,6 +202,7 @@ async function stage1Data(db, report, client, authority) {
       instrUnderCut: instrBudget > 0 && instrActual < instrBudget * 0.75,
       enrichBudget: enrichB, flexBudget: flexB, breakfastBudget: breakfastB,
       flexConsumed, flexAvailable, uncovered, enrichShift,
+      coordToSalary, salaryToCoord, // ניודים פנימיים בין סלי השכר (רכזות↔שכר)
       management: baskets.management || 0,
       optionA: { enrich: enrichB + enrichBonus, enrichBonus, flexForFood: flexAvailable },
       optionB: { enrich: enrichB, flexRemaining: flexAvailable },
@@ -375,9 +386,13 @@ function renderStage1Html(d) {
     const instrCutNote = u.instrUnderCut
       ? ` <span class="red">ניצול ${Math.round((u.instrActual / u.instrBudget) * 100)}% בלבד מסל ההדרכה (מתחת ל-75%) — צפוי קיזוז מהמשרד.</span>`
       : '';
+    // ניודים פנימיים בין סלי השכר (רכזות ↔ שכר, עד 25% מסל המקור)
+    const transferLines = `${u.coordToSalary > 0
+      ? `<div>ניוד מסל הרכזות לשכר: <b>₪${fmt(u.coordToSalary)}</b> מיתרת הריכוז מכסים חלק מחריגת ההדרכה <span class="soft">(רכזות מתניידות לשכר בלבד, עד 25% מסל הרכזות)</span>.</div>` : ''}${u.salaryToCoord > 0
+      ? `<div>ניוד מסל השכר לרכזות: <b>₪${fmt(u.salaryToCoord)}</b> מיתרת ההדרכה מכסים חלק מחריגת הריכוז <span class="soft">(עד 25% מסל השכר)</span>.</div>` : ''}`;
     const salaryLine = `${basketLine('סל הדרכה — שכר הצוות החינוכי', u.instrActual, u.instrBudget).replace('</div>', instrCutNote + '</div>')}
       ${basketLine(u.symbol == null ? 'סל ריכוז — רכזות גנים' : 'סל ריכוז — רכז/ת וסגן/ית', u.coordActual, u.coordBudget)}
-      ${flexLine}${booksNote ? `<div>${booksNote}</div>` : ''}`;
+      ${transferLines}${flexLine}${booksNote ? `<div>${booksNote}</div>` : ''}`;
     // כשהסל הגמיש נבלע כולו בחריגת השכר — אין שתי אופציות, רק מצב נתון
     const optionsBlock = u.flexAvailable <= 0 && u.overflow > 0
       ? `<div class="opt" style="flex:none">
