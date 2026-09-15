@@ -384,7 +384,7 @@ router.get('/:id/prep', ah(async (req, res) => {
   const schoolTypes = isSchools ? md.schoolTypes : null;
   const rows = rawRows.map((r) => {
     const sug = suggestRole(r.dept);
-    // בתי ספר: רכז/סגן מזוהים לפי שעות (מעל 114 = רכז, ~93 = סגן) —
+    // בתי ספר: רכז/סגן מזוהים לפי שעות (מעל 93 = רכז, 90-93 = סגן) —
     // המשרד מציג את תקציב בית הספר רק כשמוגדר רכז בכל סמל
     const byHours = isSchools ? schoolsRoleByHours(r.hours) : null;
     let stVal = r.staff_type || (byHours && byHours.staffType) || sug.staffType;
