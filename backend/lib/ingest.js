@@ -255,11 +255,11 @@ function recognizedRowCost(row, vatFactor = 1) {
   return g > 0 ? Math.min(full, g * COST_MARKUP_LIMIT) : full;
 }
 function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOURS_CAP, vatFactor = 1, framework = null } = {}) {
-  // בבתי הספר כל מי שמעל 90 שעות הוא סגן (90-93) או רכז (מעל 93) —
-  // תקרת השעות לא חלה עליהם ואין מה להציף
+  // בבתי הספר מי שמעל 90 שעות הוא סגן (עד 93) או רכז (מעל 93) —
+  // תקרת השעות לא חלה עליהם ואין מה להציף; בדיוק 90 = מורה רגילה
   const isCoordinator = (r) => {
     if (/רכז|סגן/.test(String(r.staffType || ''))) return true;
-    if (framework && framework !== 'gardens' && r.hours != null) return r.hours >= 90;
+    if (framework && framework !== 'gardens' && r.hours != null) return r.hours > 90;
     return false;
   };
   const costCap = grossCap * EMPLOYER_FACTOR;
