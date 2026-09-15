@@ -238,6 +238,18 @@ async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, 
     }
   }
 
+  // calcChain: כשמילוי/ריקון דורס תא שהכיל נוסחה (למשל נוסחה ידנית שהרשות
+  // הקלידה בעמודת העלות — קרה בנתניה בתי"ס), שרשרת החישוב ממשיכה להפנות
+  // לתא שכבר אינו נוסחה — ואקסל מסרב לפתוח את הקובץ. מוחקים אותה כליל:
+  // אקסל בונה אותה מחדש בפתיחה (fullCalcOnLoad ממילא נכפה למטה).
+  if (zip.file('xl/calcChain.xml')) {
+    zip.remove('xl/calcChain.xml');
+    const ct = await zip.file('[Content_Types].xml').async('string');
+    zip.file('[Content_Types].xml', ct.replace(/<Override[^>]*PartName="\/xl\/calcChain\.xml"[^>]*\/>/, ''));
+    const wbRels = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    zip.file('xl/_rels/workbook.xml.rels', wbRels.replace(/<Relationship[^>]*calcChain\.xml[^>]*\/>/, ''));
+  }
+
   // כפיית חישוב מחדש בפתיחה — שם המוסד, העלות לתקופה והבקרות יתעדכנו לבד
   let wb2 = wbXml;
   if (/<calcPr\b/.test(wb2)) {

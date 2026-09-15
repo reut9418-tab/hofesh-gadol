@@ -9,9 +9,36 @@ const { initDatabase } = require('./db');
 const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5273', exposedHeaders: ['Content-Disposition'] }));
 app.use(express.json());
-// כל בקשת שינוי מרוקנת את מטמון בריאות-הדוחות (הלוח/העץ מחושבים מהר מהמטמון)
-app.use('/api', (req, _res, next) => {
-  if (req.method !== 'GET') require('./lib/status').bustHealthCache();
+// כל בקשת שינוי מרוקנת את מטמון בריאות-הדוחות — אבל רק לדוחות הלקוח שנגעו
+// בו (ניודים בין דוחות נשארים בתוך אותו לקוח). כשהנתיב לא מזוהה — ריקון מלא.
+app.use('/api', async (req, _res, next) => {
+  if (req.method === 'GET') return next();
+  const { bustHealthCache } = require('./lib/status');
+  try {
+    const db = require('./db').getDB();
+    const url = (req.originalUrl || req.url).split('?')[0];
+    const idOf = (re) => { const x = re.exec(url); return x ? parseInt(x[1]) : null; };
+    let clientId = idOf(/^\/api\/clients\/(\d+)/);
+    let rid;
+    if (clientId == null && (rid = idOf(/^\/api\/reports\/(\d+)/)) != null) {
+      clientId = ((await db.prepare('SELECT client_id FROM reports WHERE id = ?').get(rid)) || {}).client_id;
+    }
+    if (clientId == null && (rid = idOf(/^\/api\/cost-files\/(\d+)/)) != null) {
+      clientId = ((await db.prepare('SELECT client_id FROM cost_files WHERE id = ?').get(rid)) || {}).client_id;
+    }
+    if (clientId == null && (rid = idOf(/^\/api\/ledger-files\/(\d+)/)) != null) {
+      clientId = ((await db.prepare('SELECT r.client_id FROM ledger_files lf JOIN reports r ON r.id = lf.report_id WHERE lf.id = ?').get(rid)) || {}).client_id;
+    }
+    if (clientId == null && (rid = idOf(/^\/api\/ledger-cards\/(\d+)/)) != null) {
+      clientId = ((await db.prepare('SELECT r.client_id FROM ledger_cards c JOIN reports r ON r.id = c.report_id WHERE c.id = ?').get(rid)) || {}).client_id;
+    }
+    if (clientId == null && (rid = idOf(/^\/api\/authorities\/(\d+)/)) != null) {
+      clientId = ((await db.prepare('SELECT client_id FROM authorities WHERE id = ?').get(rid)) || {}).client_id;
+    }
+    if (clientId == null && /^\/api\/clients\/?$/.test(url)) return next(); // יצירת לקוח — אין עדיין דוחות במטמון
+    if (clientId == null) bustHealthCache();
+    else bustHealthCache((await db.prepare('SELECT id FROM reports WHERE client_id = ?').all(clientId)).map((r) => r.id));
+  } catch { bustHealthCache(); }
   next();
 });
 

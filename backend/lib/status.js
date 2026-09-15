@@ -16,7 +16,13 @@ const BUCKETS = {
 /* מטמון בריאות פר-דוח: הלוח, העץ ומסכי הלקוח מחשבים את אותם דוחות שוב
    ושוב (כל חישוב = שליפת שורות + בקרות). מתרוקן בכל בקשת-שינוי (server.js). */
 const healthCache = new Map(); // reportId -> health
-function bustHealthCache() { healthCache.clear(); }
+/* ריקון ממוקד: בלי ארגומנט — הכול; עם מערך מזהי דוחות — רק אותם.
+   כששתי משתמשות עובדות במקביל על לקוחות שונים, ריקון גורף בכל שמירה אילץ
+   חישוב מחדש של כל הדוחות בכל טעינת מסך — וזה מה שהאט את המערכת. */
+function bustHealthCache(reportIds) {
+  if (!Array.isArray(reportIds)) { healthCache.clear(); return; }
+  for (const id of reportIds) healthCache.delete(Number(id));
+}
 
 /* בריאות דוח בודד — הלב של המנוע */
 async function reportHealth(db, report) {
