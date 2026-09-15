@@ -147,9 +147,11 @@ function CrossMovesPanel({ clientId, onApplied, go }: { clientId: number; onAppl
 export default function ClientView({ clientId, go }: { clientId: number; go: (n: Nav) => void }) {
   const [client, setClient] = useState<ClientNode | null>(null);
   const [newAuthority, setNewAuthority] = useState('');
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
 
   const load = () => getClient(clientId).then(setClient).catch(() => setClient(null));
-  useEffect(() => { load(); }, [clientId]);
+  useEffect(() => { load(); setEditingName(false); }, [clientId]);
 
   if (!client) return <div style={{ color: T.inkSoft, padding: 20 }}>טוען…</div>;
 
@@ -173,7 +175,31 @@ export default function ClientView({ clientId, go }: { clientId: number; go: (n:
     <div style={{ display: 'grid', gap: 18 }}>
       <section style={card}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontWeight: 700, fontSize: 18 }}>{client.name}</span>
+          {editingName ? (
+            <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+              <input autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === 'Escape') setEditingName(false);
+                  if (e.key === 'Enter' && nameDraft.trim()) {
+                    await updateClient(clientId, { name: nameDraft.trim(), has_vat: client.has_vat, cluster_number: client.cluster_number, notes: client.notes || undefined });
+                    setEditingName(false); load();
+                  }
+                }}
+                style={{ ...input, fontWeight: 700, fontSize: 16, width: 240 }} />
+              <button style={btn('primary')} onClick={async () => {
+                if (!nameDraft.trim()) return;
+                await updateClient(clientId, { name: nameDraft.trim(), has_vat: client.has_vat, cluster_number: client.cluster_number, notes: client.notes || undefined });
+                setEditingName(false); load();
+              }}>שמירה</button>
+              <button style={btn('ghost')} onClick={() => setEditingName(false)}>ביטול</button>
+            </span>
+          ) : (
+            <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontWeight: 700, fontSize: 18 }}>{client.name}</span>
+              <button title="עריכת שם הלקוח" onClick={() => { setNameDraft(client.name); setEditingName(true); }}
+                style={{ border: 'none', background: 'transparent', color: T.inkSoft, cursor: 'pointer', fontSize: 14, padding: 0 }}>✏️</button>
+            </span>
+          )}
           {client.cluster_number != null && <span style={{ fontSize: 12, color: T.inkSoft }}>אשכול למ"ס: {client.cluster_number}</span>}
           {/* הגדרת מע"מ פר-לקוח (§7) — משפיעה על התאמת הביצוע (עלות × 1.18) */}
           <label style={{ marginInlineStart: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, cursor: 'pointer',
