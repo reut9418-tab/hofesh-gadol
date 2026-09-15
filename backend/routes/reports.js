@@ -44,6 +44,15 @@ const { matchDeptsToInstitutions } = require('../lib/nameMatch');
 const { stage1Data, renderStage1Html, invalidateFileMeta } = require('../lib/stage1');
 const { parseXlsxOffloaded } = require('../lib/xlsxOffload');
 
+/* שם הלקוח (והרשות, כשהיא שונה ממנו) לשמות קבצים שיורדים — ברשות עם כמה
+   מפעילים (קריית אונו) שם הרשות לבדו לא מבדיל בין הקבצים */
+function downloadWho(client, authority) {
+  const c = (client && client.name) || '';
+  const a = (authority && authority.name) || '';
+  if (c && a && a !== c) return `${c} - ${a}`;
+  return c || a || '';
+}
+
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -308,7 +317,9 @@ router.get('/:id/budget-file', ah(async (req, res) => {
   if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
   const buf = await budgetFileBuf(db, report);
   if (!buf) return res.status(404).json({ error: 'לדוח זה עדיין לא הועלה קובץ דוח ביצוע.' });
-  const name = report.budget_file_name || `budget_${report.id}.xlsx`;
+  const bfClient = await db.prepare('SELECT name FROM clients WHERE id = ?').get(report.client_id);
+  const bfAuthority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  const name = `${downloadWho(bfClient, bfAuthority)} - ${report.budget_file_name || `budget_${report.id}.xlsx`}`;
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="budget_${report.id}.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`);
   res.send(buf);
@@ -795,7 +806,7 @@ router.get('/:id/cost-match-xlsx', ah(async (req, res) => {
   const { reportLabel } = require('../lib/domain');
   const label = reportLabel(report.framework, report.program);
   const buf = buildCostMatchXlsx({ report, client, authority, rows, label });
-  const who = (authority && authority.name) || (client && client.name) || '';
+  const who = downloadWho(client, authority);
   const outName = `דוח התאמה לדוח עלות - ${who} - ${label}.xlsx`;
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="cost_match_${id}.xlsx"; filename*=UTF-8''${encodeURIComponent(outName)}`);
@@ -880,7 +891,10 @@ router.get('/:id/export', ah(async (req, res) => {
   const expenses = await buildExpenseFill(db, report, client);
   const income = await buildIncomeFill(db, report);
   const filled = await fillMinistryReport(srcBuf, execRows, coordRows, expenses, income);
-  const outName = `דוח ביצוע ממולא - ${(report.budget_file_name || 'report.xlsx').replace(/\.xlsx?$/i, '')}.xlsx`;
+  const exAuthority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  // כשהקובץ שהועלה הוא בעצמו ייצוא קודם שלנו — לא לשרשר "דוח ביצוע ממולא" פעמיים
+  const exBase = (report.budget_file_name || 'report.xlsx').replace(/\.xlsx?$/i, '').replace(/^(דוח ביצוע ממולא - )+/, '');
+  const outName = `דוח ביצוע ממולא - ${downloadWho(client, exAuthority)} - ${exBase}.xlsx`;
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="filled_report_${id}.xlsx"; filename*=UTF-8''${encodeURIComponent(outName)}`);
   res.send(filled);
