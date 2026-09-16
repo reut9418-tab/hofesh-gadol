@@ -37,6 +37,7 @@ function mapSchoolsStaff(staffType, role, schoolTypes) {
   return { staffType: st, role: rl };
 }
 const { salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles } = require('../lib/salaryCheck');
+const { applyFileAssignments } = require('../lib/applyAssignments');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
 const { recommendations } = require('../lib/recommend');
@@ -296,9 +297,15 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   ministryCache.delete(id); // הקובץ התחלף — הנגזרות ייבנו מחדש
   invalidateFileMeta(id); // גם המטמון של מחולל המכתב
 
+  // החוק של רעות (16.9): שיוכי סמל/תפקיד שהלקוח מילא בלשונית כח האדם
+  // של הקובץ מוחלים מיד על שורות הדוח — בלי עבודה חוזרת ובלי לבקש
+  let assignApplied = 0;
+  try { assignApplied = await applyFileAssignments(db, id, req.file.buffer); } catch { /* אין לשונית/שיוכים */ }
+
   const totalBudget = parsed.institutions.reduce((s, i) => s + (i.total || 0), 0);
   const fallbackInst = parsed.institutions.find((i) => i.ratesFallback);
   res.status(201).json({
+    assignmentsApplied: assignApplied,
     authority: parsed.authority,
     institutions: parsed.institutions.length,
     totalBudget,

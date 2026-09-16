@@ -6,6 +6,7 @@ const { getDB } = require('../db');
 const { parseCostFile, norm, FIELD_DEFS, readWorkbookSheets, detectStructure, inferMissingColumns } = require('../lib/ingest');
 const { reportLabel } = require('../lib/domain');
 const { staffFromRoleText } = require('../lib/salaryCheck');
+const { applyStoredFileAssignments } = require('../lib/applyAssignments');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -158,7 +159,11 @@ router.post('/cost-files/:fileId/route', ah(async (req, res) => {
   }
 
   await db.prepare('UPDATE cost_files SET routed = 1 WHERE id = ?').run(fileId);
-  for (const rid of affected) await refreshReportFlag(db, rid);
+  for (const rid of affected) {
+    await refreshReportFlag(db, rid);
+    // שיוכי הקובץ שהועלה (ת"ז→סמל/תפקיד) מוחלים גם על שורות שנותבו עכשיו
+    try { await applyStoredFileAssignments(db, rid); } catch { /* אין קובץ/שיוכים */ }
+  }
   res.json({ ok: true, affectedReports: [...affected] });
 }));
 
@@ -358,7 +363,10 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
   }
   await db.prepare('UPDATE cost_files SET software = ?, sheets_used = ?, row_count = ? WHERE id = ?')
     .run(parsed.software, JSON.stringify(parsed.sheetsUsed), parsed.records.length, fileId);
-  for (const rid of affectedReports) await refreshReportFlag(db, rid);
+  for (const rid of affectedReports) {
+    await refreshReportFlag(db, rid);
+    try { await applyStoredFileAssignments(db, rid); } catch { /* אין קובץ/שיוכים */ }
+  }
 
   res.json({ ok: true, rowCount: parsed.records.length, software: parsed.software });
 }));
