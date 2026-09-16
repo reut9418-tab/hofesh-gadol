@@ -1005,8 +1005,13 @@ router.get('/:id/export', ah(async (req, res) => {
     const a = exMd.workerSyms && exMd.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
     return a && exValid.has(a.symbol) ? a.symbol : null;
   };
+  // שיוך ידני מחלקה→סמל שאושר ע"י המשתמשת (כלל 17.9) — כמו במכתב (stage1)
+  const exDeptManual = {};
+  (await db.prepare("SELECT map_key, map_value FROM client_mappings WHERE client_id = ? AND mapping_type = 'dept_symbol'")
+    .all(report.client_id)).forEach((m) => { exDeptManual[m.map_key] = m.map_value; });
   const resolveSymbol = (r) => {
     const s = r.symbol_override
+      || exDeptManual[r.dept]
       || (r.inst_symbol && exValid.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
       || exFileSym(r) // שיוך שמולא בקובץ שהועלה — נשמר בעדכונים
       || (r.inst_name && exNameSymbol[r.inst_name])

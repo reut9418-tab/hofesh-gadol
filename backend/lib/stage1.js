@@ -108,12 +108,18 @@ async function stage1Data(db, report, client, authority) {
     : {};
   const validSyms = new Set(matchInsts.map((i) => String(i.symbol)));
   const toActivity = (s) => (s ? (meta.redirect.get(String(s)) || String(s)) : null);
+  // שיוך ידני מחלקה→סמל שאושר ע"י המשתמשת (כלל 17.9: דו-משמעי = שאלה,
+  // והתשובה נלמדת) — גובר על כל שיוך אוטומטי ושורד קליטה מחדש של דוח העלות
+  const deptManual = {};
+  (await db.prepare("SELECT map_key, map_value FROM client_mappings WHERE client_id = ? AND mapping_type = 'dept_symbol'")
+    .all(report.client_id)).forEach((r) => { deptManual[r.map_key] = r.map_value; });
   // שיוך שמולא בלשונית כח האדם של הקובץ שהועלה (ת"ז→סמל) — נשמר בעדכונים
   const fileSym = (r) => {
     const a = meta.workerSyms && meta.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
     return a && validSyms.has(a.symbol) ? a.symbol : null;
   };
   const rowSymbol = (r) => toActivity(r.symbol_override
+    || deptManual[r.dept]
     || (r.inst_symbol && validSyms.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
     || fileSym(r)
     || (r.inst_name && nameSymbol[r.inst_name])
