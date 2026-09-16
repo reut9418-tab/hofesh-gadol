@@ -972,6 +972,137 @@ router.get('/:id/cost-match-xlsx', ah(async (req, res) => {
 }));
 
 /* ---------- ייצוא: מילוי קובץ המשרד (כח אדם + רכזות + הוצאות + הכנסות) ---------- */
+/* פותר הסמל של שורת עלות — שרשרת אחת לכל המסמכים (ייצוא, דוח עלות
+   לאחר שיוכים): ידני-לשורה ← מיפוי מחלקה נלמד ← שיוך שנקלט ← קובץ
+   הלקוח (ת"ז) ← התאמת שם. מחזיר גם את מקור השיוך לתצוגה. */
+async function makeSymbolResolver(db, report, exMd, rows) {
+  const exInstitutions = exMd.institutions;
+  const exValid = new Set(exInstitutions.map((i) => i.symbol));
+  const exNameSymbol = exInstitutions.length
+    ? matchDeptsToInstitutions(exInstitutions, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))]) : {};
+  const exDeptSymbol = exInstitutions.length && report.framework !== 'gardens'
+    ? matchDeptsToInstitutions(exInstitutions, [...new Set(rows.map((r) => r.dept))]) : {};
+  // בתי ספר מאוחדים: בדוח הביצוע נרשם סמל מקום הפעילות, לא הסמל הרשמי
+  const exFileSym = (r) => {
+    const a = exMd.workerSyms && exMd.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
+    return a && exValid.has(a.symbol) ? a.symbol : null;
+  };
+  // שיוך ידני מחלקה→סמל שאושר ע"י המשתמשת (כלל 17.9) — כמו במכתב (stage1)
+  const exDeptManual = {};
+  (await db.prepare("SELECT map_key, map_value FROM client_mappings WHERE client_id = ? AND mapping_type = 'dept_symbol'")
+    .all(report.client_id)).forEach((m) => { exDeptManual[m.map_key] = m.map_value; });
+  const resolveWithSource = (r) => {
+    let s = null, source = null;
+    if (r.symbol_override) { s = r.symbol_override; source = 'שיוך ידני'; }
+    else if (exDeptManual[r.dept]) { s = exDeptManual[r.dept]; source = 'מיפוי מחלקה (אושר)'; }
+    else if (r.inst_symbol && exValid.has(String(r.inst_symbol))) { s = String(r.inst_symbol); source = 'שיוך שנקלט'; }
+    else if (exFileSym(r)) { s = exFileSym(r); source = 'קובץ הלקוח (ת"ז)'; }
+    else if (r.inst_name && exNameSymbol[r.inst_name]) { s = exNameSymbol[r.inst_name]; source = 'התאמת שם'; }
+    else if (exDeptSymbol[r.dept]) { s = exDeptSymbol[r.dept]; source = 'התאמת שם המחלקה'; }
+    if (!s) return { symbol: null, source: null };
+    return { symbol: exMd.redirect.get(String(s)) || s, source };
+  };
+  return { resolveSymbol: (r) => resolveWithSource(r).symbol, resolveWithSource };
+}
+
+/* ---------- דוח עלות לאחר שיוכים (כלל רעות 17.9) — אקסל להורדה: כל שורות
+   דוח העלות עם בית הספר הסופי שאליו שויך כל עובד, ממוין ומסוכם פר מוסד ---------- */
+router.get('/:id/cost-assigned-xlsx', ah(async (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+  if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
+  const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(report.client_id);
+  const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  const exMd = await ministryData(db, report);
+  if (!exMd.buf) return res.status(422).json({ error: 'אין קובץ דוח ביצוע שמור לדוח זה — יש להעלות קודם את קובץ המשרד.' });
+  const rows = await db.prepare(
+    `SELECT cr.*, cf.filename, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id WHERE cr.report_id = ?`
+  ).all(id);
+  if (!rows.length) return res.status(422).json({ error: 'אין שורות שכר מנותבות לדוח זה.' });
+  const { resolveWithSource } = await makeSymbolResolver(db, report, exMd, rows);
+  const nameBySym = new Map(exMd.institutions.map((i) => [String(i.symbol), i.name]));
+  const buf = buildCostAssignedXlsx({ report, client, authority, rows, resolveWithSource, nameBySym });
+  const { reportLabel } = require('../lib/domain');
+  const fname = `דוח עלות לאחר שיוכים - ${downloadWho(client, authority)} - ${reportLabel(report.framework, report.program)}.xlsx`;
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`);
+  res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(buf);
+}));
+
+function buildCostAssignedXlsx({ report, client, authority, rows, resolveWithSource, nameBySym }) {
+  const XLSXS = require('xlsx-js-style');
+  const { reportLabel } = require('../lib/domain');
+  const label = reportLabel(report.framework, report.program);
+  const today = new Date().toLocaleDateString('he-IL');
+  const who = downloadWho(client, authority);
+  const GOLD = '9A7B2F', CHAMP = 'F4ECDA', SOFT = 'FBF7EC', LINE = 'D9CDB3', INK = '413A2F';
+  const border = { top: { style: 'thin', color: { rgb: LINE } }, bottom: { style: 'thin', color: { rgb: LINE } }, left: { style: 'thin', color: { rgb: LINE } }, right: { style: 'thin', color: { rgb: LINE } } };
+  const S = {
+    title: { font: { bold: true, sz: 14, color: { rgb: INK } }, alignment: { horizontal: 'right' } },
+    sub: { font: { bold: true, sz: 11, color: { rgb: GOLD } }, alignment: { horizontal: 'right' } },
+    school: { font: { bold: true, sz: 12, color: { rgb: GOLD } }, alignment: { horizontal: 'right' } },
+    head: { font: { bold: true, sz: 10, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: GOLD } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: true }, border },
+    cellR: (z) => ({ font: { sz: 10, color: { rgb: INK } }, alignment: { horizontal: 'right' }, border, ...(z ? { fill: { fgColor: { rgb: SOFT } } } : {}) }),
+    cellN: (z) => ({ font: { sz: 10, color: { rgb: INK } }, alignment: { horizontal: 'center' }, border, numFmt: '#,##0.00', ...(z ? { fill: { fgColor: { rgb: SOFT } } } : {}) }),
+    total: { font: { bold: true, sz: 10, color: { rgb: INK } }, fill: { fgColor: { rgb: CHAMP } }, alignment: { horizontal: 'center' }, border: { ...border, top: { style: 'medium', color: { rgb: GOLD } } }, numFmt: '#,##0.00' },
+    totalR: { font: { bold: true, sz: 10, color: { rgb: INK } }, fill: { fgColor: { rgb: CHAMP } }, alignment: { horizontal: 'right' }, border: { ...border, top: { style: 'medium', color: { rgb: GOLD } } } },
+  };
+  const cell = (v, s) => ({ v: v == null ? '' : v, t: typeof v === 'number' ? 'n' : 's', s });
+
+  // קיבוץ לפי הבי"ס הסופי
+  const groups = new Map(); // symbol -> rows
+  for (const r of rows) {
+    const { symbol, source } = resolveWithSource(r);
+    const key = symbol || '—';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ r, source });
+  }
+  const sorted = [...groups.entries()].sort((a, b) => {
+    const na = nameBySym.get(a[0]) || '', nb = nameBySym.get(b[0]) || '';
+    return na.localeCompare(nb, 'he');
+  });
+
+  const aoa = [
+    [cell('דוח עלות לאחר שיוכים — כל עובד/ת ובית הספר שאליו שויך/ה', S.title)],
+    [cell(`${who} — ${label} · ${today}`, S.sub)],
+    [],
+  ];
+  const merges = [0, 1].map((r) => ({ s: { r, c: 0 }, e: { r, c: 8 } }));
+  const HEAD = ['שם עובד/ת', 'ת.ז', 'מחלקה בדוח העלות', 'תפקיד', 'שעות', 'ברוטו', 'עלות', 'מקור השיוך'];
+  let grand = 0;
+  for (const [sym, list] of sorted) {
+    const sName = nameBySym.get(sym) || (sym === '—' ? 'ללא שיוך' : sym);
+    aoa.push([cell(`${sName}${sym !== '—' ? ` — סמל ${sym}` : ''} (${list.length} עובדים)`, S.school)]);
+    merges.push({ s: { r: aoa.length - 1, c: 0 }, e: { r: aoa.length - 1, c: 7 } });
+    aoa.push(HEAD.map((h) => cell(h, S.head)));
+    let sub = 0;
+    list.sort((a, b) => String(a.r.emp_name || '').localeCompare(String(b.r.emp_name || ''), 'he'));
+    list.forEach(({ r, source }, i) => {
+      const z = i % 2 === 1;
+      sub += r.cost || 0;
+      aoa.push([
+        cell(r.emp_name || '', S.cellR(z)), cell(String(r.emp_id || ''), S.cellR(z)),
+        cell(r.dept || '', S.cellR(z)), cell(r.staff_type || '', S.cellR(z)),
+        cell(r.hours ?? '', S.cellN(z)), cell(r.gross ?? '', S.cellN(z)), cell(r.cost ?? '', S.cellN(z)),
+        cell(source || '', S.cellR(z)),
+      ]);
+    });
+    grand += sub;
+    aoa.push([cell('סה"כ ' + sName, S.totalR), cell('', S.totalR), cell('', S.totalR), cell('', S.totalR), cell('', S.totalR), cell('', S.totalR), cell(Math.round(sub * 100) / 100, S.total), cell('', S.totalR)]);
+    aoa.push([]);
+  }
+  aoa.push([cell(`סה"כ עלות בדוח: ₪${Math.round(grand).toLocaleString('he-IL')} · ${rows.length} שורות`, S.sub)]);
+  merges.push({ s: { r: aoa.length - 1, c: 0 }, e: { r: aoa.length - 1, c: 7 } });
+
+  const ws = XLSXS.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 22 }, { wch: 13 }, { wch: 30 }, { wch: 20 }, { wch: 9 }, { wch: 11 }, { wch: 12 }, { wch: 18 }];
+  ws['!merges'] = merges;
+  const wb = XLSXS.utils.book_new();
+  wb.Workbook = { Views: [{ RTL: true }] };
+  XLSXS.utils.book_append_sheet(wb, ws, 'עלות לאחר שיוכים');
+  return XLSXS.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
 router.get('/:id/export', ah(async (req, res) => {
   const db = getDB();
   const id = parseInt(req.params.id);
@@ -993,32 +1124,7 @@ router.get('/:id/export', ah(async (req, res) => {
   ).all(id);
   if (!rows.length) return res.status(422).json({ error: 'אין שורות שכר מנותבות לדוח זה.' });
 
-  // שיוך סמל אוטומטי גם בייצוא: שם הגן/בי"ס שבשורה מול לשונית ההרשמה
-  const exInstitutions = exMd.institutions;
-  const exValid = new Set(exInstitutions.map((i) => i.symbol));
-  const exNameSymbol = exInstitutions.length
-    ? matchDeptsToInstitutions(exInstitutions, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))]) : {};
-  const exDeptSymbol = exInstitutions.length && report.framework !== 'gardens'
-    ? matchDeptsToInstitutions(exInstitutions, [...new Set(rows.map((r) => r.dept))]) : {};
-  // בתי ספר מאוחדים: בדוח הביצוע נרשם סמל מקום הפעילות, לא הסמל הרשמי
-  const exFileSym = (r) => {
-    const a = exMd.workerSyms && exMd.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
-    return a && exValid.has(a.symbol) ? a.symbol : null;
-  };
-  // שיוך ידני מחלקה→סמל שאושר ע"י המשתמשת (כלל 17.9) — כמו במכתב (stage1)
-  const exDeptManual = {};
-  (await db.prepare("SELECT map_key, map_value FROM client_mappings WHERE client_id = ? AND mapping_type = 'dept_symbol'")
-    .all(report.client_id)).forEach((m) => { exDeptManual[m.map_key] = m.map_value; });
-  const resolveSymbol = (r) => {
-    const s = r.symbol_override
-      || exDeptManual[r.dept]
-      || (r.inst_symbol && exValid.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
-      || exFileSym(r) // שיוך שמולא בקובץ שהועלה — נשמר בעדכונים
-      || (r.inst_name && exNameSymbol[r.inst_name])
-      || exDeptSymbol[r.dept]
-      || null;
-    return s ? (exMd.redirect.get(String(s)) || s) : null;
-  };
+  const { resolveSymbol } = await makeSymbolResolver(db, report, exMd, rows);
 
   const round2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
   // רשימות איש-צוות/תפקיד של תבנית בתי הספר — מהקובץ עצמו (מחרוזות מדויקות)

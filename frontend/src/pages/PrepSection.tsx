@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { T } from '../theme';
 import { btn, card, input } from '../ui';
-import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, downloadTargetsXlsx, applyMove, applyBumps, autoAssign, PrepData, Assignment } from '../api';
+import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, downloadCostAssignedXlsx, downloadTargetsXlsx, applyMove, applyBumps, autoAssign, PrepData, Assignment } from '../api';
 
 const fmt = (n: number | null, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -121,6 +121,13 @@ export default function PrepSection({ reportId }: { reportId: number }) {
             }}>🧾 דוח התאמה (אקסל)</button>
           <button onClick={() => window.open(costMatchDocUrl(reportId), '_blank')} style={btn('ghost')}
             title="דוח ההתאמה כדף להדפסה / שמירה כ-PDF">🖨 PDF</button>
+          <button style={btn('ghost')}
+            title="דוח העלות עם הבי&quot;ס הסופי של כל עובד/ת (אחרי כל השיוכים) — ממוין ומסוכם פר מוסד, יורד כקובץ אקסל"
+            onClick={async () => {
+              setMsg('מכין את דוח העלות לאחר שיוכים…');
+              try { await downloadCostAssignedXlsx(reportId); setMsg('✓ דוח העלות לאחר שיוכים ירד לתיקיית ההורדות.'); }
+              catch (e: any) { setMsg(e?.response?.data?.error || 'הורדת הדוח נכשלה.'); }
+            }}>🗂 דוח עלות לאחר שיוכים</button>
           <button style={btn('ghost')}
             title="טבלת יעדי הכרטסות (סעיף 5 במכתב) כקובץ אקסל מעוצב להנהלת החשבונות"
             onClick={async () => {

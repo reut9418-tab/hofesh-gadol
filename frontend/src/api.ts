@@ -299,6 +299,19 @@ export const downloadCostMatchXlsx = async (reportId: number) => {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 };
+/* דוח עלות לאחר שיוכים — כל עובד/ת עם הבי"ס הסופי (כלל 17.9) */
+export const downloadCostAssignedXlsx = async (reportId: number) => {
+  const res = await api.get(`/reports/${reportId}/cost-assigned-xlsx`, { responseType: 'blob' });
+  const dispo: string = res.headers['content-disposition'] || '';
+  const m = /filename\*=UTF-8''([^;]+)/.exec(dispo);
+  const name = m ? decodeURIComponent(m[1]) : `דוח עלות לאחר שיוכים - ${reportId}.xlsx`;
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+};
+
 /* טבלת יעדי הכרטסות (סעיף 5 במכתב) כקובץ אקסל מעוצב — הורדה ישירה */
 export const downloadTargetsXlsx = async (reportId: number) => {
   const res = await api.get(`/reports/${reportId}/targets-xlsx`, { responseType: 'blob' });
