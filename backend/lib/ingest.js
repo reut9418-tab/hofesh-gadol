@@ -20,9 +20,10 @@ const FIELD_DEFS = [
   { key: 'gross', label: 'סה"כ ברוטו', syn: ['סה"כ ברוטו', 'סהכ ברוטו', 'סה"כ סכום', 'סהכ סכום', 'ברוטו', 'שכר ברוטו', 'ריכוז תשלומים', 'ריכוז  תשלומים'] },
   { key: 'cost', label: 'עלות מעביד', syn: ['עלות עובד', 'עלות מעביד', 'סה"כ עלות', 'סהכ עלות', 'עלות שכר', 'עלות כוללת', 'עלות'] },
   { key: 'hours', label: 'שעות עבודה', syn: ['שעות עבודה', 'סך שעות', 'כמות שעות', 'שעות', 'סה"כ שעות', 'ש.עבודה'] },
-  // קובץ תקופה-כפולה (עיריית יבנה): שורה אחת לעובד לכל הקיץ + עמודת "עבור
-  // 6 ימים" עם חלק העלות של ההרחבה — הקליטה מפצלת כל שורה לשתי תקופות
+  // קובץ תקופה-כפולה (עיריית יבנה): שורה אחת לעובד לכל הקיץ + עמודות פר
+  // תקופה ("עבור 15 יום"/"עבור 6 ימים") — הקליטה מפצלת כל שורה לשתי תקופות
   { key: 'extPortion', label: 'עלות ימי ההרחבה (עבור X ימים)', syn: ['עבור 6 ימים'] },
+  { key: 'extHours', label: 'שעות ימי ההרחבה', syn: ['הרחבה שעות', 'שעות הרחבה'] },
 ];
 
 const norm = (s) => String(s ?? '').replace(/["'״׳]/g, '').replace(/\s+/g, ' ').trim();
@@ -218,7 +219,8 @@ function normalizeRows(rows, headerIdx, mapping, defaultDept) {
       instSymbol: String(get('instSymbol') ?? '').replace(/\D/g, '') || null,
       dept: norm(get('dept')) || norm(defaultDept) || 'ללא מחלקה',
       gross, cost, hours,
-      extCost: num(get('extPortion')), // חלק העלות של ימי ההרחבה (לפיצול תקופות)
+      extCost: num(get('extPortion')), // עלות ימי ההרחבה (לפיצול תקופות)
+      extHours: num(get('extHours')),  // שעות ימי ההרחבה (כשיש עמודה מפורשת)
     });
   }
   return out;
@@ -239,6 +241,7 @@ function aggregateComponents(recs) {
       cur.cost = cur.cost === null && r.cost === null ? null : (cur.cost ?? 0) + (r.cost ?? 0);
       cur.hours = cur.hours === null && r.hours === null ? null : (cur.hours ?? 0) + (r.hours ?? 0);
       cur.extCost = cur.extCost == null && r.extCost == null ? null : (cur.extCost ?? 0) + (r.extCost ?? 0);
+      cur.extHours = cur.extHours == null && r.extHours == null ? null : (cur.extHours ?? 0) + (r.extHours ?? 0);
       if (!cur.name && r.name) cur.name = r.name;
       if (r.component && !cur.componentNames.includes(r.component)) cur.componentNames.push(r.component);
       if (!cur.instSymbol && r.instSymbol) cur.instSymbol = r.instSymbol;
@@ -445,21 +448,41 @@ function parseCostFile(buf, learned = {}) {
     if (s.det.rowIdx < 0) return;
     sheetsUsed.push(s.sheetName);
     if (!software && s.det.software && !s.det.software.startsWith('מבנה לא מוכר')) software = s.det.software;
-    records.push(...normalizeRows(s.rows, s.det.rowIdx, s.det.mapping, s.sheetName));
+    const recs = normalizeRows(s.rows, s.det.rowIdx, s.det.mapping, s.sheetName);
+    // כשעמודת העלות שמופתה היא כבר פר-תקופה ("עבור 15 יום") — היא אינה
+    // כוללת את ההרחבה ואין לחסר ממנה (כלל רעות 16.9: "רק העמודות של
+    // 15 יום והרחבה"); כשהיא סה"כ כללי — ההרחבה מחוסרת ממנה כמו קודם
+    const costHeader = s.det.mapping.cost !== undefined ? norm((s.rows[s.det.rowIdx] || [])[s.det.mapping.cost]) : '';
+    const periodCost = /עבור|15 יום|15 ימים/.test(costHeader);
+    recs.forEach((r) => { r._periodCost = periodCost; });
+    records.push(...recs);
   });
   const aggregated = aggregateComponents(records);
-  // פיצול תקופות (כלל רעות 16.9, קובץ עיריית יבנה): שורה עם עמודת "עבור X
-  // ימים" מתפצלת — ההרחבה מקבלת את סכום העמודה, 15 הימים את היתרה; השעות
-  // והברוטו מתחלקים באותו יחס (התעריף השעתי נשמר). חלק ההרחבה מקבל מחלקה
-  // "<מחלקה> — הרחבה" כדי שינותב לפרויקט ההרחבה במסך הניתוב.
+  // פיצול תקופות (כלל רעות 16.9): שורה עם עמודת "עבור X ימים" מתפצלת לשתי
+  // תקופות. ההרחבה = סכום העמודה + "הרחבה שעות" כשמופתה; 15 הימים = עמודת
+  // העלות (פר-תקופה) או היתרה מהסה"כ (קובץ עם עלות כוללת). הברוטו מתחלק
+  // יחסית לעלות. חלק ההרחבה מקבל מחלקה "<מחלקה> — הרחבה" לניתוב נפרד.
   const split = [];
+  const part = (x, f) => (x == null ? null : Math.round(x * f * 100) / 100);
   for (const r of aggregated) {
     const ext = Number(r.extCost) || 0;
-    if (!(ext > 0) || !(r.cost > 0)) { split.push(r); continue; }
-    const ratio = Math.min(1, ext / r.cost);
-    const part = (x, f) => (x == null ? null : Math.round(x * f * 100) / 100);
-    if (ratio < 1) split.push({ ...r, cost: part(r.cost, 1 - ratio), gross: part(r.gross, 1 - ratio), hours: part(r.hours, 1 - ratio) });
-    split.push({ ...r, dept: `${r.dept} — הרחבה`, cost: part(r.cost, ratio), gross: part(r.gross, ratio), hours: part(r.hours, ratio) });
+    if (!(ext > 0)) { split.push(r); continue; }
+    const baseCost = r._periodCost ? (r.cost || 0) : Math.max(0, (r.cost || 0) - ext);
+    const total = baseCost + ext;
+    const shareExt = total > 0 ? ext / total : 1;
+    let baseHours, extHours;
+    if (r._periodCost) {
+      baseHours = r.hours; // עמודת השעות ממופה לשעות 15 הימים
+      extHours = r.extHours != null ? r.extHours
+        : (baseCost > 0 && r.hours > 0 ? part(ext / (baseCost / r.hours), 1) : null);
+    } else {
+      baseHours = part(r.hours, 1 - shareExt);
+      extHours = r.extHours != null ? r.extHours : part(r.hours, shareExt);
+    }
+    if (baseCost > 0 || (baseHours || 0) > 0) {
+      split.push({ ...r, cost: part(baseCost, 1), gross: part(r.gross, 1 - shareExt), hours: baseHours });
+    }
+    split.push({ ...r, dept: `${r.dept} — הרחבה`, cost: part(ext, 1), gross: part(r.gross, shareExt), hours: extHours });
   }
   return { software: software || 'מבנה לא מוכר', sheetsUsed, records: split };
 }

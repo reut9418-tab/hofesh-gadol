@@ -9,7 +9,7 @@ function run({ mode, framework, buf }) {
   const wb = XLSX.read(buffer, { type: 'buffer' });
   const {
     extractInstitutions, extractSchoolStaffTypes,
-    extractCoordinatorGardens, extractExecGardens,
+    extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments,
   } = require('./fillMinistry');
   const { parseGardenExecKids, parseDeputyEntitlement } = require('./budgetFile');
   const safe = (fn, fallback) => { try { return fn(); } catch { return fallback; } };
@@ -19,6 +19,7 @@ function run({ mode, framework, buf }) {
       insts: safe(() => extractInstitutions(wb), []),
       depEntitled: framework !== 'gardens' ? safe(() => parseDeputyEntitlement(wb), {}) : {},
       gardensExec: framework === 'gardens' ? safe(() => parseGardenExecKids(wb), null) : null,
+      workerSyms: safe(() => extractWorkerAssignments(wb), {}),
     };
   }
   // mode === 'ministry' — הנגזרות של מסך ההכנה והייצוא
@@ -27,6 +28,7 @@ function run({ mode, framework, buf }) {
     schoolTypes: framework !== 'gardens' ? safe(() => extractSchoolStaffTypes(wb), null) : null,
     coordGardens: framework === 'gardens' ? safe(() => extractCoordinatorGardens(wb), []) : [],
     execGardens: framework === 'gardens' ? safe(() => extractExecGardens(wb), []) : [],
+    workerSyms: safe(() => extractWorkerAssignments(wb), {}),
   };
 }
 

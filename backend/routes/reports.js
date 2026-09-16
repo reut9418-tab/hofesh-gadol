@@ -11,7 +11,7 @@ const { cascadeReport } = require('./clients');
 const { costDataForReport } = require('../lib/reportCosts');
 const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff, parseGardenExecKids, norm } = require('../lib/budgetFile');
-const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes } = require('../lib/fillMinistry');
+const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes } = require('../lib/fillMinistry');
 
 /* בבתי ספר אין "גננת"/"סייעת" — תרגום סוגי צוות של גנים (שמגיעים מדוח
    העלות) לערכי הרשימה של תבנית בתי הספר, והצמדה למחרוזות המדויקות בקובץ */
@@ -65,7 +65,7 @@ async function ministryData(db, report) {
   const cached = ministryCache.get(key);
   if (cached && cached.fileName === (report.budget_file_name || '')) return cached;
   const buf = await budgetFileBuf(db, report);
-  const entry = { fileName: report.budget_file_name || '', buf, institutions: [], schoolTypes: null, redirect: new Map(), coordGardens: [], execGardens: [] };
+  const entry = { fileName: report.budget_file_name || '', buf, institutions: [], schoolTypes: null, redirect: new Map(), coordGardens: [], execGardens: [], workerSyms: {} };
   if (buf) {
     // פענוח אחד של הקובץ (2-3MB, שניות של CPU) משרת את כל פונקציות החילוץ,
     // ורץ ב-worker thread כדי לא לחסום את שאר המשתמשים; נפילה חזרה לנתיב
@@ -76,7 +76,8 @@ async function ministryData(db, report) {
       let wb = null;
       try { wb = require('xlsx').read(buf, { type: 'buffer' }); } catch { /* קובץ פגום — ננסה פר פונקציה */ }
       const src = wb || buf;
-      parsed = { institutions: [], schoolTypes: null, coordGardens: [], execGardens: [] };
+      parsed = { institutions: [], schoolTypes: null, coordGardens: [], execGardens: [], workerSyms: {} };
+      try { parsed.workerSyms = extractWorkerAssignments(src); } catch { /* בלי שיוכים */ }
       try { parsed.institutions = extractInstitutions(src); } catch { /* בלי רשימה */ }
       if (report.framework !== 'gardens') {
         try { parsed.schoolTypes = extractSchoolStaffTypes(src); } catch { /* ברירת מחדל */ }
@@ -89,6 +90,7 @@ async function ministryData(db, report) {
     entry.schoolTypes = parsed.schoolTypes || null;
     entry.coordGardens = parsed.coordGardens || [];
     entry.execGardens = parsed.execGardens || [];
+    entry.workerSyms = parsed.workerSyms || {};
     // בתי ספר מאוחדים: הסמל הרשמי מפנה לסמל שבו מתקיימת הפעילות
     entry.redirect = new Map(entry.institutions.filter((i) => i.activitySymbol).map((i) => [String(i.symbol), String(i.activitySymbol)]));
   }
@@ -395,10 +397,13 @@ router.get('/:id/prep', ah(async (req, res) => {
     let roleVal = r.role || (byHours && byHours.role) || sug.role;
     if (isSchools) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, schoolTypes));
     const fileSymbol = r.inst_symbol && validSymbols.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null;
+    // שיוך שמולא בלשונית כח האדם של הקובץ שהועלה (ת"ז→סמל) — נשמר בעדכונים
+    const wsA = md.workerSyms && md.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
+    const uploadedSymbol = wsA && validSymbols.has(wsA.symbol) ? wsA.symbol : null;
     return {
       rowId: r.id, empId: r.emp_id, name: r.emp_name,
       firstName: r.first_name, lastName: r.last_name, dept: r.dept, instName: r.inst_name,
-      symbol: toActivity(r.symbol_override || fileSymbol || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null),
+      symbol: toActivity(r.symbol_override || fileSymbol || uploadedSymbol || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null),
       staffType: stVal,
       role: roleVal,
       saved: !!(r.symbol_override || r.staff_type || r.role),
@@ -941,9 +946,14 @@ router.get('/:id/export', ah(async (req, res) => {
   const exDeptSymbol = exInstitutions.length && report.framework !== 'gardens'
     ? matchDeptsToInstitutions(exInstitutions, [...new Set(rows.map((r) => r.dept))]) : {};
   // בתי ספר מאוחדים: בדוח הביצוע נרשם סמל מקום הפעילות, לא הסמל הרשמי
+  const exFileSym = (r) => {
+    const a = exMd.workerSyms && exMd.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
+    return a && exValid.has(a.symbol) ? a.symbol : null;
+  };
   const resolveSymbol = (r) => {
     const s = r.symbol_override
       || (r.inst_symbol && exValid.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
+      || exFileSym(r) // שיוך שמולא בקובץ שהועלה — נשמר בעדכונים
       || (r.inst_name && exNameSymbol[r.inst_name])
       || exDeptSymbol[r.dept]
       || null;

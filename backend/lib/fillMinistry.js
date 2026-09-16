@@ -86,6 +86,32 @@ function detectStartRow(buf) {
   return { sheetName, headerRow: head.r + 1, startRow: head.r + (skipCoord ? 3 : 2), baseCol: head.c, colSpecs }; // 1-based
 }
 
+/* שיוכי עובד→סמל שכבר מולאו בלשונית כח האדם של הקובץ שהועלה (ע"י הלקוח,
+   הרשות או ייצוא קודם שלנו): ת"ז → { סמל, איש צוות, תפקיד }. נשמרים בעדכון
+   דוח/קובץ עלות — שיוך שמולא בקובץ לא הולך לאיבוד (בקשת רעות 16.9). */
+function extractWorkerAssignments(bufOrWb) {
+  const wb = asWb(bufOrWb);
+  const sheetName = wb.SheetNames.find((n) => n.includes(MINISTRY_SHEET_HINT));
+  if (!sheetName) return {};
+  const ws = wb.Sheets[sheetName];
+  const head = scanCells(ws).find((x) => x.v.startsWith('סמל') && x.v.includes('מקום פעילות'));
+  if (!head || !ws['!ref']) return {};
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const out = {};
+  for (let r = head.r + 1; r <= range.e.r; r++) {
+    const get = (off) => {
+      const cell = ws[XLSX.utils.encode_cell({ r, c: head.c + off })];
+      return cell ? norm(cell.v ?? cell.w ?? '') : '';
+    };
+    const id = get(2).replace(/\D/g, ''); // ת"ז (היסט 2 מעמודת הסמל)
+    if (!id) continue;
+    const symbol = get(0).replace(/\D/g, '');
+    if (!symbol || out[id]) continue; // השורה הראשונה של העובד קובעת
+    out[id] = { symbol, staffType: get(6) || null, role: get(7) || null };
+  }
+  return out;
+}
+
 /* מאתר את קובץ ה-XML הפנימי של גיליון לפי רמז-שם */
 function resolveSheetPath(wbXml, relsXml, hint) {
   const sheetM = new RegExp(`<sheet[^>]*name="([^"]*${hint}[^"]*)"[^>]*r:id="(rId\\d+)"`).exec(wbXml);
@@ -154,6 +180,31 @@ function applyRowsToSheetXml(xml, colSpecs, startRow, rows, clearBelow = 500) {
   return xml;
 }
 
+/* ניקוי נוסחאות משותפות יתומות: כשהמילוי/הריקון דורס תא-מאסטר (מחזיק את
+   ref= והנוסחה) בעוד תאי-המשך מעבר לאזור הנתונים שורדים עם si בלבד — הקובץ
+   מושחת ואקסל מסרב לפתוח (קרה ביבנה: I548 נדרס, I566:I594 נותרו). התאים
+   היתומים הופכים לערכים סטטיים (הערך המחושב השמור נשאר). */
+function stripOrphanSharedFormulas(xml) {
+  const masters = new Set();
+  const fRe = /<f[^>]*t="shared"[^>]*/g;
+  let m;
+  while ((m = fRe.exec(xml)) !== null) {
+    if (/ref="/.test(m[0])) { const si = /si="(\d+)"/.exec(m[0]); if (si) masters.add(si[1]); }
+  }
+  return xml.replace(/<c\b([^>]*[^/>])>((?:(?!<\/c>)[\s\S])*?)<\/c>/g, (full, attrs, inner) => {
+    const f = /<f[^>]*t="shared"[^>]*(?:\/>|>[\s\S]*?<\/f>)/.exec(inner);
+    if (!f || /ref="/.test(f[0])) return full; // אין נוסחה משותפת / זהו מאסטר
+    const si = /si="(\d+)"/.exec(f[0]);
+    if (!si || masters.has(si[1])) return full; // יש מאסטר — תקין
+    const vM = /<v>([\s\S]*?)<\/v>/.exec(inner);
+    const val = vM ? vM[1] : '';
+    const cleanAttrs = attrs.replace(/\s*t="(?:str|b|e)"/, '');
+    if (!val) return `<c${cleanAttrs}/>`;
+    if (/t="(?:str|e)"/.test(attrs)) return `<c${cleanAttrs} t="inlineStr"><is><t xml:space="preserve">${val}</t></is></c>`;
+    return `<c${cleanAttrs}><v>${val}</v></c>`;
+  });
+}
+
 /* rows: מערך של מערכים בסדר MINISTRY_COLS.src (אינדקסים 1 ו-11 מדולגים).
    coordRows (אופציונלי, גנים): [[מס' סידורי, סמל גן, היקף משרה], ...] ללשונית רכזות הגנים.
    expenses (אופציונלי): { aggregate: {basketKey: {amount, cards, source}} } לגנים,
@@ -170,7 +221,7 @@ async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, 
   const sheetPath = resolveSheetPath(wbXml, relsXml, MINISTRY_SHEET_HINT);
   if (!sheetPath) throw new Error(`לא נמצא גיליון "${MINISTRY_SHEET_HINT}" בקובץ — ודאי שזה קובץ דוח הביצוע של המשרד.`);
   let xml = await zip.file(sheetPath).async('string');
-  xml = applyRowsToSheetXml(xml, det.colSpecs, det.startRow, rows);
+  xml = stripOrphanSharedFormulas(applyRowsToSheetXml(xml, det.colSpecs, det.startRow, rows));
   zip.file(sheetPath, xml);
 
   // לשונית רכזות הגנים (§ גנים בלבד): B=מס' סידורי, C=סמל גן, G=היקף משרה. D/E/F/I/J נוסחאות.
@@ -180,7 +231,7 @@ async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, 
       const coordPath = resolveSheetPath(wbXml, relsXml, COORD_SHEET_HINT);
       if (coordPath) {
         let cxml = await zip.file(coordPath).async('string');
-        cxml = applyRowsToSheetXml(cxml, COORD_COLS, coordDet.startRow, coordRows);
+        cxml = stripOrphanSharedFormulas(applyRowsToSheetXml(cxml, COORD_COLS, coordDet.startRow, coordRows));
         zip.file(coordPath, cxml);
       }
     }
@@ -206,7 +257,7 @@ async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, 
         } else if (expDet.mode === 'perSchool' && expenses.perSchool) {
           exml = applyRowsToSheetXml(exml, expDet.colSpecs, expDet.startRow, expenses.perSchool);
         }
-        zip.file(expPath, exml);
+        zip.file(expPath, stripOrphanSharedFormulas(exml));
       }
     }
   }
@@ -233,7 +284,7 @@ async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, 
             if (rowNum) pushRow(rowNum, data);
           }
         }
-        if (writes.length) { ixml = setCellsInSheetXml(ixml, writes); zip.file(incPath, ixml); }
+        if (writes.length) { ixml = setCellsInSheetXml(ixml, writes); zip.file(incPath, stripOrphanSharedFormulas(ixml)); }
       }
     }
   }
@@ -542,7 +593,7 @@ function extractInstitutions(buf) {
 }
 
 module.exports = {
-  fillMinistryReport, detectStartRow, extractInstitutions, extractCoordinatorGardens, extractExecGardens,
+  fillMinistryReport, detectStartRow, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments,
   SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
   detectExpenseSheet, EXPENSE_LABEL_HE,
   STAFF_TYPES, MINISTRY_SHEET_HINT, COORD_SHEET_HINT,

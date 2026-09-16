@@ -16,7 +16,7 @@ const clientName = (client, authority) => (authority && authority.name) || (clie
 
 /* מוסדות קובץ המשרד (לשונית ההרשמה) + מפת ההפניות של בתי ספר מאוחדים —
    כדי ששיוך הסמלים במכתב יהיה זהה במדויק לזה של הייצוא (resolveSymbol) */
-const { extractInstitutions } = require('./fillMinistry');
+const { extractInstitutions, extractWorkerAssignments } = require('./fillMinistry');
 const { parseGardenExecKids, parseDeputyEntitlement } = require('./budgetFile');
 const { parseXlsxOffloaded } = require('./xlsxOffload');
 const XLSX = require('xlsx');
@@ -26,7 +26,7 @@ async function fileMeta(db, report) {
   const fn = report.budget_file_name || '';
   const cached = fileMetaCache.get(report.id);
   if (cached && cached.fileName === fn) return cached;
-  const entry = { fileName: fn, insts: [], redirect: new Map(), depEntitled: {}, gardensExec: null };
+  const entry = { fileName: fn, insts: [], redirect: new Map(), depEntitled: {}, gardensExec: null, workerSyms: {} };
   try {
     const row = await db.prepare('SELECT data FROM report_files WHERE report_id = ?').get(report.id);
     if (row && row.data) {
@@ -41,11 +41,13 @@ async function fileMeta(db, report) {
           insts: extractInstitutions(wb),
           depEntitled: report.framework !== 'gardens' ? parseDeputyEntitlement(wb) : {},
           gardensExec: report.framework === 'gardens' ? parseGardenExecKids(wb) : null,
+          workerSyms: extractWorkerAssignments(wb),
         };
       }
       entry.insts = parsed.insts || [];
       entry.depEntitled = parsed.depEntitled || {};
       entry.gardensExec = parsed.gardensExec || null;
+      entry.workerSyms = parsed.workerSyms || {};
       entry.redirect = new Map(entry.insts.filter((i) => i.activitySymbol).map((i) => [String(i.symbol), String(i.activitySymbol)]));
     }
   } catch { /* אין קובץ — שיוך לפי מוסדות המסד בלבד */ }
@@ -106,8 +108,14 @@ async function stage1Data(db, report, client, authority) {
     : {};
   const validSyms = new Set(matchInsts.map((i) => String(i.symbol)));
   const toActivity = (s) => (s ? (meta.redirect.get(String(s)) || String(s)) : null);
+  // שיוך שמולא בלשונית כח האדם של הקובץ שהועלה (ת"ז→סמל) — נשמר בעדכונים
+  const fileSym = (r) => {
+    const a = meta.workerSyms && meta.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
+    return a && validSyms.has(a.symbol) ? a.symbol : null;
+  };
   const rowSymbol = (r) => toActivity(r.symbol_override
     || (r.inst_symbol && validSyms.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
+    || fileSym(r)
     || (r.inst_name && nameSymbol[r.inst_name])
     || deptSymbol[r.dept] || null);
 
