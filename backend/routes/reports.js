@@ -393,12 +393,12 @@ router.get('/:id/prep', ah(async (req, res) => {
     // בתי ספר: רכז/סגן מזוהים לפי שעות (מעל 93 = רכז, 90-93 = סגן) —
     // המשרד מציג את תקציב בית הספר רק כשמוגדר רכז בכל סמל
     const byHours = isSchools ? schoolsRoleByHours(r.hours) : null;
-    let stVal = r.staff_type || (byHours && byHours.staffType) || sug.staffType;
-    let roleVal = r.role || (byHours && byHours.role) || sug.role;
+    // שיוך שמולא בלשונית כח האדם של הקובץ שהועלה (ת"ז→סמל/תפקיד) — קודם לכל ניחוש
+    const wsA = md.workerSyms && md.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
+    let stVal = r.staff_type || (wsA && wsA.staffType) || (byHours && byHours.staffType) || sug.staffType;
+    let roleVal = r.role || (wsA && wsA.role) || (byHours && byHours.role) || sug.role;
     if (isSchools) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, schoolTypes));
     const fileSymbol = r.inst_symbol && validSymbols.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null;
-    // שיוך שמולא בלשונית כח האדם של הקובץ שהועלה (ת"ז→סמל) — נשמר בעדכונים
-    const wsA = md.workerSyms && md.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
     const uploadedSymbol = wsA && validSymbols.has(wsA.symbol) ? wsA.symbol : null;
     return {
       rowId: r.id, empId: r.emp_id, name: r.emp_name,
@@ -556,10 +556,14 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
     ? matchDeptsToInstitutions(aaMd.institutions, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))])
     : {};
   const validSet = new Set(gardens);
+  // התפקיד/סמל שמולאו בקובץ הביצוע שהועלה (ת"ז→שיוך) — מקור אמת לפני כל
+  // ניחוש: השיוך האוטומטי מאמץ אותם ולא ממציא "גננת" (לקח יבנה, 16.9)
+  const fileAssignOf = (r) => (aaMd.workerSyms && aaMd.workerSyms[String(r.emp_id || '').replace(/\D/g, '')]) || null;
   const symbolOf = (r) => r.symbol_override
     || (r.inst_symbol && validSet.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
+    || (() => { const a = fileAssignOf(r); return a && validSet.has(a.symbol) ? a.symbol : null; })()
     || (r.inst_name && exNameSymbol[r.inst_name]) || null;
-  const staffOf = (r) => r.staff_type || suggestRole(r.dept).staffType || 'גננת';
+  const staffOf = (r) => r.staff_type || (fileAssignOf(r) || {}).staffType || suggestRole(r.dept).staffType || 'גננת';
 
   // סימון רכזות גן: מספר המשרות נגזר מלשונית "רכזות גנים - דוח ביצוע"
   // (רכזת אחת לכל 5 גנים, 0.2 משרה לגן); המועמדות — כ-90 שעות והברוטו
@@ -568,14 +572,15 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
   const coordPositions = aaMd.coordGardens.length ? Math.ceil(aaMd.coordGardens.length / 5) : 0;
   let coordDesignated = 0;
   if (coordPositions > 0) {
-    const existing = rows.filter((r) => /רכזת גן/.test(String(r.staff_type || ''))).length;
+    // רכזות שהקובץ שהועלה כבר מסמן נספרות כקיימות — לא ממנים חדשות במקומן
+    const existing = rows.filter((r) => /רכזת גן/.test(String(r.staff_type || (fileAssignOf(r) || {}).staffType || ''))).length;
     const need = coordPositions - existing;
     if (need > 0) {
-      // מועמדות: בלי תפקיד שמור, או עם ברירת המחדל "גננת" (שיוך אוטומטי קודם);
+      // מועמדות: בלי תפקיד שמור (במסד או בקובץ), או עם ברירת המחדל "גננת";
       // תפקיד אחר שנקבע במפורש (סייעת, מדצ...) לא נדרס
       const cands = rows
-        .filter((r) => (!r.staff_type || norm(r.staff_type) === 'גננת') && r.hours >= 85 && r.hours <= 95 && r.gross > 0
-          && !/סייע/.test(String(suggestRole(r.dept).staffType || '')))
+        .filter((r) => { const eff = r.staff_type || (fileAssignOf(r) || {}).staffType; return (!eff || norm(eff) === 'גננת') && r.hours >= 85 && r.hours <= 95 && r.gross > 0
+          && !/סייע/.test(String(suggestRole(r.dept).staffType || '')); })
         .sort((a, b) => (a.staff_type ? 1 : 0) - (b.staff_type ? 1 : 0) || (b.gross / b.hours) - (a.gross / a.hours));
       for (const r of cands.slice(0, need)) {
         r.staff_type = 'רכזת גן'; r.role = 'רכז/ת גן'; // גם בזיכרון — להמשך השיבוץ
@@ -975,8 +980,10 @@ router.get('/:id/export', ah(async (req, res) => {
     const hourlyCost = rawHourlyCost != null && cap140 != null ? Math.min(rawHourlyCost, cap140) : rawHourlyCost;
     const sug = suggestRole(r.dept);
     const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
-    let stVal = r.staff_type || (byHours && byHours.staffType) || sug.staffType || '';
-    let roleVal = r.role || (byHours && byHours.role) || sug.role || '';
+    // תפקיד שמולא בקובץ שהועלה (ת"ז) — קודם לניחוש לפי שעות/מחלקה
+    const exWs = exMd.workerSyms && exMd.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
+    let stVal = r.staff_type || (exWs && exWs.staffType) || (byHours && byHours.staffType) || sug.staffType || '';
+    let roleVal = r.role || (exWs && exWs.role) || (byHours && byHours.role) || sug.role || '';
     if (report.framework !== 'gardens') ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, exSchoolTypes));
     return [
       resolveSymbol(r), null, r.emp_id,

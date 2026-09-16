@@ -136,7 +136,9 @@ async function stage1Data(db, report, client, authority) {
     });
     const staffOf = (r) => {
       const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
-      return r.staff_type || (byHours && byHours.staffType) || suggestRole(r.dept).staffType;
+      // תפקיד שמולא בקובץ שהועלה (ת"ז) — קודם לניחוש לפי שעות/מחלקה
+      const ws = meta.workerSyms && meta.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
+      return r.staff_type || (ws && ws.staffType) || (byHours && byHours.staffType) || suggestRole(r.dept).staffType;
     };
     // דיווח הסגן מוכר רק כשמדווח גם רכז (תנאי הנוסחה בלשונית האיוש)
     const hasCoordRow = ordered.some((r) => basketForStaff(staffOf(r)) === 'coordinator');
