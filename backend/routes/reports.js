@@ -715,13 +715,24 @@ async function buildExpenseFill(db, report, client) {
   const cards = (await db.prepare(
     `SELECT * FROM ledger_cards WHERE report_id = ? AND basket_type IN (${EXPENSE_BASKETS.map(() => '?').join(',')})`
   ).all(report.id, ...EXPENSE_BASKETS)).filter((c) => (c.net || 0) > 0);
-  if (!cards.length) return null;
   const vat = client && client.has_vat ? 1.18 : 1;
   const r2 = (n) => Math.round(n * vat * 100) / 100;
+  const round2 = (n) => Math.round(n * 100) / 100;
+  // ניהול ותפעול — בהתאם לתקציב (כלל רעות 16.9: התקורה ממולאת כ-100% תקציב);
+  // מספר הכרטסת מצורף כשקיימת כרטסת ניהול
+  const mgmtBudget = new Map((await db.prepare(
+    `SELECT i.symbol s, COALESCE(SUM(b.budget_amount),0) a FROM baskets b
+     JOIN institutions i ON i.id = b.institution_id
+     WHERE i.report_id = ? AND b.basket_type = 'management' GROUP BY i.symbol`
+  ).all(report.id)).map((r) => [String(r.s), Number(r.a) || 0]));
+  const mgmtTotal = [...mgmtBudget.values()].reduce((s, v) => s + v, 0);
+  const mgmtCards = cards.filter((c) => c.basket_type === 'management').map((c) => c.card_key).join(', ');
+  if (!cards.length && !(mgmtTotal > 0)) return null;
 
   if (report.framework === 'gardens') {
     const aggregate = {};
     EXPENSE_BASKETS.forEach((b) => {
+      if (b === 'management') return; // ניהול — מהתקציב, למטה
       const bs = cards.filter((c) => c.basket_type === b);
       if (!bs.length) return;
       aggregate[b] = {
@@ -730,6 +741,7 @@ async function buildExpenseFill(db, report, client) {
         source: OPERATION_SOURCE,
       };
     });
+    if (mgmtTotal > 0) aggregate.management = { amount: round2(mgmtTotal), cards: mgmtCards, source: OPERATION_SOURCE };
     return Object.keys(aggregate).length ? { aggregate } : null;
   }
 
@@ -740,7 +752,13 @@ async function buildExpenseFill(db, report, client) {
   const nameToSymbol = matchDeptsToInstitutions(insts, [...new Set(cards.map((c) => c.card_name))]);
 
   const rows = [];
+  // ניהול ותפעול פר בי"ס — לפי תקציב סל הניהול של המוסד (לא לפי כרטסת)
+  for (const inst of insts) {
+    const mb = mgmtBudget.get(String(inst.symbol)) || 0;
+    if (mb > 0) rows.push([inst.symbol, EXPENSE_HE.management, round2(mb), mgmtCards, OPERATION_SOURCE]);
+  }
   cards.forEach((c) => {
+    if (c.basket_type === 'management') return; // טופל מהתקציב למעלה
     const label = EXPENSE_HE[c.basket_type];
     const sym = nameToSymbol[c.card_name];
     if (sym) {

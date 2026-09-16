@@ -237,6 +237,10 @@ export type LedgerData = {
     checks?: LedgerCheck[];
   };
   payerMatrix?: { rows: PayerRow[]; hasVat: boolean; multi?: boolean };
+  expenseMatrix?: {
+    rows: { key: string; label: string; ledger: number; expected: number; file: number | null; diff: number | null; level: 'ok' | 'warn' | 'err' | 'none' }[];
+    hasVat: boolean; hasFile: boolean;
+  };
 };
 export const uploadLedgerFile = async (reportId: number, file: File) => {
   await wakeServer();

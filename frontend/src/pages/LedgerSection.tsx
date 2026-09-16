@@ -161,6 +161,47 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
         );
       })()}
 
+      {/* השוואת העשרה/ארוחות בוקר: כרטסת מול מה שממולא בלשונית ההוצאות של הקובץ */}
+      {(data?.expenseMatrix?.rows.length || 0) > 0 && (() => {
+        const em = data!.expenseMatrix!;
+        const th = { padding: '6px 8px', fontWeight: 600, textAlign: 'center' as const };
+        const td = { padding: '6px 8px', textAlign: 'center' as const };
+        return (
+          <div style={{ margin: '4px 0 14px' }}>
+            <div style={{ fontWeight: 700, fontSize: 13, margin: '4px 0 6px' }}>העשרה וארוחות בוקר — כרטסת מול דוח הביצוע</div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ color: T.inkSoft, fontSize: 11 }}>
+                    <th style={{ ...th, textAlign: 'right' }}>סעיף</th>
+                    <th style={th}>כרטסת (נטו)</th>
+                    {data!.hasVat && <th style={th}>צפוי בדוח (כולל מע"מ)</th>}
+                    <th style={th}>ממולא בלשונית "הוצאות בפועל"</th>
+                    <th style={th}>פער</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {em.rows.map((p) => (
+                    <tr key={p.key} style={{ borderTop: `1px solid ${T.line}` }}>
+                      <td style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{p.label}</td>
+                      <td style={td}>₪{fmt(p.ledger)}</td>
+                      {data!.hasVat && <td style={td}>₪{fmt(p.expected)}</td>}
+                      <td style={td}>{p.file != null ? `₪${fmt(p.file)}` : <span style={{ color: T.inkSoft }}>טרם מולא</span>}</td>
+                      <td style={{ ...td, fontWeight: 600, color: p.diff == null ? T.inkSoft : Math.abs(p.diff) <= 200 ? T.green : lvColor(p.level) }}>
+                        {p.diff == null ? '—' : Math.abs(p.diff) <= 200 ? 'תואם ✓' : `₪${fmt(p.diff)}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize: 11, color: T.inkSoft, marginTop: 4 }}>
+              הייצוא ממלא בלשונית ההוצאות רק תאים ריקים (לא דורס מה שהלקוח מילא): העשרה וארוחות בוקר לפי הכרטסות, ניהול ותפעול לפי התקציב — כולל מספרי הכרטסות.
+            </div>
+          </div>
+        );
+      })()}
+
       {/* קבצי הכרטסות — כולל מחיקה של כרטסת שהועלתה בטעות (מוחקת את כל כרטיסיה) */}
       {(data?.files.length || 0) > 0 && (
         <div style={{ display: 'grid', gap: 6, marginBottom: 12 }}>

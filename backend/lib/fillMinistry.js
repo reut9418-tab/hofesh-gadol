@@ -249,17 +249,44 @@ async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, 
       if (expPath) {
         let exml = await zip.file(expPath).async('string');
         if (expDet.mode === 'aggregate' && expenses.aggregate) {
+          // keep: ערך שכבר מולא בקובץ אינו נדרס — משלימים רק תאים ריקים
           const writes = [];
           for (const [key, data] of Object.entries(expenses.aggregate)) {
             const rowNum = expDet.labelRows[key];
             if (!rowNum) continue;
-            if (expDet.amountCol >= 0) writes.push({ row: rowNum, col: colLetter(expDet.amountCol), kind: 'num', value: data.amount });
-            if (expDet.cardCol >= 0) writes.push({ row: rowNum, col: colLetter(expDet.cardCol), kind: 'text', value: data.cards });
-            if (expDet.sourceCol >= 0) writes.push({ row: rowNum, col: colLetter(expDet.sourceCol), kind: 'text', value: data.source });
+            if (expDet.amountCol >= 0) writes.push({ row: rowNum, col: colLetter(expDet.amountCol), kind: 'num', value: data.amount, keep: true });
+            if (expDet.cardCol >= 0) writes.push({ row: rowNum, col: colLetter(expDet.cardCol), kind: 'text', value: data.cards, keep: true });
+            if (expDet.sourceCol >= 0) writes.push({ row: rowNum, col: colLetter(expDet.sourceCol), kind: 'text', value: data.source, keep: true });
           }
           exml = setCellsInSheetXml(exml, writes);
         } else if (expDet.mode === 'perSchool' && expenses.perSchool) {
-          exml = applyRowsToSheetXml(exml, expDet.colSpecs, expDet.startRow, expenses.perSchool);
+          // אי-דריסה: קוראים את הרשומות הקיימות; כותבים רק צירופי (סמל, מהות)
+          // חסרים — בשורות הפנויות שאחרי הקיימות
+          const wbe = XLSX.read(buf, { type: 'buffer', sheetRows: expDet.startRow + 450 });
+          const dataE = XLSX.utils.sheet_to_json(wbe.Sheets[expDet.sheetName], { header: 1, defval: null });
+          const colIdxOf = (src) => XLSX.utils.decode_col(expDet.colSpecs.find((c) => c.src === src).col);
+          const cSym = colIdxOf(0), cEss = colIdxOf(1), cAmt = colIdxOf(2);
+          const existing = new Set();
+          let lastUsed = expDet.startRow - 1; // 1-based: השורה האחרונה שבשימוש
+          for (let r = expDet.startRow - 1; r < dataE.length; r++) {
+            const row = dataE[r] || [];
+            const sym = norm(row[cSym] ?? '').replace(/\D/g, '');
+            const ess = norm(row[cEss] ?? '');
+            const amt = row[cAmt];
+            if (!sym && !ess && (amt == null || amt === '')) continue;
+            if (sym || ess) existing.add(`${sym}|${ess}`);
+            lastUsed = r + 1;
+          }
+          const toWrite = expenses.perSchool.filter((row) => !existing.has(`${String(row[0])}|${norm(row[1])}`));
+          const writes = [];
+          toWrite.forEach((row, i) => {
+            const rowNum = lastUsed + 1 + i;
+            expDet.colSpecs.forEach(({ src, col, kind }) => {
+              const v = row[src];
+              if (v != null && v !== '') writes.push({ row: rowNum, col, kind, value: v });
+            });
+          });
+          if (writes.length) exml = setCellsInSheetXml(exml, writes);
         }
         zip.file(expPath, stripOrphanSharedFormulas(exml));
       }
@@ -365,6 +392,41 @@ function detectExpenseSheet(buf) {
 
 const colLetter = (idx) => XLSX.utils.encode_col(idx);
 
+/* הערכים הנוכחיים בלשונית "דוח הוצאות בפועל" (מה שכבר מולא בקובץ שהועלה) —
+   להשוואת העשרה/ארוחות בוקר מול הכרטסות (בקשת רעות 16.9) */
+function parseExpenseActuals(buf) {
+  const det = detectExpenseSheet(buf);
+  if (det.error) return null;
+  const wb = XLSX.read(buf, { type: 'buffer', sheetRows: (det.startRow || 40) + 450 });
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[det.sheetName], { header: 1, defval: null });
+  const num = (v) => { const n = Number(String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : 0; };
+  const out = { mode: det.mode, enrichment: 0, breakfast: 0, scholarships: 0, management: 0, cards: {} };
+  const keyOfLabel = (label) => {
+    const n = norm(label);
+    for (const [key, he] of Object.entries(EXPENSE_LABEL_HE)) if (n.includes(norm(he))) return key;
+    return null;
+  };
+  if (det.mode === 'aggregate') {
+    for (const [key, rowNum] of Object.entries(det.labelRows)) {
+      const row = rows[rowNum - 1] || [];
+      out[key] = num(row[det.amountCol]);
+      if (det.cardCol >= 0) { const c = norm(row[det.cardCol] ?? ''); if (c) out.cards[key] = c; }
+    }
+  } else {
+    const colIdxOf = (src) => XLSX.utils.decode_col(det.colSpecs.find((c) => c.src === src).col);
+    const cEss = colIdxOf(1), cAmt = colIdxOf(2), cCard = colIdxOf(3);
+    for (let r = det.startRow - 1; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const key = keyOfLabel(row[cEss] ?? '');
+      if (!key) continue;
+      out[key] += num(row[cAmt]);
+      const c = norm(row[cCard] ?? '');
+      if (c && !out.cards[key]) out.cards[key] = c;
+    }
+  }
+  return out;
+}
+
 /* כתיבת תאים בודדים בשורות קיימות (משאיר את שאר התאים בשורה כמו שהם) */
 function setCellsInSheetXml(xml, writes) {
   const byRow = new Map();
@@ -374,7 +436,10 @@ function setCellsInSheetXml(xml, writes) {
     const rm = rowRe.exec(xml);
     const cells = rm ? parseRowCells(rm[2]) : {};
     ws.forEach((w) => {
-      const style = (/(\bs=")(\d+)/.exec((cells[w.col] || {}).attrs || '') || [])[2];
+      const cur = cells[w.col];
+      // keep: תא שכבר מולא (ע"י הלקוח/הרשות) אינו נדרס — משלימים רק חוסרים
+      if (w.keep && cur && /<v>[^<]|<is>/.test(cur.full)) return;
+      const style = (/(\bs=")(\d+)/.exec((cur || {}).attrs || '') || [])[2];
       cells[w.col] = { colLetter: w.col, full: buildCell(w.col, rowNum, style, w.kind, w.value) };
     });
     const inner = Object.values(cells).sort((a, b) => colToNum(a.colLetter) - colToNum(b.colLetter)).map((c) => c.full).join('');
@@ -597,7 +662,7 @@ function extractInstitutions(buf) {
 }
 
 module.exports = {
-  fillMinistryReport, detectStartRow, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments,
+  fillMinistryReport, detectStartRow, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, parseExpenseActuals,
   SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
   detectExpenseSheet, EXPENSE_LABEL_HE,
   STAFF_TYPES, MINISTRY_SHEET_HINT, COORD_SHEET_HINT,

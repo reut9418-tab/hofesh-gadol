@@ -210,4 +210,49 @@ async function ledgerReconcile(db, report, client) {
   };
 }
 
-module.exports = { ledgerReconcile, payerBreakdown, VAT_RATE };
+/* השוואת העשרה/ארוחות בוקר: הכרטסות מול מה שממולא כרגע בלשונית "דוח
+   הוצאות בפועל" של קובץ הביצוע שהועלה (בקשת רעות 16.9). */
+const expenseCmpCache = new Map(); // reportId -> { fileName, actuals }
+async function expenseComparison(db, report, client) {
+  const cards = await db.prepare(
+    `SELECT basket_type, COALESCE(SUM(net),0) s FROM ledger_cards
+     WHERE report_id = ? AND net > 0 AND basket_type IN ('enrichment','breakfast','scholarships') GROUP BY basket_type`
+  ).all(report.id);
+  const sums = Object.fromEntries(cards.map((c) => [c.basket_type, Number(c.s)]));
+  const hasVat = !!(client && client.has_vat);
+  const vatFactor = hasVat ? 1 + VAT_RATE : 1;
+
+  let actuals = null;
+  const cached = expenseCmpCache.get(report.id);
+  if (cached && cached.fileName === (report.budget_file_name || '')) actuals = cached.actuals;
+  else {
+    const blob = await db.prepare('SELECT data FROM report_files WHERE report_id = ?').get(report.id);
+    if (blob && blob.data) {
+      try {
+        const { parseExpenseActuals } = require('./fillMinistry');
+        actuals = parseExpenseActuals(Buffer.isBuffer(blob.data) ? blob.data : Buffer.from(blob.data));
+      } catch { actuals = null; }
+    }
+    expenseCmpCache.set(report.id, { fileName: report.budget_file_name || '', actuals });
+  }
+
+  const rows = [];
+  const push = (key, label, ledgerNet, fileVal) => {
+    if (!(ledgerNet > 0) && !(fileVal > 0)) return;
+    const expected = r2c(ledgerNet * vatFactor); // בדוח הביצוע — כולל מע"מ לחייב
+    const diff = fileVal != null ? r2c(fileVal - expected) : null;
+    const base = expected > 0 ? Math.abs(diff || 0) / expected : (Math.abs(diff || 0) > 200 ? 1 : 0);
+    rows.push({
+      key, label,
+      ledger: r2c(ledgerNet), expected, file: fileVal != null ? r2c(fileVal) : null,
+      diff,
+      level: diff == null ? 'none' : (base <= 0.01 || Math.abs(diff) <= 200 ? 'ok' : base <= 0.05 ? 'warn' : 'err'),
+    });
+  };
+  push('enrichment', 'העשרה', sums.enrichment || 0, actuals ? actuals.enrichment : null);
+  push('breakfast', 'ארוחות בוקר / מלגות', (sums.breakfast || 0) + (sums.scholarships || 0),
+    actuals ? (actuals.breakfast || 0) + (actuals.scholarships || 0) : null);
+  return { rows, hasVat, hasFile: !!actuals };
+}
+
+module.exports = { ledgerReconcile, payerBreakdown, expenseComparison, VAT_RATE };

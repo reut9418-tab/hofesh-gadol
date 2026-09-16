@@ -8,7 +8,7 @@
       רעות 16.9.2026), בניכוי השתתפות ההורים. */
 
 const { stage1Data } = require('./stage1');
-const { ledgerReconcile, payerBreakdown } = require('./reconcile');
+const { ledgerReconcile, payerBreakdown, expenseComparison } = require('./reconcile');
 const { enrichMatchData } = require('./enrichMatch');
 const { reportLabel } = require('./domain');
 
@@ -21,6 +21,7 @@ async function stage2Data(db, report, client, authority) {
   const d = await stage1Data(db, report, client, authority);
   const reconcile = await ledgerReconcile(db, report, client);
   const payerMatrix = await payerBreakdown(db, report, client);
+  const expenseMatrix = await expenseComparison(db, report, client);
   const enrich = await enrichMatchData(db, report, client, authority);
   const vat = d.hasVat ? 1.18 : 1;
 
@@ -99,7 +100,7 @@ async function stage2Data(db, report, client, authority) {
     hasVat: d.hasVat, tariff: d.tariff,
     checks: reconcile.hasLedger ? (reconcile.checks || []) : [],
     hasLedger: !!reconcile.hasLedger,
-    payerMatrix,
+    payerMatrix, expenseMatrix,
     units, totals,
   };
 }
@@ -243,6 +244,22 @@ ${(d.payerMatrix && d.payerMatrix.rows.length) ? `
   </tbody>
 </table>
 <div class="soft">המשלם נקבע בשדה "משלם" של כל קובץ עלות וכרטסת. "מדווח בדוח הביצוע" = העלות המוכרת (אחרי תקרת 140%${d.hasVat ? ' וכולל מע"מ' : ''}) — הסכום שנרשם בעמודת "הועסק ע"י" של אותו משלם בייצוא.</div>
+` : ''}
+${(d.expenseMatrix && d.expenseMatrix.rows.length) ? `
+<h2>א3. העשרה וארוחות בוקר — כרטסת מול דוח הביצוע</h2>
+<table>
+  <thead><tr><th>סעיף</th><th class="num">כרטסת (נטו)</th>${d.hasVat ? '<th class="num">צפוי בדוח (כולל מע"מ)</th>' : ''}
+    <th class="num">ממולא בלשונית "הוצאות בפועל"</th><th class="num">פער</th></tr></thead>
+  <tbody>
+  ${d.expenseMatrix.rows.map((p, i) => `<tr${i % 2 ? ' class="z"' : ''}>
+    <td>${esc(p.label)}</td>
+    <td class="num">₪${fmt(p.ledger)}</td>${d.hasVat ? `<td class="num">₪${fmt(p.expected)}</td>` : ''}
+    <td class="num">${p.file != null ? '₪' + fmt(p.file) : '<span class="soft">טרם מולא</span>'}</td>
+    <td class="num">${p.diff == null ? '—' : Math.abs(p.diff) <= 200 ? '<span style="color:#4C7A45">תואם ✓</span>' : `<span class="${p.level === 'err' ? 'red' : ''}">₪${fmt(p.diff)}</span>`}</td>
+  </tr>`).join('')}
+  </tbody>
+</table>
+<div class="soft">"ממולא בלשונית" = הערכים הקיימים כרגע בקובץ הביצוע שהועלה; הייצוא שלנו משלים תאים ריקים בלבד (לא דורס), עם מספרי הכרטסות.</div>
 ` : ''}
 <h2>ב. ניצול מול תקציב — ${d.report.framework === 'gardens' ? 'כל הגנים במרוכז' : 'פר בית ספר'}</h2>
 <table>
