@@ -171,7 +171,10 @@ async function migrate(db) {
     'budget_total REAL DEFAULT 0', 'actual_total REAL DEFAULT 0',
     // דיווחי שכר רכז/סגן מלשונית איוש המשרות — לפיצול הניצול במכתב כמו בדוח הביצוע
     'staff_coord_reported REAL DEFAULT 0', 'staff_dep_reported REAL DEFAULT 0',
-    'staff_coord_budget REAL DEFAULT 0', 'staff_dep_budget REAL DEFAULT 0']) await add('institutions', c);
+    'staff_coord_budget REAL DEFAULT 0', 'staff_dep_budget REAL DEFAULT 0',
+    // שורות התשלום מקובץ המשרד (כלל רעות 16.9): "סה"כ לתשלום בתוספת גמישות 25%"
+    // + "תוספת סייעות רפואיות או אישיות" — המקור ל"צפוי לקבל" בדוח שלב 2
+    'payment_total REAL', 'payment_aides REAL', 'payment_note TEXT']) await add('institutions', c);
   for (const c of ['budget_file_name TEXT', 'budget_file_path TEXT', 'parent_tariff REAL DEFAULT 0']) await add('reports', c);
   for (const c of ['symbol_override TEXT', 'staff_type TEXT', 'role TEXT',
     'moved_from_dept TEXT', 'moved_from_symbol TEXT', 'move_declined INTEGER DEFAULT 0']) await add('cost_rows', c);

@@ -220,6 +220,10 @@ export type LedgerCard = {
   debit: number; credit: number; net: number; basket_type: string | null;
 };
 export type LedgerCheck = { id: string; level: 'ok' | 'warn' | 'err'; text: string; a: number; b: number; diff: number };
+export type PayerRow = {
+  payer: string; rows: number; hours: number; costNet: number; reported: number;
+  ledgerSalary: number | null; diff: number | null; level: 'ok' | 'warn' | 'err' | 'none';
+};
 export type LedgerData = {
   files: { id: number; filename: string; card_count: number; payer?: string | null; created_at: string }[];
   cards: LedgerCard[];
@@ -232,6 +236,7 @@ export type LedgerData = {
     execActual?: number; expectedExec?: number; hasVat?: boolean;
     checks?: LedgerCheck[];
   };
+  payerMatrix?: { rows: PayerRow[]; hasVat: boolean; multi?: boolean };
 };
 export const uploadLedgerFile = async (reportId: number, file: File) => {
   await wakeServer();

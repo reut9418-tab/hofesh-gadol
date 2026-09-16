@@ -8,7 +8,7 @@
       רעות 16.9.2026), בניכוי השתתפות ההורים. */
 
 const { stage1Data } = require('./stage1');
-const { ledgerReconcile } = require('./reconcile');
+const { ledgerReconcile, payerBreakdown } = require('./reconcile');
 const { enrichMatchData } = require('./enrichMatch');
 const { reportLabel } = require('./domain');
 
@@ -20,6 +20,7 @@ const r2 = (n) => Math.round((n || 0) * 100) / 100;
 async function stage2Data(db, report, client, authority) {
   const d = await stage1Data(db, report, client, authority);
   const reconcile = await ledgerReconcile(db, report, client);
+  const payerMatrix = await payerBreakdown(db, report, client);
   const enrich = await enrichMatchData(db, report, client, authority);
   const vat = d.hasVat ? 1.18 : 1;
 
@@ -38,6 +39,13 @@ async function stage2Data(db, report, client, authority) {
   const cardSum = Object.fromEntries(cards.map((c) => [c.basket_type, Number(c.s) * vat]));
   const breakfastScholarLedger = (cardSum.breakfast || 0) + (cardSum.scholarships || 0);
 
+  // שורות התשלום מקובץ המשרד (כלל רעות 16.9): "סה"כ לתשלום בתוספת גמישות 25%
+  // במעבר בין הסלים" + "תוספת סייעות רפואיות או אישיות" — כשהקובץ חושב, אלו
+  // הם ה"צפוי לקבל"; האומדן המחושב שלנו נשאר כבסיס השוואה וכגיבוי לקובץ קפוא
+  const instPay = await db.prepare('SELECT symbol, payment_total, payment_aides, payment_note FROM institutions WHERE report_id = ?').all(report.id);
+  const payBySym = Object.fromEntries(instPay.map((i) => [String(i.symbol), i]));
+  const aggPay = instPay.length === 1 ? instPay[0] : null;
+
   const units = d.units.map((u) => {
     // שכר מוכר: הביצוע עד התקציב (אחרי הניודים הפנימיים) + כיסוי הגמיש;
     // מה שמעבר (uncovered) אינו מוכר
@@ -54,13 +62,22 @@ async function stage2Data(db, report, client, authority) {
     // 16.9.2026, "ברוב המקרים") — ללא תלות בכרטסות; פר מוסד בבתי"ס, במרוכז בגנים
     const mgmtRecognized = r2(u.management || 0);
     const income = (u.children && d.tariff) ? r2(u.children * d.tariff) : 0;
-    const expected = r2(salaryRecognized + enrichRecognized + bfsRecognized + mgmtRecognized - income);
+    const computedExpected = r2(salaryRecognized + enrichRecognized + bfsRecognized + mgmtRecognized - income);
+    // "צפוי לקבל" מהקובץ: סה"כ לתשלום בתוספת גמישות 25% + תוספת סייעות (בנפרד)
+    const ip = u.symbol != null ? payBySym[String(u.symbol)] : aggPay;
+    const paymentTotal = ip && ip.payment_total != null ? r2(Number(ip.payment_total)) : null;
+    const paymentAides = ip && ip.payment_aides != null ? r2(Number(ip.payment_aides)) : 0;
+    // קובץ קפוא/מאופס (0 או טקסט "לא קיימת זכאות") — האומדן שלנו הוא הצפי,
+    // כמו בתקציב (תקדים אור עקיבא: קובץ מאופס ⇒ המכתב הוא האומדן)
+    const expected = paymentTotal > 0 ? r2(paymentTotal + paymentAides) : computedExpected;
     return {
       ...u,
       salaryActual, salaryRecognized,
       enrichAllocated: r2(enrichAllocated), enrichRecognized,
       bfsRecognized, mgmtRecognized,
-      income, expected,
+      income, computedExpected,
+      paymentTotal, paymentAides, paymentNote: (ip && ip.payment_note) || null,
+      expected,
     };
   });
 
@@ -72,6 +89,9 @@ async function stage2Data(db, report, client, authority) {
     flexBudget: total((u) => u.flexBudget), flexConsumed: total((u) => u.flexConsumed), flexAvailable: total((u) => u.flexAvailable),
     bfsRecognized: total((u) => u.bfsRecognized), mgmtRecognized: total((u) => u.mgmtRecognized),
     income: total((u) => u.income), expected: total((u) => u.expected),
+    computedExpected: total((u) => u.computedExpected),
+    paymentTotal: units.some((u) => u.paymentTotal != null) ? total((u) => u.paymentTotal) : null,
+    paymentAides: total((u) => u.paymentAides),
   };
 
   return {
@@ -79,6 +99,7 @@ async function stage2Data(db, report, client, authority) {
     hasVat: d.hasVat, tariff: d.tariff,
     checks: reconcile.hasLedger ? (reconcile.checks || []) : [],
     hasLedger: !!reconcile.hasLedger,
+    payerMatrix,
     units, totals,
   };
 }
@@ -198,7 +219,31 @@ function renderStage2Html(d) {
 
 <h2>א. הבקרות שבוצעו והפערים</h2>
 ${checksHtml}
-
+${(d.payerMatrix && d.payerMatrix.rows.length) ? `
+<h2>א2. השוואה פר משלם — דוח עלות ↔ כרטסת שכר ↔ דוח ביצוע</h2>
+<table>
+  <thead><tr><th>משלם</th><th class="num">עובדים</th><th class="num">שעות</th>
+    <th class="num">דוח עלות (עלות מעביד)</th><th class="num">כרטסת שכר</th><th class="num">פער</th>
+    <th class="num">מדווח בדוח הביצוע${d.hasVat ? ' (כולל מע"מ)' : ''}</th></tr></thead>
+  <tbody>
+  ${d.payerMatrix.rows.map((p, i) => `<tr${i % 2 ? ' class="z"' : ''}>
+    <td>${esc(p.payer)}</td>
+    <td class="num">${p.rows}</td><td class="num">${fmt(p.hours)}</td>
+    <td class="num">₪${fmt(p.costNet)}</td>
+    <td class="num">${p.ledgerSalary != null ? '₪' + fmt(p.ledgerSalary) : '<span class="soft">אין כרטסת</span>'}</td>
+    <td class="num">${p.diff == null ? '—' : Math.abs(p.diff) <= 200 ? '<span style="color:#4C7A45">תואם ✓</span>' : `<span class="${p.level === 'err' ? 'red' : ''}">₪${fmt(p.diff)}</span>`}</td>
+    <td class="num">₪${fmt(p.reported)}</td>
+  </tr>`).join('')}
+  ${d.payerMatrix.rows.length > 1 ? `<tr class="total"><td>סה"כ</td>
+    <td class="num">${d.payerMatrix.rows.reduce((s, p) => s + p.rows, 0)}</td>
+    <td class="num">${fmt(d.payerMatrix.rows.reduce((s, p) => s + p.hours, 0))}</td>
+    <td class="num">₪${fmt(d.payerMatrix.rows.reduce((s, p) => s + p.costNet, 0))}</td>
+    <td class="num">₪${fmt(d.payerMatrix.rows.reduce((s, p) => s + (p.ledgerSalary || 0), 0))}</td><td></td>
+    <td class="num">₪${fmt(d.payerMatrix.rows.reduce((s, p) => s + p.reported, 0))}</td></tr>` : ''}
+  </tbody>
+</table>
+<div class="soft">המשלם נקבע בשדה "משלם" של כל קובץ עלות וכרטסת. "מדווח בדוח הביצוע" = העלות המוכרת (אחרי תקרת 140%${d.hasVat ? ' וכולל מע"מ' : ''}) — הסכום שנרשם בעמודת "הועסק ע"י" של אותו משלם בייצוא.</div>
+` : ''}
 <h2>ב. ניצול מול תקציב — ${d.report.framework === 'gardens' ? 'כל הגנים במרוכז' : 'פר בית ספר'}</h2>
 <table>
   <thead><tr><th>${d.report.framework === 'gardens' ? 'מסגרת' : 'בית ספר'}</th>
@@ -208,15 +253,39 @@ ${checksHtml}
   <tbody>${unitRows}${totalsRow}</tbody>
 </table>
 
-<h2>ג. התשלום הצפוי מהמשרד</h2>
+<h2>ג. התשלום הצפוי מהמשרד — מתוך קובץ דוח הביצוע</h2>
+<table>
+  <thead><tr><th>${d.report.framework === 'gardens' ? 'מסגרת' : 'בית ספר'}</th>
+    <th class="num">סה"כ לתשלום בתוספת גמישות 25% במעבר בין הסלים</th>
+    <th class="num">תוספת סייעות רפואיות או אישיות</th>
+    <th class="num">אומדן המערכת</th><th class="num">פער</th></tr></thead>
+  <tbody>
+  ${d.units.map((u, i) => `<tr${i % 2 ? ' class="z"' : ''}>
+    <td>${u.symbol ? `${esc(u.name)} <span class="soft">(${esc(u.symbol)})</span>` : esc(u.name)}</td>
+    <td class="num">${u.paymentTotal != null ? `<b>₪${fmt(u.paymentTotal)}</b>` : u.paymentNote ? `<span class="soft">${esc(u.paymentNote)}</span>` : '<span class="soft">לא חושב בקובץ</span>'}</td>
+    <td class="num">${u.paymentAides > 0 ? '₪' + fmt(u.paymentAides) : '—'}</td>
+    <td class="num">₪${fmt(u.computedExpected)}</td>
+    <td class="num">${u.paymentTotal != null ? (Math.abs(u.paymentTotal + u.paymentAides - u.computedExpected) <= 200 ? '<span style="color:#4C7A45">תואם ✓</span>' : `₪${fmt(u.paymentTotal + u.paymentAides - u.computedExpected)}`) : '—'}</td>
+  </tr>`).join('')}
+  ${isSingle ? '' : `<tr class="total"><td>סה"כ</td>
+    <td class="num">${t.paymentTotal != null ? '₪' + fmt(t.paymentTotal) : '—'}</td>
+    <td class="num">${t.paymentAides > 0 ? '₪' + fmt(t.paymentAides) : '—'}</td>
+    <td class="num">₪${fmt(t.computedExpected)}</td><td></td></tr>`}
+  </tbody>
+</table>
+<div class="soft">"סה"כ לתשלום" ו"תוספת סייעות" נקראים משורות הסיכום של קובץ דוח הביצוע (${d.report.framework === 'gardens' ? 'כל הגנים במרוכז' : 'פר בית ספר'}); כשהקובץ לא חושב — "צפוי לקבל" נשען על אומדן המערכת.</div>
+
+<h3 style="font-size:13.5px;color:#9A7B2F;margin:18px 0 4px">פירוט ההכרה — אומדן המערכת</h3>
 <table>
   <thead><tr><th>${d.report.framework === 'gardens' ? 'מסגרת' : 'בית ספר'}</th>
     <th class="num">שכר מוכר</th><th class="num">העשרה</th><th class="num">ארוחות בוקר/מלגות</th>
-    <th class="num">ניהול ותפעול</th><th class="num">השתתפות הורים</th><th class="num">צפוי לקבל</th></tr></thead>
+    <th class="num">ניהול ותפעול</th><th class="num">השתתפות הורים</th><th class="num">אומדן מחושב</th></tr></thead>
   <tbody>${payRows}${payTotals}</tbody>
 </table>
 <div class="expected">💰 <b>סה"כ צפוי להתקבל מהמשרד בפרויקט זה: ₪${fmt(t.expected)}</b>
-  <span class="soft">— שכר מוכר ₪${fmt(t.salaryRecognized)} + העשרה ₪${fmt(t.enrichRecognized)}${t.bfsRecognized > 0 ? ` + ארוחות בוקר/מלגות ₪${fmt(t.bfsRecognized)}` : ''}${t.mgmtRecognized > 0 ? ` + ניהול ₪${fmt(t.mgmtRecognized)}` : ''} − השתתפות הורים ₪${fmt(t.income)}. תקורת הניהול הוכרה במלואה — 100% מתקציב הסל (ברירת המחדל; במקרים חריגים יש לעדכן ידנית).</span>
+  <span class="soft">— ${t.paymentTotal > 0
+    ? `מתוך קובץ דוח הביצוע: סה"כ לתשלום בתוספת גמישות 25% ₪${fmt(t.paymentTotal)}${t.paymentAides > 0 ? ` + תוספת סייעות רפואיות/אישיות ₪${fmt(t.paymentAides)}` : ''} (אומדן המערכת: ₪${fmt(t.computedExpected)}).`
+    : `אומדן המערכת (הקובץ לא חושב): שכר מוכר ₪${fmt(t.salaryRecognized)} + העשרה ₪${fmt(t.enrichRecognized)}${t.bfsRecognized > 0 ? ` + ארוחות בוקר/מלגות ₪${fmt(t.bfsRecognized)}` : ''}${t.mgmtRecognized > 0 ? ` + ניהול ₪${fmt(t.mgmtRecognized)}` : ''} − השתתפות הורים ₪${fmt(t.income)}.`} תקורת הניהול מוכרת ב-100% מתקציב הסל.</span>
 </div>
 </body></html>`;
 }

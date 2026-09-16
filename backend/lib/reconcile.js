@@ -4,9 +4,64 @@
 
 const { costDataForReport } = require('./reportCosts');
 const { SALARY_BASKET_TYPES, BASKET_HE } = require('./ledger');
+const { recognizedRowCost } = require('./ingest');
 
 const VAT_RATE = 0.18;
 const fmtN = (n) => Math.round(n).toLocaleString('he-IL');
+const r2c = (n) => Math.round((n || 0) * 100) / 100;
+
+/* השוואה פר משלם (מתנ"ס/עירייה/רשות): דוח עלות ↔ כרטסת שכר ↔ המדווח בדוח
+   הביצוע — לכל פרויקט. המשלם נקבע בשדה "משלם" של כל קובץ עלות/כרטסת;
+   כשלא הוגדר אף משלם — הכול קבוצה אחת על שם הלקוח (כמו עד היום), וכשהוגדר
+   חלקית — קבצים בלי משלם מסומנים בנפרד כדי שיהיה ברור מה חסר. */
+async function payerBreakdown(db, report, client) {
+  const cost = await costDataForReport(db, report);
+  const cards = await db.prepare(
+    `SELECT lc.net, lc.basket_type, lf.payer, lf.filename FROM ledger_cards lc
+     JOIN ledger_files lf ON lf.id = lc.ledger_file_id WHERE lc.report_id = ?`
+  ).all(report.id);
+  if (!cost.rows.length && !cards.length) return { rows: [], hasVat: !!(client && client.has_vat) };
+
+  const hasVat = !!(client && client.has_vat);
+  const vatFactor = hasVat ? 1 + VAT_RATE : 1;
+  const DEFAULT_PAYER = (client && client.name) || 'המפעיל';
+  const anyPayer = cost.rows.some((r) => r.payer) || cards.some((c) => c.payer);
+  const label = (payer, source) => payer || (anyPayer ? `ללא משלם — ${source}` : DEFAULT_PAYER);
+
+  const groups = new Map();
+  const g = (k) => {
+    if (!groups.has(k)) groups.set(k, { payer: k, rows: 0, hours: 0, costNet: 0, reported: 0, ledgerSalary: null });
+    return groups.get(k);
+  };
+  for (const r of cost.rows) {
+    const e = g(label(r.payer, r.source));
+    e.rows++;
+    e.hours += r.hours || 0;
+    e.costNet += r.cost || 0;
+    // מה שיירשם בדוח הביצוע: העלות המוכרת (תקרת 140%, ×מע"מ לחייב) — "הועסק ע"י"
+    e.reported += recognizedRowCost(r, vatFactor);
+  }
+  for (const c of cards) {
+    if (!SALARY_BASKET_TYPES.includes(c.basket_type)) continue;
+    const e = g(label(c.payer, c.filename));
+    e.ledgerSalary = (e.ledgerSalary || 0) + (c.net || 0);
+  }
+
+  const rows = [...groups.values()]
+    .map((e) => {
+      const diff = e.ledgerSalary != null ? r2c(e.ledgerSalary - e.costNet) : null;
+      const base = e.costNet > 0 ? Math.abs(diff || 0) / e.costNet : (Math.abs(diff || 0) > 200 ? 1 : 0);
+      return {
+        ...e,
+        hours: r2c(e.hours), costNet: r2c(e.costNet), reported: r2c(e.reported),
+        ledgerSalary: e.ledgerSalary != null ? r2c(e.ledgerSalary) : null,
+        diff,
+        level: diff == null ? 'none' : (base <= 0.01 || Math.abs(diff) <= 200 ? 'ok' : base <= 0.05 ? 'warn' : 'err'),
+      };
+    })
+    .sort((a, b) => b.costNet - a.costNet);
+  return { rows, hasVat, multi: rows.length > 1 };
+}
 
 async function ledgerReconcile(db, report, client) {
   const cards = await db.prepare(
@@ -155,4 +210,4 @@ async function ledgerReconcile(db, report, client) {
   };
 }
 
-module.exports = { ledgerReconcile, VAT_RATE };
+module.exports = { ledgerReconcile, payerBreakdown, VAT_RATE };

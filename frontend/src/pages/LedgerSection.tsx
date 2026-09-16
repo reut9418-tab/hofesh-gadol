@@ -109,6 +109,79 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
         </>
       )}
 
+      {/* השוואה פר משלם: דוח עלות ↔ כרטסת שכר ↔ המדווח בדוח הביצוע */}
+      {(data?.payerMatrix?.rows.length || 0) > 0 && (() => {
+        const pm = data!.payerMatrix!;
+        const th = { padding: '6px 8px', fontWeight: 600, textAlign: 'center' as const };
+        const td = { padding: '6px 8px', textAlign: 'center' as const };
+        const sum = (f: (p: typeof pm.rows[0]) => number) => pm.rows.reduce((s, p) => s + (f(p) || 0), 0);
+        return (
+          <div style={{ margin: '4px 0 14px' }}>
+            <div style={{ fontWeight: 700, fontSize: 13, margin: '4px 0 6px' }}>השוואה פר משלם — דוח עלות ↔ כרטסת שכר ↔ דוח ביצוע</div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ color: T.inkSoft, fontSize: 11 }}>
+                    <th style={{ ...th, textAlign: 'right' }}>משלם</th>
+                    <th style={th}>עובדים</th><th style={th}>שעות</th>
+                    <th style={th}>דוח עלות (עלות מעביד)</th>
+                    <th style={th}>כרטסת שכר</th><th style={th}>פער</th>
+                    <th style={th}>מדווח בדוח ביצוע{data!.hasVat ? ' (כולל מע"מ)' : ''}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pm.rows.map((p) => (
+                    <tr key={p.payer} style={{ borderTop: `1px solid ${T.line}` }}>
+                      <td style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{p.payer}</td>
+                      <td style={td}>{p.rows}</td><td style={td}>{fmt(p.hours)}</td>
+                      <td style={{ ...td, fontWeight: 600 }}>₪{fmt(p.costNet)}</td>
+                      <td style={td}>{p.ledgerSalary != null ? `₪${fmt(p.ledgerSalary)}` : <span style={{ color: T.inkSoft }}>אין כרטסת</span>}</td>
+                      <td style={{ ...td, fontWeight: 600, color: p.diff == null ? T.inkSoft : Math.abs(p.diff) <= 200 ? T.green : lvColor(p.level) }}>
+                        {p.diff == null ? '—' : Math.abs(p.diff) <= 200 ? 'תואם ✓' : `₪${fmt(p.diff)}`}
+                      </td>
+                      <td style={td}>₪{fmt(p.reported)}</td>
+                    </tr>
+                  ))}
+                  {pm.rows.length > 1 && (
+                    <tr style={{ borderTop: `2px solid ${T.ink}`, fontWeight: 700, background: T.paper }}>
+                      <td style={{ ...td, textAlign: 'right' }}>סה"כ</td>
+                      <td style={td}>{sum((p) => p.rows)}</td><td style={td}>{fmt(sum((p) => p.hours))}</td>
+                      <td style={td}>₪{fmt(sum((p) => p.costNet))}</td>
+                      <td style={td}>₪{fmt(sum((p) => p.ledgerSalary || 0))}</td><td style={td}></td>
+                      <td style={td}>₪{fmt(sum((p) => p.reported))}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize: 11, color: T.inkSoft, marginTop: 4 }}>
+              המשלם נקבע בשדה "משלם" של כל קובץ עלות (במסך הלקוח) וכל כרטסת (כאן למטה). "מדווח בדוח ביצוע" = העלות המוכרת אחרי תקרת 140%{data!.hasVat ? ' כולל מע"מ' : ''} — מה שנרשם בייצוא תחת "הועסק ע"י".
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* קבצי הכרטסות — כולל מחיקה של כרטסת שהועלתה בטעות (מוחקת את כל כרטיסיה) */}
+      {(data?.files.length || 0) > 0 && (
+        <div style={{ display: 'grid', gap: 6, marginBottom: 12 }}>
+          {data!.files.map((f) => (
+            <div key={f.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, background: T.paper, borderRadius: 8, border: `1px solid ${T.line}`, padding: '7px 12px' }}>
+              <span style={{ fontWeight: 600 }}>{f.filename}</span>
+              <span style={{ color: T.inkSoft, fontSize: 11 }}>{f.card_count} כרטיסים</span>
+              <input defaultValue={f.payer || ''} placeholder='משלם (מתנ"ס/רשות)'
+                title="בספרי מי מתנהלת הכרטסת — מפריד את ההתאמות וההשוואה בין המשלמים"
+                onBlur={async (e) => { const v = e.target.value.trim(); if (v !== (f.payer || '')) { await setLedgerFilePayer(f.id, v || null); await load(); onChange(); } }}
+                style={{ padding: '3px 8px', fontSize: 11, width: 130, borderRadius: 6, fontFamily: 'inherit', border: `1px solid ${f.payer ? T.green : T.line}` }} />
+              <button onClick={() => removeFile(f.id, f.filename)}
+                title="מחיקת הכרטסת וכל הכרטיסים שנקלטו ממנה — לכרטסת שהועלתה בטעות או שאינה שייכת לפרויקט"
+                style={{ ...btn('ghost'), marginInlineStart: 'auto', color: T.red, borderColor: T.red, fontSize: 11.5 }}>
+                🗑 מחיקת כרטסת
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {(data?.cards.length || 0) > 0 && (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -142,21 +215,6 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
         </div>
       )}
 
-      {(data?.files.length || 0) > 0 && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-          {data!.files.map((f) => (
-            <span key={f.id} style={{ fontSize: 11, color: T.inkSoft, background: T.paper, borderRadius: 6, padding: '3px 9px', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-              {f.filename} · {f.card_count} כרטיסים
-              <input defaultValue={f.payer || ''} placeholder='משלם (מתנ"ס/רשות)'
-                title="בספרי מי מתנהלת הכרטסת — מפריד את ההתאמות בין המשלמים"
-                onBlur={async (e) => { const v = e.target.value.trim(); if (v !== (f.payer || '')) { await setLedgerFilePayer(f.id, v || null); await load(); onChange(); } }}
-                style={{ padding: '2px 7px', fontSize: 10.5, width: 120, borderRadius: 5, fontFamily: 'inherit', border: `1px solid ${f.payer ? T.green : T.line}` }} />
-              <button onClick={() => removeFile(f.id, f.filename)}
-                style={{ border: 'none', background: 'transparent', color: T.red, cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: 0 }}>✕</button>
-            </span>
-          ))}
-        </div>
-      )}
     </section>
   );
 }

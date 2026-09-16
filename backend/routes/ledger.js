@@ -5,7 +5,7 @@ const multer = require('multer');
 const { z } = require('zod');
 const { getDB } = require('../db');
 const { parseLedgerFile, basketForCardName, BASKET_HE } = require('../lib/ledger');
-const { ledgerReconcile } = require('../lib/reconcile');
+const { ledgerReconcile, payerBreakdown } = require('../lib/reconcile');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -77,6 +77,7 @@ router.get('/reports/:id/ledger', ah(async (req, res) => {
     cards,
     basketOptions: Object.entries(BASKET_HE).map(([value, label]) => ({ value, label })),
     reconcile: await ledgerReconcile(db, report, client),
+    payerMatrix: await payerBreakdown(db, report, client),
     hasVat: !!(client && client.has_vat),
   });
 }));

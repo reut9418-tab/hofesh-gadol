@@ -66,6 +66,10 @@ function parseAggregateSheet(rows, sheetName, wb = null, opts = {}) {
   let tariffCol = -1, perChildShare = null;
   let rateCols = null, perChildRates = null;
   let coordRatePerGarden = null, sawCoordHeader = false;
+  // שורות התשלום בתחתית הריכוז (כלל רעות 16.9): "סה"כ לתשלום בתוספת גמישות
+  // 25% במעבר בין הסלים" + "תוספת סייעות רפואיות או אישיות" — אלו הסכומים
+  // שהמשרד ישלם בפועל, והם המקור ל"צפוי לקבל" בדוח שלב 2
+  let paymentTotal = null, paymentAides = null, paymentNote = null;
   let flexAllocSalary = 0; // הקצאת הגמיש שנכללה בתקציב השכר (מקטע ג, "שימוש אפשרי")
   const RATE_KEYS = [['סל ניהול', 'management'], ['סל הדרכה', 'instruction'], ['סל העשרה', 'enrichment'], ['סל גמיש', 'flexible']];
 
@@ -89,6 +93,11 @@ function parseAggregateSheet(rows, sheetName, wb = null, opts = {}) {
     if ((k = li('סהכ תקציב נורמטיבי')) >= 0) { const v = firstNumAfter(row, k); if (v > 0 && !totalNormative) totalNormative = v; }
     if (gardens == null && (k = li('מספר מוסדות שפעלו')) >= 0) gardens = firstNumAfter(row, k);
     if (coordinators == null && (k = li('זכאות לרכזת')) >= 0) coordinators = firstNumAfter(row, k);
+    if (paymentTotal == null && (k = li('לתשלום בתוספת גמישות')) >= 0) {
+      paymentTotal = firstNumAfter(row, k);
+      if (paymentTotal == null && !paymentNote) paymentNote = row.slice(k + 1, k + 5).map(norm).find((x) => x) || null;
+    }
+    if (paymentAides == null && (k = li('תוספת סייעות רפואיות')) >= 0) paymentAides = firstNumAfter(row, k);
 
     // תעריף המשרד לילד (מקטע העלויות הנורמטיביות): הכותרת קובעת את העמודה,
     // והערך נלקח משורת "ילדים זכאים לסבסוד"
@@ -241,6 +250,7 @@ function parseAggregateSheet(rows, sheetName, wb = null, opts = {}) {
     gardensCount: gardens, coordinators,
     baskets, actual, unused,
     total: budget || 0, totalActual: netActual ?? totalActual, totalUnused,
+    paymentTotal, paymentAides, paymentNote,
   };
   const institutions = (inst.total > 0 || Object.keys(baskets).length) ? [inst] : [];
   return { sheetName, authority, aggregate: true, institutions };
@@ -606,6 +616,13 @@ function parseBudgetFile(buf, opts = {}) {
     if ((k = li('ילדים זכאים ח.מיוחד')) >= 0 && cur.eligibleSpec == null) cur.eligibleSpec = numNear(row, k);
     // תבנית ההרחבה: המשרד מסמן "לא תקין" כשגיליון איוש המשרות לא מולא → הזכאות מתאפסת
     if ((k = li('איוש משרות')) >= 0 && norm(row[k + 1]).includes('לא תקין')) cur.staffingInvalid = true;
+    // שורות התשלום בתחתית הבלוק (כלל רעות 16.9): "סה"כ לתשלום בתוספת גמישות 25%"
+    // + "תוספת סייעות רפואיות או אישיות"; בקובץ קפוא במקום מספר יש טקסט הסבר
+    if (cur.paymentTotal == null && (k = li('לתשלום בתוספת גמישות')) >= 0) {
+      cur.paymentTotal = numNear(row, k);
+      if (cur.paymentTotal == null && !cur.paymentNote) cur.paymentNote = row.slice(k + 1, k + 5).map(norm).find((x) => x) || null;
+    }
+    if (cur.paymentAides == null && (k = li('תוספת סייעות רפואיות')) >= 0) cur.paymentAides = numNear(row, k);
 
     // "תקצוב סל גמיש לשכר רגיל/רכזים": שורת ההתאמה "שכר צוות חינוכי" כוללת
     // כבר את הקצאת הגמיש — נחסיר אותה כדי לא לספור את הסל הגמיש פעמיים
@@ -660,6 +677,13 @@ function parseBudgetFile(buf, opts = {}) {
       // שורת "סה"כ הבלוק" (בדיוק 'סהכ', לא 'סהכ הוצאות לפעילות' ולא 'סהכ נטו')
       const isTotal = labels.some((x) => x === norm('סה"כ'));
       const isSubtotal = labels.some((x) => x.startsWith('סהכ') && x !== norm('סה"כ')); // 'סהכ הוצאות'/'סהכ נטו'/'סהכ סל גמיש'
+      // "סה"כ נטו" (אחרי השתתפות הורים) — זה התקציב והניצול שמוצגים במסך
+      // הדוח (כלל רעות 16.9): התצוגה זהה לשורה התחתונה של קובץ המשרד
+      const isNetRow = labels.some((x) => x === norm('סה"כ נטו'));
+      if (isNetRow && cur.totalNet == null) {
+        cur.totalNet = num(row[cols.normative]);
+        cur.netActual = cols.actual >= 0 ? num(row[cols.actual]) : null;
+      }
       if (isTotal && cur.total === 0) {
         const tn = num(row[cols.normative]);
         if (tn != null) {
