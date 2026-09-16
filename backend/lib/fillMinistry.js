@@ -107,7 +107,11 @@ function extractWorkerAssignments(bufOrWb) {
     if (!id) continue;
     const symbol = get(0).replace(/\D/g, '');
     if (!symbol || out[id]) continue; // השורה הראשונה של העובד קובעת
-    out[id] = { symbol, staffType: get(6) || null, role: get(7) || null };
+    const a = { symbol, staffType: get(6) || null, role: get(7) || null };
+    out[id] = a;
+    // קבצי שכר מסוימים (עיריית יבנה) נותנים ת"ז בלי ספרת ביקורת — מפתח
+    // נוסף ללא הספרה האחרונה כדי שההצלבה מול דוח העלות תתפוס
+    if (id.length === 9 && !out[id.slice(0, 8)]) out[id.slice(0, 8)] = a;
   }
   return out;
 }
