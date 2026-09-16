@@ -3,8 +3,9 @@
    ב. ניצול מול תקציב בכל סל — בגנים במרוכז, בבתי ספר פר מוסד
    ג. התשלום הצפוי מהמשרד — פר מוסד, מרוכז לפרויקט, ובסיכום הלקוח מרוכז לכל
       הפרויקטים. ההכרה משחזרת את כללי דוח הביצוע: שכר מוכר עד התקציב +
-      הסל הגמיש (חריגה מעבר לגמיש אינה מוכרת), העשרה/ארוחות בוקר/ניהול
-      מוכרים לפי הכרטסות עד תקרת הסל, בניכוי השתתפות ההורים. */
+      הסל הגמיש (חריגה מעבר לגמיש אינה מוכרת), העשרה/ארוחות בוקר מוכרים
+      לפי הכרטסות עד תקרת הסל, תקורת הניהול מוכרת ב-100% מהתקציב (כלל
+      רעות 16.9.2026), בניכוי השתתפות ההורים. */
 
 const { stage1Data } = require('./stage1');
 const { ledgerReconcile } = require('./reconcile');
@@ -32,11 +33,10 @@ async function stage2Data(db, report, client, authority) {
     }
   }
 
-  // כרטסות סלים נוספים (ארוחות בוקר/מלגות/ניהול) — ברמת הפרויקט
+  // כרטסות סלים נוספים (ארוחות בוקר/מלגות) — ברמת הפרויקט
   const cards = await db.prepare("SELECT basket_type, COALESCE(SUM(net),0) s FROM ledger_cards WHERE report_id = ? AND net > 0 GROUP BY basket_type").all(report.id);
   const cardSum = Object.fromEntries(cards.map((c) => [c.basket_type, Number(c.s) * vat]));
   const breakfastScholarLedger = (cardSum.breakfast || 0) + (cardSum.scholarships || 0);
-  const mgmtLedger = cardSum.management || 0;
 
   const units = d.units.map((u) => {
     // שכר מוכר: הביצוע עד התקציב (אחרי הניודים הפנימיים) + כיסוי הגמיש;
@@ -50,8 +50,9 @@ async function stage2Data(db, report, client, authority) {
     // ארוחות בוקר/מלגות (גנים, במרוכז): עד יתרת הסל הגמיש
     const bfsAllocated = u.symbol == null ? breakfastScholarLedger : 0;
     const bfsRecognized = r2(Math.min(bfsAllocated, u.flexAvailable));
-    // ניהול ותפעול: כרטסות ניהול עד תקרת הסל (ברמת הפרויקט — במרוכז בלבד)
-    const mgmtRecognized = u.symbol == null ? r2(Math.min(mgmtLedger, u.management || Infinity)) : 0;
+    // ניהול ותפעול (תקורת ה-7%): מוכרת במלואה — 100% מתקציב הסל (כלל רעות
+    // 16.9.2026, "ברוב המקרים") — ללא תלות בכרטסות; פר מוסד בבתי"ס, במרוכז בגנים
+    const mgmtRecognized = r2(u.management || 0);
     const income = (u.children && d.tariff) ? r2(u.children * d.tariff) : 0;
     const expected = r2(salaryRecognized + enrichRecognized + bfsRecognized + mgmtRecognized - income);
     return {
@@ -215,7 +216,7 @@ ${checksHtml}
   <tbody>${payRows}${payTotals}</tbody>
 </table>
 <div class="expected">💰 <b>סה"כ צפוי להתקבל מהמשרד בפרויקט זה: ₪${fmt(t.expected)}</b>
-  <span class="soft">— שכר מוכר ₪${fmt(t.salaryRecognized)} + העשרה ₪${fmt(t.enrichRecognized)}${t.bfsRecognized > 0 ? ` + ארוחות בוקר/מלגות ₪${fmt(t.bfsRecognized)}` : ''}${t.mgmtRecognized > 0 ? ` + ניהול ₪${fmt(t.mgmtRecognized)}` : ''} − השתתפות הורים ₪${fmt(t.income)}. לא כולל תקורת ניהול המחושבת בקובץ המשרד.</span>
+  <span class="soft">— שכר מוכר ₪${fmt(t.salaryRecognized)} + העשרה ₪${fmt(t.enrichRecognized)}${t.bfsRecognized > 0 ? ` + ארוחות בוקר/מלגות ₪${fmt(t.bfsRecognized)}` : ''}${t.mgmtRecognized > 0 ? ` + ניהול ₪${fmt(t.mgmtRecognized)}` : ''} − השתתפות הורים ₪${fmt(t.income)}. תקורת הניהול הוכרה במלואה — 100% מתקציב הסל (ברירת המחדל; במקרים חריגים יש לעדכן ידנית).</span>
 </div>
 </body></html>`;
 }
