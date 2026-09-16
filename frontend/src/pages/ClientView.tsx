@@ -24,8 +24,9 @@ function AddReport({ clientId, authorityId, onDone }: { clientId: number; author
   const [open, setOpen] = useState(false);
   const [framework, setFramework] = useState('gardens');
   const [program, setProgram] = useState('base15');
-  const [extDays, setExtDays] = useState(6);
+  const [days, setDays] = useState(15);
   const isPrep = framework === 'prep';
+  const pickProgram = (p: string) => { setProgram(p); setDays(p === 'extension' ? 6 : 15); };
 
   const add = async () => {
     await createReport({
@@ -33,7 +34,7 @@ function AddReport({ clientId, authorityId, onDone }: { clientId: number; author
       authority_id: authorityId,
       framework,
       program: isPrep ? 'base' : program,
-      extension_days: !isPrep && program === 'extension' ? extDays : 0,
+      extension_days: days,
     });
     setOpen(false);
     onDone();
@@ -46,17 +47,15 @@ function AddReport({ clientId, authorityId, onDone }: { clientId: number; author
         {FRAMEWORKS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
       </select>
       {!isPrep && (
-        <select value={program} onChange={(e) => setProgram(e.target.value)} style={{ ...input, padding: '6px 8px', fontSize: 12.5 }}>
+        <select value={program} onChange={(e) => pickProgram(e.target.value)} style={{ ...input, padding: '6px 8px', fontSize: 12.5 }}>
           {PROGRAMS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
         </select>
       )}
-      {!isPrep && program === 'extension' && (
-        <label style={{ fontSize: 12, color: T.inkSoft, display: 'flex', alignItems: 'center', gap: 4 }}>
-          ימי הרחבה:
-          <input type="number" min={0} max={60} value={extDays} onChange={(e) => setExtDays(parseInt(e.target.value) || 0)}
-            style={{ ...input, padding: '6px 8px', width: 64, fontSize: 12.5 }} />
-        </label>
-      )}
+      <label style={{ fontSize: 12, color: T.inkSoft, display: 'flex', alignItems: 'center', gap: 4 }}>
+        ימי הפעלה:
+        <input type="number" min={0} max={60} value={days} onChange={(e) => setDays(parseInt(e.target.value) || 0)}
+          style={{ ...input, padding: '6px 8px', width: 64, fontSize: 12.5 }} />
+      </label>
       <button onClick={add} style={btn('dark')}>הוספה</button>
       <button onClick={() => setOpen(false)} style={btn('ghost')}>ביטול</button>
     </div>
@@ -74,7 +73,7 @@ function ReportRow({ r, onOpen, onDelete }: { r: Report; onOpen: () => void; onD
       </button>
       <span style={{ fontSize: 11, color: T.inkSoft }}>
         {h ? `${h.bucketLabel} · ${h.completion}%` : (STATUS_HE[r.status] || r.status)}
-        {r.program === 'extension' ? ` · ${r.extension_days} ימי הרחבה` : ''}
+        {` · ${r.extension_days || (r.program === 'extension' ? 6 : 15)} ימי הפעלה`}
       </span>
       {h && h.exceptions.errors > 0 && <span style={{ fontSize: 10.5, color: T.red, fontWeight: 700 }}>⚠ {h.exceptions.errors} חריגות</span>}
       <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>

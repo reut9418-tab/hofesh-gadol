@@ -230,7 +230,17 @@ export default function ReportView({ reportId, clientId, go }: { reportId: numbe
           <span>סוג תוכנית: {rep.program_type === 'summer_prep' ? 'מכינות קיץ' : 'בתי ספר וגנים'}</span>
           <span>תקרת ברוטו שעתי: {rep.program_type === 'summer_prep' ? '150' : '120'} ₪</span>
           {rep.client?.has_vat && <span style={{ color: T.amber }}>לקוח חייב במע"מ (18%)</span>}
-          {rep.program === 'extension' && <span>ימי הרחבה: {rep.extension_days}</span>}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            ימי הפעלה:
+            <input type="number" min={0} max={60} key={rep.extension_days}
+              defaultValue={rep.extension_days || (rep.program === 'extension' ? 6 : 15)}
+              title="כמות ימי ההפעלה של הפרויקט — ניתן לעריכה"
+              onBlur={async (e) => {
+                const v = parseInt(e.target.value) || 0;
+                if (v !== rep.extension_days) { await updateReport(reportId, { extension_days: v }); load(); }
+              }}
+              style={{ width: 52, padding: '2px 6px', fontSize: 12, borderRadius: 5, fontFamily: 'inherit', border: `1px solid ${T.line}`, textAlign: 'center' }} />
+          </span>
         </div>
         {health && (
           <div style={{ marginTop: 12 }}>

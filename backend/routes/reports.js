@@ -143,9 +143,11 @@ router.post('/', ah(async (req, res) => {
   if (!(await db.prepare('SELECT id FROM clients WHERE id = ?').get(d.client_id))) return res.status(404).json({ error: 'לקוח לא נמצא' });
   // מכינות = תוכנית base; אחרת ברירת מחדל base15
   const program = d.framework === 'prep' ? 'base' : (d.program || 'base15');
+  // ימי הפעלה נתונים לעריכה בכל תוכנית (רעות 16.9); ברירות מחדל: 15 יום / 6 להרחבה
+  const days = d.extension_days ?? (program === 'extension' ? 6 : 15);
   const r = await db.prepare(
     'INSERT INTO reports (client_id, authority_id, framework, program, extension_days) VALUES (?, ?, ?, ?, ?)'
-  ).run(d.client_id, d.authority_id ?? null, d.framework, program, program === 'extension' ? (d.extension_days || 0) : 0);
+  ).run(d.client_id, d.authority_id ?? null, d.framework, program, days);
   res.status(201).json(shapeReport(await db.prepare('SELECT * FROM reports WHERE id = ?').get(r.lastInsertRowid)));
 }));
 
