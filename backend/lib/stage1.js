@@ -260,42 +260,10 @@ async function stage1Data(db, report, client, authority) {
       const b = await basketsOf(i.id);
       Object.entries(b).forEach(([k, v]) => { baskets[k] = (baskets[k] || 0) + v; });
     }
-    // הרחבה: "סה"כ תלמידים לתקצוב לאחר בקרת איוש משרות" הסופי = רק גנים
-    // שאוישו בפועל (יש להם שורות שכר אצלנו) — סכום "מס ילדים לחישוב
-    // התקציב" של הגנים המאוישים; הסלים לתלמיד נגזרים מהכמות הזו
-    if (report.program === 'extension' && meta.gardensExec && meta.gardensExec.kidsBySymbol && kids > 0) {
-      // בקרת האיוש של הקובץ פר גן: חייבת שורת שכר של גננת/רכזת גן; בגן
-      // עם יותר מ-30 ילדים — גם שורת סייעת (נוסחאות בדיקת האיוש בלשונית 8)
-      const roleBySym = new Map(); // symbol -> { gannet, sayaat }
-      for (const r of rows) {
-        const sym = rowSymbol(r);
-        if (!sym) continue;
-        const st = String(r.staff_type || suggestRole(r.dept).staffType || '');
-        const e = roleBySym.get(String(sym)) || { gannet: false, sayaat: false };
-        if (/גננת|מוביל|רכזת גן/.test(st)) e.gannet = true;
-        if (/סייע/.test(st)) e.sayaat = true;
-        roleBySym.set(String(sym), e);
-      }
-      let acKids = 0, anyMatch = false;
-      for (const [sym, k13] of Object.entries(meta.gardensExec.kidsBySymbol)) {
-        const e = roleBySym.get(String(sym));
-        if (!e) continue;
-        anyMatch = true;
-        const valid = e.gannet && (k13 <= 30 || e.sayaat);
-        if (valid) acKids += k13;
-      }
-      acKids = Math.round(acKids * 100) / 100;
-      // בלי חפיפה בין סמלי הגנים לשורות השכר — אין שער איוש להפעיל.
-      // הערך יכול גם לעלות: התא בקובץ המקורי משקף חישוב ישן של הרשות,
-      // ואילו אחרי מילוי השכר שלנו גנים נוספים נהיים מאוישים-תקינים
-      if (anyMatch && acKids > 0 && Math.abs(acKids - kids) > 1) {
-        const factor = acKids / kids;
-        for (const key of ['instruction', 'enrichment', 'management', 'flexible', 'breakfast']) {
-          if (baskets[key] > 0) baskets[key] = Math.round(baskets[key] * factor * 100) / 100;
-        }
-        kids = Math.round(acKids);
-      }
-    }
+    // כמות הילדים לתקצוב = "מס ילדים לחישוב התקציב" מקובץ דוח הביצוע כפי
+    // שהוא (כלל רעות 17.9) — בלי שער איוש משלנו על בסיס שורות השכר; הכמות
+    // בקובץ כבר מגלמת את ימי ההפעלה בפועל (ימים/7 פר גן), ולכן גם שינוי
+    // ימי ההרחבה מטופל דרך הקובץ ולא דרך שדה הימים של הדוח
     units = [mkUnit('כל הגנים (במרוכז)', null, baskets, cost.summary.totalCost, splitRecognized(rows), kids, payerSplit(rows))];
   } else {
     for (const i of insts) {
