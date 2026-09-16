@@ -54,10 +54,14 @@ function demoteExtraSchoolRoles(schoolRows) {
 function staffFromRoleText(text) {
   const t = String(text || '');
   if (!t) return null;
-  if (/סייע/.test(t)) return { staffType: 'סייעת ממשיכה', role: 'סייעת' };
+  // סיעת = שגיאת כתיב נפוצה של סייעת (אור עקיבא)
+  if (/סייע|סיעת/.test(t)) return { staffType: 'סייעת ממשיכה', role: 'סייעת' };
   if (/מוביל|גננת/.test(t)) return { staffType: 'גננת', role: 'גננת של הגן' };
-  if (/סגן/.test(t)) return { staffType: 'סגנית רכזת מעל 150', role: 'סגנ/ית רכז/ת>150' };
-  if (/רכזת גן/.test(t)) return { staffType: 'רכזת גן', role: 'רכז/ת גן' };
+  // סג[נן] — נו"ן רגילה וסופית: "סגן" וגם "סגנית"
+  if (/סג[נן]/.test(t)) return { staffType: 'סגנית רכזת מעל 150', role: 'סגנ/ית רכז/ת>150' };
+  if (/רכזת גן|רכז גן/.test(t)) return { staffType: 'רכזת גן', role: 'רכז/ת גן' };
+  // "רכזת"/"רכז" סתמי — רכז/ת התכנית (בגנים הסל זהה: רכז ⇒ סל ריכוז)
+  if (/רכז/.test(t)) return { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' };
   if (/מורה/.test(t)) return { staffType: 'מורה', role: 'מורה' };
   if (/מדצ|מד"צ/.test(t)) return { staffType: 'מדצ', role: 'מדצ/ית' };
   return null;
