@@ -200,7 +200,7 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'לא צורף קובץ' });
 
   let parsed;
-  try { parsed = parseBudgetFile(req.file.buffer, { program: report.program }); }
+  try { parsed = parseBudgetFile(req.file.buffer, { program: report.program, extensionDays: report.extension_days }); }
   catch { return res.status(422).json({ error: 'לא הצלחתי לקרוא את קובץ דוח הביצוע.' }); }
   if (parsed.error) return res.status(422).json({ error: parsed.error });
   if (!parsed.institutions.length) {

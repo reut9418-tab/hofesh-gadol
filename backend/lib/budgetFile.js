@@ -391,6 +391,31 @@ function parseStaffing(wb) {
   return out;
 }
 
+/* ימי הפעילות בפועל פר בי"ס — עמודת "מספר ימי פעילות בפועל" בלשונית
+   "דוח ביצוע (3)". בהרחבה זהו המקור ליחס הימים (התא בבלוק מאופס כשבקרת
+   האיוש "לא תקין"); הערכים גולמיים וזמינים גם בקובץ קפוא */
+function parseSchoolDays(wb) {
+  const sn = wb.SheetNames.find((n) => norm(n).includes('דוח ביצוע'));
+  if (!sn) return {};
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  let cols = null;
+  const out = {};
+  for (const row of rows) {
+    const labels = (row || []).map(norm);
+    if (!cols) {
+      const sym = labels.findIndex((x) => x.includes('סמל בית ספר'));
+      const days = labels.findIndex((x) => x.includes('ימי פעילות בפועל'));
+      if (sym >= 0 && days >= 0) cols = { sym, days };
+      continue;
+    }
+    const s = norm(row[cols.sym]);
+    if (!/^\d{4,7}$/.test(s)) continue;
+    const v = num(row[cols.days]);
+    if (v > 0) out[s] = v;
+  }
+  return out;
+}
+
 /* תוספת תקצוב רכז ד-ו פר בי"ס — עמודת "תוספת תקצוב רכז בית ספר ד-ו"
    בלשונית "דוח ביצוע (3)"; ערכיה סטטיים וזמינים גם בקובץ קפוא */
 function parseCoordSupplements(wb) {
@@ -732,8 +757,16 @@ function parseBudgetFile(buf, opts = {}) {
       if (helper.perChildSpecial && helper.perChildSpecial.instruction > 0) rates.perChildSpecial = helper.perChildSpecial;
     }
     if (rates) {
+      // הרחבה: נוסחאות הבלוק בקובץ (פוענחו מאור עקיבא, 17.9) מכפילות פעמיים
+      // ביחס הימים: (א) תקרת הבקרה = ממוצע בקרה × ימים/7 × 1.25 (הדיווח בבלוק
+      // כבר יחסי-ימים); (ב) כל סל-לתלמיד מוכפל שוב ב-ימים/7; (ג) הקבוע למוסד
+      // (ריכוז/ניהול) הוא תעריף-ליום × ימים (ערכי המבנה הם ל-7 ימים).
+      const isExt = opts.program === 'extension';
+      const daysBySym = isExt ? parseSchoolDays(wb) : {};
       for (const inst of institutions) {
         const regInfo = regCounts[String(inst.symbol)] || null;
+        const days = isExt ? (daysBySym[String(inst.symbol)] || inst.days || opts.extensionDays || 7) : 7;
+        const df = isExt ? Math.min(days, 7) / 7 : 1;
         // עדיפויות לכמות הילדים: זכאים לאחר בקרה (מגלם הפחתת ימים בהרחבה!)
         // ← דיווח הרשות בבלוק ← נרשמים מלשונית ההרשמה
         let kids = inst.eligibleReg > 0 ? inst.eligibleReg
@@ -741,26 +774,27 @@ function parseBudgetFile(buf, opts = {}) {
           : regInfo ? regInfo.reg : 0;
         if (!(kids > 0)) continue;
         // המשרד מתקצב את הנמוך מבין הדיווח לבין ממוצע הבקרה בתוספת 25%
-        if (inst.controlReg > 0) kids = Math.min(kids, inst.controlReg * 1.25);
+        // (בהרחבה תקרת הבקרה מוכפלת גם היא ביחס הימים — נוסחת N18 בבלוק)
+        if (inst.controlReg > 0) kids = Math.min(kids, inst.controlReg * df * 1.25);
         // תלמידי חינוך מיוחד — מתוקצבים בנפרד בתעריף הגבוה של חנ"מ.
         // "דיווח הרשות" מפורש של 0 נשאר 0 — המשרד מזכה רק את מה שדווח,
         // גם אם בלשונית ההרשמה רשומים תלמידי חנ"מ (מזכרת בתיה)
         let kidsSpec = inst.eligibleSpec > 0 ? inst.eligibleSpec
           : inst.reportedSpec != null ? inst.reportedSpec
           : regInfo ? regInfo.spec : 0;
-        if (kidsSpec > 0 && inst.controlSpec > 0) kidsSpec = Math.min(kidsSpec, inst.controlSpec * 1.25);
+        if (kidsSpec > 0 && inst.controlSpec > 0) kidsSpec = Math.min(kidsSpec, inst.controlSpec * df * 1.25);
         if (regInfo && regInfo.large) inst.size = 'large';
         inst.eligibleSpec = kidsSpec;
         const fx = rates.fixed[inst.size === 'large' ? 'large' : 'small'] || rates.fixed.small || { coordinator: 0, deputy: 0, management: 0 };
         const spec = rates.perChildSpecial;
-        const per = (key) => rates.perChild[key] * kids + (kidsSpec > 0 && spec ? spec[key] * kidsSpec : 0);
+        const per = (key) => (rates.perChild[key] * kids + (kidsSpec > 0 && spec ? spec[key] * kidsSpec : 0)) * df;
         const b = inst.baskets;
         b.instruction = Math.round(per('instruction') * 100) / 100;
         b.enrichment = Math.round(per('enrichment') * 100) / 100;
         b.flexible = Math.round(per('flexible') * 100) / 100;
-        b.management = Math.round((per('management') + fx.management) * 100) / 100;
-        if (fx.coordinator > 0) b.coordinator = fx.coordinator;
-        if (fx.deputy > 0) b.deputy = fx.deputy;
+        b.management = Math.round((per('management') + fx.management * df) * 100) / 100;
+        if (fx.coordinator > 0) b.coordinator = Math.round(fx.coordinator * df * 100) / 100;
+        if (fx.deputy > 0) b.deputy = Math.round(fx.deputy * df * 100) / 100;
         // תוספת תקצוב רכז ד-ו (קיץ פלוס) — ערך פר בי"ס מלשונית "דוח ביצוע (3)"
         const sup = coordSup[String(inst.symbol)];
         if (sup > 0) b.coordinator = Math.round(((b.coordinator || 0) + sup) * 100) / 100;
