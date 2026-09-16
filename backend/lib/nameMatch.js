@@ -26,19 +26,25 @@ function institutionTokens(institutions) {
   return perInst.map(({ inst, toks }) => ({ inst, toks: toks.filter((t) => (freq.get(t) || 0) < cutoff) }));
 }
 
-/* dept → symbol (או null אם אין התאמה חד-משמעית) */
+/* dept → symbol (או null אם אין התאמה חד-משמעית).
+   דירוג: המילה המשותפת הארוכה ביותר (כמו תמיד), ובתיקו — מספר המילים
+   התואמות, ואז כיסוי מלא של שם המוסד (רק מלא — כיסוי חלקי גבוה יותר
+   אינו ראיה: "פרי תואר בנות" מול שני מוסדות "פרי תואר"). מכריע זוגות
+   "איילים בנות"/"איילים בנים" ו"בית מרגלית" מול "בית מרגלית החדש" —
+   אלעד 16.9. תיקו מלא (מוסדות כפולים) נשאר דו-משמעי → ידני. */
 function matchDeptsToInstitutions(institutions, depts) {
   const indexed = institutionTokens(institutions);
   const out = {};
   for (const dept of depts) {
     const deptToks = new Set(tokenize(dept));
-    let best = null, bestLen = 0, ambiguous = false;
+    let best = null, bestKey = null, ambiguous = false;
     for (const { inst, toks } of indexed) {
       const hit = toks.filter((t) => deptToks.has(t));
       if (!hit.length) continue;
-      const len = Math.max(...hit.map((t) => t.length));
-      if (len > bestLen) { best = inst; bestLen = len; ambiguous = false; }
-      else if (len === bestLen && best && inst.symbol !== best.symbol) ambiguous = true;
+      const key = [Math.max(...hit.map((t) => t.length)), hit.length, hit.length === toks.length ? 1 : 0];
+      const c = bestKey ? (key[0] - bestKey[0] || key[1] - bestKey[1] || key[2] - bestKey[2]) : 1;
+      if (c > 0) { best = inst; bestKey = key; ambiguous = false; }
+      else if (c === 0 && best && inst.symbol !== best.symbol) ambiguous = true;
     }
     out[dept] = best && !ambiguous ? best.symbol : null;
   }

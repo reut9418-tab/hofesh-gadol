@@ -36,7 +36,7 @@ function mapSchoolsStaff(staffType, role, schoolTypes) {
   }
   return { staffType: st, role: rl };
 }
-const { salaryCheck, suggestRole, schoolsRoleByHours } = require('../lib/salaryCheck');
+const { salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles } = require('../lib/salaryCheck');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
 const { recommendations } = require('../lib/recommend');
@@ -388,22 +388,45 @@ router.get('/:id/prep', ah(async (req, res) => {
 
   const isSchools = report.framework !== 'gardens';
   const schoolTypes = isSchools ? md.schoolTypes : null;
+  // הסמל הפעיל של שורה — משמש גם לתצוגה וגם לקיבוץ פר בי"ס
+  const prepSymOf = (r) => {
+    const wsA = md.workerSyms && md.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
+    const fileSymbol = r.inst_symbol && validSymbols.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null;
+    const uploadedSymbol = wsA && validSymbols.has(wsA.symbol) ? wsA.symbol : null;
+    return toActivity(r.symbol_override || fileSymbol || uploadedSymbol || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null);
+  };
+  // כלל רעות 16.9 (בתי"ס): רכז אחד לכל היותר בבי"ס, סגן 0 או 1 —
+  // מסווגי-שעות עודפים יורדים למורה
+  const demotedPrep = new Set();
+  if (isSchools) {
+    const bySchool = new Map();
+    for (const r of rawRows) {
+      const s = String(prepSymOf(r) || '');
+      if (!bySchool.has(s)) bySchool.set(s, []);
+      bySchool.get(s).push(r);
+    }
+    for (const g of bySchool.values()) for (const id of demoteExtraSchoolRoles(g)) demotedPrep.add(id);
+  }
   const rows = rawRows.map((r) => {
     const sug = suggestRole(r.dept);
     // בתי ספר: רכז/סגן מזוהים לפי שעות (מעל 93 = רכז, 90-93 = סגן) —
     // המשרד מציג את תקציב בית הספר רק כשמוגדר רכז בכל סמל
-    const byHours = isSchools ? schoolsRoleByHours(r.hours) : null;
-    // שיוך שמולא בלשונית כח האדם של הקובץ שהועלה (ת"ז→סמל/תפקיד) — קודם לכל ניחוש
+    const byHours = isSchools && !demotedPrep.has(r.id) ? schoolsRoleByHours(r.hours) : null;
+    // שיוך שמולא בקובץ שהועלה (ת"ז): בגנים קודם לניחוש; בבתי"ס כלל השעות גובר
     const wsA = md.workerSyms && md.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
-    let stVal = r.staff_type || (wsA && wsA.staffType) || (byHours && byHours.staffType) || sug.staffType;
-    let roleVal = r.role || (wsA && wsA.role) || (byHours && byHours.role) || sug.role;
+    let stVal = demotedPrep.has(r.id) ? 'מורה'
+      : isSchools
+        ? (r.staff_type || (byHours && byHours.staffType) || (wsA && wsA.staffType) || sug.staffType)
+        : (r.staff_type || (wsA && wsA.staffType) || sug.staffType);
+    let roleVal = demotedPrep.has(r.id) ? 'מורה'
+      : isSchools
+        ? (r.role || (byHours && byHours.role) || (wsA && wsA.role) || sug.role)
+        : (r.role || (wsA && wsA.role) || sug.role);
     if (isSchools) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, schoolTypes));
-    const fileSymbol = r.inst_symbol && validSymbols.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null;
-    const uploadedSymbol = wsA && validSymbols.has(wsA.symbol) ? wsA.symbol : null;
     return {
       rowId: r.id, empId: r.emp_id, name: r.emp_name,
       firstName: r.first_name, lastName: r.last_name, dept: r.dept, instName: r.inst_name,
-      symbol: toActivity(r.symbol_override || fileSymbol || uploadedSymbol || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null),
+      symbol: prepSymOf(r),
       staffType: stVal,
       role: roleVal,
       saved: !!(r.symbol_override || r.staff_type || r.role),
@@ -968,6 +991,17 @@ router.get('/:id/export', ah(async (req, res) => {
   const round2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
   // רשימות איש-צוות/תפקיד של תבנית בתי הספר — מהקובץ עצמו (מחרוזות מדויקות)
   const exSchoolTypes = report.framework !== 'gardens' ? exMd.schoolTypes : null;
+  // כלל רעות 16.9 (בתי"ס): רכז אחד לכל היותר בבי"ס, סגן 0 או 1
+  const demotedEx = new Set();
+  if (report.framework !== 'gardens') {
+    const bySchool = new Map();
+    for (const r of rows) {
+      const s = String(resolveSymbol(r) || '');
+      if (!bySchool.has(s)) bySchool.set(s, []);
+      bySchool.get(s).push(r);
+    }
+    for (const g of bySchool.values()) for (const rid of demoteExtraSchoolRoles(g)) demotedEx.add(rid);
+  }
   // ללקוח חייב מע"מ — העלות השעתית המדווחת למשרד כוללת מע"מ (הברוטו נשאר כפי שהוא).
   // העלות המדווחת מוגבלת לנמוך מבין עלות×מע"מ לבין ברוטו שעתי×140% (תקרת המשרד);
   // ההפרש מול דוח העלות מוסבר ב"דוח ההתאמה לדוח עלות".
@@ -979,12 +1013,19 @@ router.get('/:id/export', ah(async (req, res) => {
     const cap140 = hourlyGross != null && hourlyGross > 0 ? hourlyGross * COST_MARKUP_LIMIT : null;
     const hourlyCost = rawHourlyCost != null && cap140 != null ? Math.min(rawHourlyCost, cap140) : rawHourlyCost;
     const sug = suggestRole(r.dept);
-    const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
-    // תפקיד שמולא בקובץ שהועלה (ת"ז) — קודם לניחוש לפי שעות/מחלקה
+    const isSch = report.framework !== 'gardens';
+    const byHours = isSch && !demotedEx.has(r.id) ? schoolsRoleByHours(r.hours) : null;
+    // תפקיד שמולא בקובץ שהועלה (ת"ז): בגנים קודם לניחוש; בבתי"ס כלל השעות גובר
     const exWs = exMd.workerSyms && exMd.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
-    let stVal = r.staff_type || (exWs && exWs.staffType) || (byHours && byHours.staffType) || sug.staffType || '';
-    let roleVal = r.role || (exWs && exWs.role) || (byHours && byHours.role) || sug.role || '';
-    if (report.framework !== 'gardens') ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, exSchoolTypes));
+    let stVal = demotedEx.has(r.id) ? 'מורה'
+      : isSch
+        ? (r.staff_type || (byHours && byHours.staffType) || (exWs && exWs.staffType) || sug.staffType || '')
+        : (r.staff_type || (exWs && exWs.staffType) || sug.staffType || '');
+    let roleVal = demotedEx.has(r.id) ? 'מורה'
+      : isSch
+        ? (r.role || (byHours && byHours.role) || (exWs && exWs.role) || sug.role || '')
+        : (r.role || (exWs && exWs.role) || sug.role || '');
+    if (isSch) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, exSchoolTypes));
     return [
       resolveSymbol(r), null, r.emp_id,
       r.first_name || (r.emp_name || '').split(' ')[0] || '',

@@ -4,7 +4,7 @@
    בתי"ס פר סמל מוסד, גנים במרוכז. מוגש כדף HTML להדפסה/PDF. */
 
 const { costDataForReport } = require('./reportCosts');
-const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours } = require('./salaryCheck');
+const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles } = require('./salaryCheck');
 const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions } = require('./nameMatch');
 const { reportLabel } = require('./domain');
@@ -134,11 +134,19 @@ async function stage1Data(db, report, client, authority) {
       const na = String(a.emp_name || ''), nb = String(b.emp_name || '');
       return na < nb ? -1 : na > nb ? 1 : 0;
     });
+    // כלל רעות 16.9 (בתי"ס): רכז אחד לכל היותר בבי"ס, סגן 0 או 1 —
+    // מסווגי-שעות עודפים יורדים למורה
+    const demoted = report.framework !== 'gardens' ? demoteExtraSchoolRoles(ordered) : new Set();
     const staffOf = (r) => {
-      const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;
-      // תפקיד שמולא בקובץ שהועלה (ת"ז) — קודם לניחוש לפי שעות/מחלקה
+      const byHours = report.framework !== 'gardens' && !demoted.has(r.id) ? schoolsRoleByHours(r.hours) : null;
+      // תפקיד שמולא בקובץ שהועלה (ת"ז): בגנים קודם לניחוש (יבנה 16.9);
+      // בבתי"ס כלל השעות המאומת (90/93) גובר — הקובץ רק כשאין שעות מסווגות
+      // (עובד עם כמה שורות בקובץ נלכד לפי הראשונה — לא אמין כדריסה)
       const ws = meta.workerSyms && meta.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
-      return r.staff_type || (ws && ws.staffType) || (byHours && byHours.staffType) || suggestRole(r.dept).staffType;
+      if (demoted.has(r.id)) return 'מורה';
+      return report.framework === 'gardens'
+        ? (r.staff_type || (ws && ws.staffType) || suggestRole(r.dept).staffType)
+        : (r.staff_type || (byHours && byHours.staffType) || (ws && ws.staffType) || suggestRole(r.dept).staffType);
     };
     // דיווח הסגן מוכר רק כשמדווח גם רכז (תנאי הנוסחה בלשונית האיוש)
     const hasCoordRow = ordered.some((r) => basketForStaff(staffOf(r)) === 'coordinator');

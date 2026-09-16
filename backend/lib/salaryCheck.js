@@ -27,6 +27,29 @@ function schoolsRoleByHours(hours) {
   return null;
 }
 
+/* כלל רעות 16.9: בכל בי"ס לכל היותר רכז/ת אחד/ת, וסגן/ית — 0 או 1.
+   מקבל את שורות בית הספר; מסווגי-שעות עודפים (בלי תפקיד שמור) יורדים
+   למורה — נשאר בעל/ת השעות הגבוהות (ואז הברוטו הגבוה). שיוך שמור (ידני/
+   קובץ) אינו נדרס, אך תופס את המכסה. מחזיר Set של row.id שהורדו למורה. */
+function demoteExtraSchoolRoles(schoolRows) {
+  const demoted = new Set();
+  for (const kind of ['coord', 'dep']) {
+    // סג[נן] — נו"ן רגילה וסופית: "סגן" (סופית) וגם "סגנית" (רגילה)
+    const isKind = (st) => (kind === 'coord'
+      ? /רכז/.test(st) && !/סג[נן]/.test(st) && !/רכזת גן/.test(st)
+      : /סג[נן]/.test(st));
+    const explicit = schoolRows.filter((r) => r.staff_type && isKind(String(r.staff_type))).length;
+    const inferred = schoolRows.filter((r) => {
+      if (r.staff_type) return false;
+      const bh = schoolsRoleByHours(r.hours);
+      return bh && isKind(String(bh.staffType));
+    });
+    inferred.sort((a, b) => (b.hours || 0) - (a.hours || 0) || (b.gross || 0) - (a.gross || 0));
+    for (const r of inferred.slice(Math.max(0, 1 - explicit))) demoted.add(r.id);
+  }
+  return demoted;
+}
+
 /* תפקיד כפי שמופיע בדוח השכר עצמו (עמודת "תפקיד") → איש צוות + תפקיד לפי רשימות המשרד */
 function staffFromRoleText(text) {
   const t = String(text || '');
@@ -124,4 +147,4 @@ async function salaryCheck(db, report) {
   };
 }
 
-module.exports = { salaryCheck, suggestRole, basketForStaff, staffFromRoleText, schoolsRoleByHours };
+module.exports = { salaryCheck, suggestRole, basketForStaff, staffFromRoleText, schoolsRoleByHours, demoteExtraSchoolRoles };
