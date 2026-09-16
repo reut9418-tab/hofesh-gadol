@@ -223,6 +223,8 @@ router.delete('/cost-files/:fileId', ah(async (req, res) => {
   const fileId = parseInt(req.params.fileId);
   const affected = (await db.prepare('SELECT DISTINCT report_id FROM cost_rows WHERE cost_file_id = ? AND report_id IS NOT NULL').all(fileId)).map((r) => r.report_id);
   await db.prepare('DELETE FROM cost_rows WHERE cost_file_id = ?').run(fileId);
+  // גם עותק המקור נמחק — שלא תישאר שום התייחסות לקובץ שהוחלף
+  await db.prepare('DELETE FROM cost_file_blobs WHERE cost_file_id = ?').run(fileId);
   await db.prepare('DELETE FROM cost_files WHERE id = ?').run(fileId);
   for (const rid of affected) await refreshReportFlag(db, rid);
   res.json({ ok: true });

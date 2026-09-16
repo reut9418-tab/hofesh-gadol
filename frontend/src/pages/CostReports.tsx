@@ -209,9 +209,20 @@ export default function CostReportsPanel({ clientId, onRouted }: { clientId: num
     try {
       // מעלים קובץ-קובץ; מסך הניתוב נפתח על האחרון (השאר נשמרים וממתינים לניתוב)
       let last: RoutingResponse | null = null;
-      for (const f of Array.from(fileList)) last = await uploadCostFile(clientId, f);
+      for (const f of Array.from(fileList)) {
+        // קובץ בשם זהה = גרסה מעודכנת: הישן נמחק על כל שורותיו והכול מחושב מהחדש
+        const existing = files.find((x) => x.filename === f.name);
+        if (existing) {
+          if (!window.confirm(`קובץ בשם "${f.name}" כבר קיים במערכת (${existing.rowCount} שורות).\nלהחליף אותו בקובץ החדש? הקובץ הישן וכל שורותיו יימחקו, והדוחות יחושבו לפי הקובץ החדש בלבד.`)) continue;
+          await deleteCostFile(existing.id);
+        }
+        last = await uploadCostFile(clientId, f);
+        // המשלם שהוגדר לקובץ הישן עובר אוטומטית לגרסה החדשה
+        if (existing?.payer && last?.file?.id) await setCostFilePayer(last.file.id, existing.payer);
+      }
       await load();
       if (last) setRouting(last);
+      onRouted();
     } catch (e: any) {
       setErr(e?.response?.data?.error || 'העלאת הקובץ נכשלה.');
     } finally {
