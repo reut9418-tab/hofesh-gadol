@@ -54,7 +54,10 @@ router.post('/reports/:id/ledger-file', upload.single('file'), ah(async (req, re
   for (const c of parsed.cards) {
     // עדיפות: מיפוי נלמד (גם "לא רלוונטי") ← מילות מפתח משם הכרטסת
     const learned = aliases[aliasKey(report.framework, c.key)];
-    const basket = learned !== undefined ? (learned === 'none' ? null : learned) : basketForCardName(c.name);
+    let basket = learned !== undefined ? (learned === 'none' ? null : learned) : basketForCardName(c.name);
+    // סל שאינו ברשימת הפרויקט (למשל 'deputy' ממילת המפתח "סגן" במכינות) —
+    // נשאר לא-משויך במקום ערך שהמסך לא מציג
+    if (basket && !basketOptionsFor(report.framework).some((o) => o.value === basket)) basket = null;
     await db.prepare(
       'INSERT INTO ledger_cards (ledger_file_id, report_id, card_key, card_name, debit, credit, net, basket_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(fileId, id, c.key, c.name, c.debit, c.credit, c.net, basket);
