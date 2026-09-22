@@ -36,7 +36,7 @@ function mapSchoolsStaff(staffType, role, schoolTypes) {
   }
   return { staffType: st, role: rl };
 }
-const { salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles } = require('../lib/salaryCheck');
+const { salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff } = require('../lib/salaryCheck');
 const { applyFileAssignments } = require('../lib/applyAssignments');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
@@ -437,6 +437,9 @@ router.get('/:id/prep', ah(async (req, res) => {
       : isSchools
         ? (r.role || (byHours && byHours.role) || (wsA && wsA.role) || sug.role)
         : (r.role || (wsA && wsA.role) || sug.role);
+    // בתי"ס בלי שום סיווג (עמודת התפקיד בדוח העלות ריקה) — ברירת מחדל
+    // "מורה" עם תפקיד לפי מדרגת הברוטו השעתי (כלל רעות 22.9, גוש עציון)
+    if (isSchools && !stVal) ({ staffType: stVal, role: roleVal } = defaultSchoolsStaff(r.gross != null && r.hours ? r.gross / r.hours : 0));
     if (isSchools) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, schoolTypes));
     return {
       rowId: r.id, empId: r.emp_id, name: r.emp_name,
@@ -1169,6 +1172,8 @@ router.get('/:id/export', ah(async (req, res) => {
       : isSch
         ? (r.role || (byHours && byHours.role) || (exWs && exWs.role) || sug.role || '')
         : (r.role || (exWs && exWs.role) || sug.role || '');
+    // בתי"ס בלי שום סיווג — ברירת מחדל לפי מדרגת הברוטו השעתי (כלל 22.9)
+    if (isSch && !stVal) ({ staffType: stVal, role: roleVal } = defaultSchoolsStaff(hourlyGross || 0));
     if (isSch) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, exSchoolTypes));
     return [
       resolveSymbol(r), null, r.emp_id,

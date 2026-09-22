@@ -67,6 +67,16 @@ function staffFromRoleText(text) {
   return null;
 }
 
+/* בתי"ס: ברירת מחדל לעובד/ת בלי תפקיד בדוח העלות (ובלי סיווג שעות) —
+   איש צוות "מורה", והתפקיד לפי מדרגות התעריף המינימלי של תבנית המשרד:
+   ברוטו שעתי ≥75 = בעל/ת תעודת הוראה; ≥50 = עוזר/ת חינוך; מתחת =
+   סטודנט/ית — כך בקרת השכר-לתפקיד בקובץ עוברת (כלל רעות 22.9, גוש עציון) */
+function defaultSchoolsStaff(hourlyGross) {
+  const h = Number(hourlyGross) || 0;
+  const role = h >= 75 ? 'בעל/ת תעודת הוראה שסיימ/ה 80% מהתואר' : h >= 50 ? 'עוזר/ת חינוך' : 'סטודנט/ית';
+  return { staffType: 'מורה', role };
+}
+
 /* איש צוות → סל השכר שאליו העלות שלו נזקפת */
 function basketForStaff(staffType) {
   const st = String(staffType || '');
@@ -151,4 +161,4 @@ async function salaryCheck(db, report) {
   };
 }
 
-module.exports = { salaryCheck, suggestRole, basketForStaff, staffFromRoleText, schoolsRoleByHours, demoteExtraSchoolRoles };
+module.exports = { salaryCheck, suggestRole, basketForStaff, staffFromRoleText, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff };
