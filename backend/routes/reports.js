@@ -281,10 +281,14 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
     }
   }
 
-  // שומרים את קובץ המשרד בדיסק — ממלאים אותו בחזרה בייצוא (§9)
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-  const savedPath = path.join(UPLOADS_DIR, `report_${id}_budget.xlsx`);
-  fs.writeFileSync(savedPath, req.file.buffer);
+  // שומרים את קובץ המשרד בדיסק — ממלאים אותו בחזרה בייצוא (§9);
+  // ב-Cloudflare Workers אין דיסק — העותק במסד (report_files) הוא המקור
+  let savedPath = null;
+  try {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    savedPath = path.join(UPLOADS_DIR, `report_${id}_budget.xlsx`);
+    fs.writeFileSync(savedPath, req.file.buffer);
+  } catch { savedPath = null; }
   const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
 
   // דוח הביצוע מספק את כמות המשתתפים; התעריף לילד מחולץ ללשונית ההכנסות
@@ -400,7 +404,9 @@ router.get('/:id/prep', ah(async (req, res) => {
   // הסמל הפעיל של שורה — משמש גם לתצוגה וגם לקיבוץ פר בי"ס
   const prepSymOf = (r) => {
     const wsA = md.workerSyms && md.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
-    const fileSymbol = r.inst_symbol && validSymbols.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null;
+    // בלי קובץ משרד (validSymbols ריק) אין מול מה לאמת — מציגים את הסמל
+    // שנקלט מדוח העלות כמו שהוא במקום לספור את כולם כ"חסרים" (אלעד-מכינות)
+    const fileSymbol = r.inst_symbol && (validSymbols.size === 0 || validSymbols.has(String(r.inst_symbol))) ? String(r.inst_symbol) : null;
     const uploadedSymbol = wsA && validSymbols.has(wsA.symbol) ? wsA.symbol : null;
     return toActivity(r.symbol_override || fileSymbol || uploadedSymbol || (r.inst_name && nameSymbol[r.inst_name]) || deptSymbol[r.dept] || null);
   };

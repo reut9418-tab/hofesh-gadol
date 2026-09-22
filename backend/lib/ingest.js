@@ -16,7 +16,7 @@ const FIELD_DEFS = [
   { key: 'instSymbol', label: 'סמל מוסד (בדוח השכר)', syn: ['סמל מוסד', 'סמל מקום פעילות', 'סמל גן', 'סמל בית ספר', 'סמל מוסד לימוד', 'קוד מוסד', 'סמל'] },
   { key: 'component', label: 'שם רכיב שכר', syn: ['שם רכיב שכר', 'רכיב שכר', 'שם רכיב', 'תאור רכיב', 'תיאור רכיב', 'סוג רכיב', 'קוד רכיב', 'רכיב תשלום', 'רכיב'] },
   { key: 'roleText', label: 'תפקיד (בדוח השכר)', syn: ['תפקיד'] },
-  { key: 'instName', label: 'שם גן/מוסד (בדוח השכר)', syn: ['שם מוסד', 'שם הגן', 'שם גן', 'שם בית ספר', 'שם מקום פעילות'] },
+  { key: 'instName', label: 'שם גן/מוסד (בדוח השכר)', syn: ['שם מוסד', 'שם הגן', 'שם גן', 'שם בית ספר', 'שם בית הספר', 'שם ביס', 'שם מקום פעילות'] },
   { key: 'gross', label: 'סה"כ ברוטו', syn: ['סה"כ ברוטו', 'סהכ ברוטו', 'סה"כ סכום', 'סהכ סכום', 'ברוטו', 'שכר ברוטו', 'ריכוז תשלומים', 'ריכוז  תשלומים'] },
   { key: 'cost', label: 'עלות מעביד', syn: ['עלות עובד', 'עלות מעביד', 'סה"כ עלות', 'סהכ עלות', 'עלות שכר', 'עלות כוללת', 'עלות'] },
   { key: 'hours', label: 'שעות עבודה', syn: ['שעות עבודה', 'סך שעות', 'כמות שעות', 'שעות', 'סה"כ שעות', 'ש.עבודה'] },
@@ -84,6 +84,35 @@ function detectStructure(rows, learned = {}) {
       for (const f of FIELD_DEFS) {
         if (mapping[f.key] !== undefined) continue;
         if (f.syn.some((s) => cellN === norm(s) || cellN.includes(norm(s)))) { mapping[f.key] = c; score++; break; }
+      }
+    });
+    // מעבר 3 (כלל רעות 22.9): כותרת שהיא שם קנוני מדויק של שדה שנשאר ריק
+    // גוברת על היסטוריה שמפנה אותה לשדה אחר — מיפוי 'סמל מוסד'→מחלקה שנלמד
+    // בטעות בקובץ אחד לא ישאיר את סמל המוסד ריק בכל הקבצים הבאים (אלעד-
+    // מכינות). 'none' מפורש נשאר מכובד, והיסטוריה על שדות מכוסים לא נגרעת
+    // (ביתר: 'משפחה'→שם פרטי; מזכרת בתיה: 'שם מחלקה'→שם גן — נשארים).
+    row.forEach((cell, c) => {
+      const cellN = norm(cell);
+      if (!cellN) return;
+      const learnedKey = learned[cellN];
+      if (!learnedKey || learnedKey === 'none') return;
+      const canonical = FIELD_DEFS.find((f) => f.syn.some((s) => norm(s) === cellN));
+      if (!canonical || canonical.key === learnedKey) return;
+      if (mapping[canonical.key] !== undefined) return; // השדה הקנוני מכוסה — ההיסטוריה נשארת
+      if (mapping[learnedKey] === c) { delete mapping[learnedKey]; learnedFields.delete(learnedKey); }
+      mapping[canonical.key] = c;
+      score++;
+    });
+    // השלמה חוזרת לשדה שההיסטוריה פינתה (מחלקה וכד') — מהעמודות שנותרו
+    row.forEach((cell, c) => {
+      const cellN = norm(cell);
+      if (!cellN) return;
+      const lk = learned[cellN];
+      if (lk === 'none' || (lk && FIELD_DEFS.some((f) => f.key === lk))) return;
+      if (Object.values(mapping).includes(c)) return;
+      for (const f of FIELD_DEFS) {
+        if (mapping[f.key] !== undefined) continue;
+        if (f.syn.some((s) => cellN === norm(s) || cellN.includes(norm(s)))) { mapping[f.key] = c; break; }
       }
     });
     if (score > best.score) best = { rowIdx: r, mapping, score, learnedFields };
