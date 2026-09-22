@@ -37,7 +37,7 @@ function mapSchoolsStaff(staffType, role, schoolTypes) {
   return { staffType: st, role: rl };
 }
 const { salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff } = require('../lib/salaryCheck');
-const { applyFileAssignments } = require('../lib/applyAssignments');
+const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = require('../lib/applyAssignments');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
 const { recommendations } = require('../lib/recommend');
@@ -721,6 +721,22 @@ router.put('/:id/prep', ah(async (req, res) => {
     ));
     updated += results.reduce((s, r) => s + (r.changes || 0), 0);
   }
+  // זיכרון השיוך הידני פר-עובד/ת (כלל 22.9): נשמר ללקוח ושורד החלפת דוח עלות
+  try {
+    const ids = entries.map(([rowId]) => parseInt(rowId)).filter(Number.isFinite);
+    const empRows = [];
+    for (let i = 0; i < ids.length; i += 50) {
+      const chunk = ids.slice(i, i + 50);
+      empRows.push(...await db.prepare(`SELECT id, emp_id, dept FROM cost_rows WHERE report_id = ? AND id IN (${chunk.map(() => '?').join(',')})`).all(id, ...chunk));
+    }
+    const rowOf = new Map(empRows.map((r) => [String(r.id), r]));
+    await saveManualAssignments(db, id, entries
+      .filter(([rowId]) => rowOf.has(String(parseInt(rowId))))
+      .map(([rowId, a]) => {
+        const r = rowOf.get(String(parseInt(rowId)));
+        return { empId: r.emp_id, dept: r.dept, symbol: a.symbol, staffType: a.staffType, role: a.role };
+      }));
+  } catch (e) { console.error('שמירת זיכרון שיוכים נכשלה:', e.message); }
   res.json({ ok: true, updated });
 }));
 
