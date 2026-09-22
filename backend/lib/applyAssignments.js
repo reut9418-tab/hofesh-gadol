@@ -21,8 +21,10 @@ async function applyFileAssignments(db, reportId, buf) {
     const id = String(r.emp_id || '').replace(/\D/g, '');
     const a = ws[id] || (id.length === 9 ? ws[id.slice(0, 8)] : null) || ws['0' + id];
     if (!a) continue;
-    // דוח העלות האחרון גובר: סמל מפורש בשורה לא נדרס ע"י קובץ ביצוע ישן
-    const sym = (!r.inst_symbol ? a.symbol : null) || r.symbol_override || null;
+    // ההיררכיה (כלל 22.9): ידני (override קיים) גובר על הכול — קובץ הביצוע
+    // לא דורס אותו (באג ביתר: קליטת קובץ קרסה פיצול רכזים לסמל יחיד);
+    // דוח העלות האחרון (inst_symbol) גובר על קובץ ביצוע ישן
+    const sym = r.symbol_override || (!r.inst_symbol ? a.symbol : null) || null;
     const st = r.staff_type || a.staffType || null;
     const role = r.role || a.role || null;
     if (sym === (r.symbol_override || null) && st === (r.staff_type || null) && role === (r.role || null)) continue;
