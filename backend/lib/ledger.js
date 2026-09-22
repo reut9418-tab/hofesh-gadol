@@ -19,6 +19,10 @@ function basketForCardName(name) {
   const n = norm(name);
   if (!n) return null;
   if (/הכנסות|גביה|גבייה|תשלומי הורים/.test(n)) return 'income';
+  // סלי המכינות — לפני כלל ה"פעילות" הכללי (פעילות חוץ = יום סיור, לא העשרה);
+  // בבתי"ס/גנים אין הסלים האלה — המסנן בהעלאה מאפס אותם שם
+  if (/סיור|טיול|פעילות חוץ/.test(n)) return 'trip';
+  if (/בינה מלאכותית/.test(n) || /(^|[^a-zA-Z])ai([^a-zA-Z]|$)/i.test(n)) return 'ai';
   if (/העשרה|פעילות/.test(n)) return 'enrichment'; // "פעילות" בשם כרטסת = העשרה
   if (/אבטחה/.test(n)) return 'security';
   if (/ארוחת/.test(n)) return 'breakfast';
@@ -43,25 +47,33 @@ const BASKET_HE = {
   scholarships: 'מלגות',
   management: 'ניהול ותפעול',
   overhead: 'תקורה',
+  trip: 'פעילות חוץ (יום סיור)', // מכינות: "סל פעילות חוץ (1 יום סיור לימודי/חברתי)"
+  ai: 'סל AI',                    // מכינות: "סל AI (ארבעה ימי פעילות)"
   income: 'הכנסות משתתפים (גבייה מהורים)', // ללשונית תשלומי ההורים — לא נכלל בהתאמת ההוצאות
 };
 const SALARY_BASKET_TYPES = ['instruction', 'coordinator', 'deputy'];
 
-/* רשימת השיוך במסך שלב 2 לפי סוג הפרויקט (כלל רעות 22.9): במכינות קיץ מבנה
-   הסלים של קובץ המשרד הוא הדרכה/העשרה/ניהול/ריכוז + גמיש/תקורה — בלי סגנים,
-   אבטחה, ארוחת בוקר ומלגות של בתי"ס/גנים, ובשמות הסלים של המכינות. */
+/* רשימת השיוך במסך שלב 2 לפי סוג הפרויקט (כלל רעות 22.9): הרשימה של כל
+   פרויקט = הרשימה הנפתחת בלשונית "דוח הוצאות בפועל" של תבנית המשרד + סלי
+   השכר. במכינות (לשונית "סיווג התפקידים והעלויות"): העשרה, מלגות להורים,
+   ניהול ותפעול, פעילות חוץ (יום סיור), AI — ושכר הדרכה/רכזים/סגנים. */
 const PREP_BASKET_HE = {
-  instruction: 'סל הדרכה',
-  coordinator: 'סל שכר ריכוז',
-  enrichment: 'סל העשרה',
-  management: 'סל ניהול',
-  flexible: 'סל גמיש',
-  overhead: 'תקורה',
+  instruction: 'שכר הדרכה (צוות חינוכי)',
+  coordinator: 'שכר רכזים (סל ריכוז)',
+  deputy: 'שכר סגני רכזים',
+  enrichment: 'העשרה',
+  scholarships: 'מלגות להורים',
+  management: 'ניהול ותפעול',
+  trip: 'פעילות חוץ (יום סיור)',
+  ai: 'סל AI',
   income: BASKET_HE.income,
 };
+// בתי"ס/גנים — הרשימה כפי שהייתה (בלי סלי המכינות)
+const SCHOOLS_GARDENS_KEYS = ['instruction', 'coordinator', 'deputy', 'enrichment',
+  'flexible', 'security', 'breakfast', 'scholarships', 'management', 'overhead', 'income'];
 function basketOptionsFor(framework) {
-  const he = framework === 'prep' ? PREP_BASKET_HE : BASKET_HE;
-  return Object.entries(he).map(([value, label]) => ({ value, label }));
+  if (framework === 'prep') return Object.entries(PREP_BASKET_HE).map(([value, label]) => ({ value, label }));
+  return SCHOOLS_GARDENS_KEYS.map((k) => ({ value: k, label: BASKET_HE[k] }));
 }
 
 /* מפענח קובץ כרטסת → [{key, name, debit, credit, net, txCount}] */

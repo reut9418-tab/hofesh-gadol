@@ -25,6 +25,9 @@ const BASKET_BY_LABEL = [
   { re: /מלגות/, key: 'scholarships' },
   { re: /ניהול ותפעול/, key: 'management' },
   { re: /תקורה/, key: 'overhead' },
+  // סלי המכינות (22.9): "סל פעילות חוץ (1 יום סיור לימודי/חברתי)" + "סל AI"
+  { re: /פעילות חוץ|סיור לימודי/, key: 'trip' },
+  { re: /(^|[^a-zA-Z])AI([^a-zA-Z]|$)|בינה מלאכותית/, key: 'ai' },
 ];
 const basketForLabel = (label) => { const n = norm(label); const hit = BASKET_BY_LABEL.find((b) => b.re.test(n)); return hit ? hit.key : null; };
 
