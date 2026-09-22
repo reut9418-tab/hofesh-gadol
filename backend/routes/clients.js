@@ -3,7 +3,7 @@ const router = express.Router();
 const { z } = require('zod');
 const { getDB } = require('../db');
 const { shapeReport } = require('../lib/reportShape');
-const { reportHealth, reportAlerts, dashboardStatus, deriveClientStage, CLIENT_STAGES } = require('../lib/status');
+const { reportHealth, reportAlerts, dashboardStatus, deriveClientStage, CLIENT_STAGES, treeCache } = require('../lib/status');
 
 const clientSchema = z.object({
   name: z.string().min(1, 'שם לקוח נדרש'),
@@ -55,7 +55,24 @@ async function buildTree(db) {
   });
 }
 
-router.get('/tree', ah(async (req, res) => res.json(await buildTree(getDB()))));
+/* עץ הלקוחות (המסך הראשי) — איחוד בקשות + הגשת עץ קיים בזמן חישוב:
+   התקיעה של 22.9 — כל רענון פתח חישוב מלא של כל הדוחות במקביל, וכמה
+   דפדפנים שניסו שוב ושוב מוטטו את השרת. עכשיו חישוב אחד רץ בכל רגע,
+   כולם ממתינים לו, ומי שיש לו עץ קודם מקבל אותו מיד (מתעדכן ברענון הבא). */
+let treeInflight = null;
+router.get('/tree', ah(async (req, res) => {
+  const db = getDB();
+  const FRESH_MS = 15000;
+  if (treeCache.data && Date.now() - treeCache.at < FRESH_MS) return res.json(treeCache.data);
+  if (!treeInflight) {
+    treeInflight = buildTree(db)
+      .then((t) => { treeCache.data = t; treeCache.at = Date.now(); return t; })
+      .finally(() => { treeInflight = null; });
+    treeInflight.catch(() => {}); // הכישלון מטופל אצל הממתינים
+  }
+  if (treeCache.data) return res.json(treeCache.data); // ישן מיד, טרי ברענון הבא
+  res.json(await treeInflight);
+}));
 
 /* סיכום שלב 2 מרוכז ללקוח — תשלום צפוי בכל הפרויקטים (דף להדפסה) */
 router.get('/:id/stage2-doc', ah(async (req, res) => {
