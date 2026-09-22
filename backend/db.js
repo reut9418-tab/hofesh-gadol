@@ -192,6 +192,9 @@ async function migrate(db) {
   await add('cost_rows', 'cross_declined INTEGER DEFAULT 0');
   // התאמת ברוטו שעתי (עד 5 ₪) שאושרה — כדי שבקרת ה-140% של המשרד תעבור
   await add('cost_rows', 'gross_bump REAL DEFAULT 0');
+  // תעריפים ידניים (כלל רעות 22.9): שעות/ברוטו-שעתי/עלות-שעתית שנקבעו במסך
+  // נכתבים על השורה עצמה (gross/cost/hours) — כאן נשמרים ערכי המקור לשחזור
+  await add('cost_rows', 'manual_rates TEXT');
   // קובץ דוח הביצוע של המשרד נשמר גם במסד (טבלה נפרדת — לא מכבידה על שליפות
   // הדוחות) — הדיסק של Render מתאפס בכל פריסה והקובץ חיוני לייצוא
   await db.exec(`CREATE TABLE IF NOT EXISTS report_files (
@@ -220,9 +223,13 @@ async function initDatabase() {
   if (process.env.DATABASE_URL) {
     // ---- Supabase Postgres ----
     const { Pool } = require('pg');
+    // דרך Hyperdrive (Cloudflare Workers) הערוץ המקומי אינו TLS — ההצפנה
+    // מול Supabase מטופלת ע"י הפלטפורמה; SSL כפוי שם מפיל את החיבור
+    const viaHyperdrive = process.env.PG_VIA_HYPERDRIVE === '1'
+      || /\.hyperdrive\.local\b/.test(process.env.DATABASE_URL);
     const pool = new Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
+      ssl: viaHyperdrive ? undefined : { rejectUnauthorized: false },
       max: 5,
     });
     const db = new PostgresDB(pool);

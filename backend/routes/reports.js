@@ -385,7 +385,7 @@ router.get('/:id/prep', ah(async (req, res) => {
   const rawRows = await db.prepare(
     `SELECT cr.id, cr.emp_id, cr.emp_name, cr.first_name, cr.last_name, cr.dept,
             cr.inst_symbol, cr.inst_name, cr.symbol_override, cr.staff_type, cr.role,
-            cr.gross, cr.cost, cr.hours, cr.gross_bump
+            cr.gross, cr.cost, cr.hours, cr.gross_bump, cr.manual_rates
      FROM cost_rows cr WHERE cr.report_id = ? ORDER BY cr.dept, cr.emp_name`
   ).all(id);
 
@@ -451,6 +451,8 @@ router.get('/:id/prep', ah(async (req, res) => {
       gross: r.gross, cost: r.cost, hours: r.hours,
       hourlyGross: r.gross != null && r.hours ? r.gross / r.hours : null,
       hourlyCost: r.cost != null && r.hours ? r.cost / r.hours : null,
+      // תעריפים ידניים: מסומן במסך + מאפשר שחזור לערכי דוח העלות
+      manualRates: r.manual_rates ? (() => { try { return JSON.parse(r.manual_rates); } catch { return null; } })() : null,
     };
   });
 
@@ -700,8 +702,42 @@ const prepSchema = z.object({
     symbol: z.string().nullable().optional(),
     staffType: z.string().nullable().optional(),
     role: z.string().nullable().optional(),
+    // תעריפים ידניים (כלל 22.9): מה שבתוכנה קובע — נכתב על השורה עצמה
+    hours: z.number().nonnegative().nullable().optional(),
+    hourlyGross: z.number().nonnegative().nullable().optional(),
+    hourlyCost: z.number().nonnegative().nullable().optional(),
   })),
 });
+
+/* עדכון תעריפים ידני לשורה: החדש נכתב על gross/cost/hours (כל המערכת —
+   מכתב, בקרות, ייצוא — רואה אותו), והמקור נשמר ב-manual_rates לשחזור.
+   שלושת השדות null = ביטול העריכה ושחזור ערכי דוח העלות. */
+async function applyManualRates(db, reportId, rowId, a) {
+  if (a.hours === undefined && a.hourlyGross === undefined && a.hourlyCost === undefined) return false;
+  const r = await db.prepare('SELECT id, gross, cost, hours, manual_rates FROM cost_rows WHERE id = ? AND report_id = ?').get(rowId, reportId);
+  if (!r) return false;
+  const prev = r.manual_rates ? JSON.parse(r.manual_rates) : null;
+  const orig = prev ? prev.orig : { gross: r.gross, cost: r.cost, hours: r.hours };
+  const clearing = a.hours == null && a.hourlyGross == null && a.hourlyCost == null;
+  if (clearing) {
+    if (!prev) return false;
+    await db.prepare('UPDATE cost_rows SET gross = ?, cost = ?, hours = ?, manual_rates = NULL WHERE id = ?')
+      .run(orig.gross, orig.cost, orig.hours, r.id);
+    return true;
+  }
+  // ברירת המחדל לכל ערך שלא נערך — התעריף הנוכחי בשורה (שעתי מהמקור)
+  const curHours = r.hours || orig.hours || 0;
+  const curHG = curHours > 0 && r.gross != null ? r.gross / curHours : null;
+  const curHC = curHours > 0 && r.cost != null ? r.cost / curHours : null;
+  const hours = a.hours != null ? a.hours : curHours;
+  const hg = a.hourlyGross != null ? a.hourlyGross : curHG;
+  const hc = a.hourlyCost != null ? a.hourlyCost : curHC;
+  const r2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
+  await db.prepare('UPDATE cost_rows SET gross = ?, cost = ?, hours = ?, manual_rates = ? WHERE id = ?')
+    .run(r2(hg != null ? hg * hours : r.gross), r2(hc != null ? hc * hours : r.cost), hours,
+      JSON.stringify({ orig, set: { hours: a.hours ?? null, hourlyGross: a.hourlyGross ?? null, hourlyCost: a.hourlyCost ?? null } }), r.id);
+  return true;
+}
 
 router.put('/:id/prep', ah(async (req, res) => {
   const parsed = prepSchema.safeParse(req.body);
@@ -720,6 +756,11 @@ router.put('/:id/prep', ah(async (req, res) => {
         .run(a.symbol || null, a.staffType || null, a.role || null, parseInt(rowId), id)
     ));
     updated += results.reduce((s, r) => s + (r.changes || 0), 0);
+  }
+  // תעריפים ידניים (שעות/ברוטו שעתי/עלות שעתית) — רק לשורות שנשלח בהן ערך
+  for (const [rowId, a] of entries) {
+    try { await applyManualRates(db, id, parseInt(rowId), a); }
+    catch (e) { console.error('עדכון תעריפים ידני נכשל לשורה ' + rowId + ':', e.message); }
   }
   // זיכרון השיוך הידני פר-עובד/ת (כלל 22.9): נשמר ללקוח ושורד החלפת דוח עלות
   try {

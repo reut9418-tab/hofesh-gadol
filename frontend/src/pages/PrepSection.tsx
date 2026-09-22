@@ -335,8 +335,10 @@ export default function PrepSection({ reportId }: { reportId: number }) {
               <th style={{ padding: '6px 8px', fontWeight: 600, width: 130 }}>סמל מקום פעילות</th>
               <th style={{ padding: '6px 8px', fontWeight: 600, width: 130 }}>איש צוות</th>
               <th style={{ padding: '6px 8px', fontWeight: 600, width: 170 }}>תפקיד</th>
-              <th style={{ padding: '6px 8px', fontWeight: 600 }}>שעות</th>
-              <th style={{ padding: '6px 8px', fontWeight: 600 }}>ברוטו שעתי</th>
+              <th style={{ padding: '6px 8px', fontWeight: 600, width: 70 }}>שעות</th>
+              <th style={{ padding: '6px 8px', fontWeight: 600, width: 80 }}>ברוטו שעתי</th>
+              <th style={{ padding: '6px 8px', fontWeight: 600, width: 80 }}>עלות שעתית</th>
+              <th style={{ padding: '6px 8px', fontWeight: 600, width: 26 }} title="שחזור ערכי דוח העלות"></th>
             </tr>
           </thead>
           <tbody>
@@ -370,8 +372,28 @@ export default function PrepSection({ reportId }: { reportId: number }) {
                       {rolesFor(a.staffType).map((ro) => <option key={ro} value={ro}>{ro}</option>)}
                     </select>
                   </td>
-                  <td style={{ padding: '5px 8px' }}>{fmt(r.hours, 1)}</td>
-                  <td style={{ padding: '5px 8px' }}>{r.hourlyGross != null ? '₪' + fmt(r.hourlyGross, 1) : '—'}</td>
+                  {/* תעריפים ידניים (כלל 22.9): מה שנקבע כאן הוא הקובע — במכתב, בבקרות ובייצוא */}
+                  {([['hours', r.hours, 2], ['hourlyGross', r.hourlyGross, 2], ['hourlyCost', r.hourlyCost, 2]] as const).map(([field, cur]) => {
+                    const edited = a[field] !== undefined && a[field] !== null;
+                    const shown = edited ? a[field] : cur != null ? Math.round(cur * 100) / 100 : null;
+                    return (
+                      <td key={field} style={{ padding: '5px 4px' }}>
+                        <input type="number" min={0} step="0.01" value={shown ?? ''} placeholder="—"
+                          onChange={(e) => set(r.rowId, { [field]: e.target.value === '' ? undefined : parseFloat(e.target.value) } as any)}
+                          title={r.manualRates ? 'נערך ידנית — ערך דוח העלות המקורי זמין בכפתור השחזור' : 'עריכה קובעת את הערך במערכת ובקובץ'}
+                          style={{ ...input, padding: '3px 5px', fontSize: 11.5, width: '100%', textAlign: 'center',
+                            borderColor: edited || r.manualRates ? T.amber : T.line,
+                            background: r.manualRates ? '#FDF6EC' : undefined }} />
+                      </td>
+                    );
+                  })}
+                  <td style={{ padding: '5px 2px', textAlign: 'center' }}>
+                    {(r.manualRates || a.hours !== undefined || a.hourlyGross !== undefined || a.hourlyCost !== undefined) && (
+                      <button title="שחזור שעות ותעריפים מדוח העלות"
+                        onClick={() => set(r.rowId, { hours: null, hourlyGross: null, hourlyCost: null })}
+                        style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, padding: 0 }}>↺</button>
+                    )}
+                  </td>
                 </tr>
               );
             })}

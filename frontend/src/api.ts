@@ -174,6 +174,7 @@ export type PrepRow = {
   rowId: number; empId: string; name: string | null; firstName: string | null; lastName: string | null;
   dept: string; symbol: string | null; staffType: string | null; role: string | null; saved: boolean;
   gross: number | null; cost: number | null; hours: number | null; hourlyGross: number | null; hourlyCost: number | null;
+  manualRates?: { orig: { gross: number | null; cost: number | null; hours: number | null } } | null;
 };
 export type StaffType = { type: string; roles: string[] };
 export type SalaryItem = { type: string; label: string; budget: number; actual: number; over: number; under: number };
@@ -193,7 +194,11 @@ export type PrepData = {
   salary: SalaryCheck; framework: string; recommendations: Recommendations;
   bumps?: BumpSuggestion[];
 };
-export type Assignment = { symbol: string | null; staffType: string | null; role: string | null };
+export type Assignment = {
+  symbol: string | null; staffType: string | null; role: string | null;
+  // תעריפים ידניים (כלל 22.9): נשלחים רק כשנערכו; null = שחזור ערכי דוח העלות
+  hours?: number | null; hourlyGross?: number | null; hourlyCost?: number | null;
+};
 export const getReportPrep = (reportId: number): Promise<PrepData> =>
   api.get(`/reports/${reportId}/prep`).then((r) => r.data);
 export const saveReportPrep = (reportId: number, assignments: Record<string, Assignment>) =>
