@@ -391,6 +391,90 @@ function parseStaffing(wb) {
   return out;
 }
 
+/* ---------- מכינות קיץ (program 'base') — גיבוי כשבקרת האיוש איפסה ----------
+   נוסחאות הבלוק (פוענחו מאלעד, 22.9): סל-לילד = זכאים × תעריף נתוני-עזר
+   (בלי יחס ימים); קבוע-למוסד (ניהול/ריכוז) = תעריף-ליום × ימי פעילות;
+   הכול × "שיעור תקצוב בהתאם לבקרה" (ברירת מחדל 1). */
+
+/* תעריפי המכינות מ"נתוני עזר" שבגיליון התקצוב: לילד (ניהול/הדרכה/העשרה,
+   רגיל+חנ"מ) ותעריפי היום למוסד (ניהול/ריכוז, רגיל/גדול) */
+function parsePrepRates(rows) {
+  let perCols = null, perChild = null, perChildSpecial = null;
+  let fixedCols = null, fixed = {};
+  for (const row of rows) {
+    const labels = (row || []).map(norm);
+    const li = (t) => labels.findIndex((x) => x === t || x.includes(t));
+    if (!perCols && li('תקציב לילד') >= 0 && li('סל הדרכה') >= 0) {
+      perCols = { management: li('סל ניהול'), instruction: li('סל הדרכה'), enrichment: li('סל העשרה') };
+      continue;
+    }
+    const grab = (cols) => Object.fromEntries(Object.entries(cols).map(([k, j]) => [k, j >= 0 ? (num(row[j]) || 0) : 0]));
+    if (perCols && !fixedCols) {
+      if (!perChild && labels.some((x) => x.includes('רגיל') && !x.includes('רגילים'))) { const v = grab(perCols); if (v.instruction > 0) perChild = v; }
+      else if (!perChildSpecial && labels.some((x) => x.includes('חנמ'))) { const v = grab(perCols); if (v.instruction > 0) perChildSpecial = v; }
+    }
+    if (li('תקציב למוסד') >= 0 && li('סל שכר ריכוז') >= 0) {
+      fixedCols = { management: li('סל ניהול'), coordinator: li('סל שכר ריכוז') };
+      continue;
+    }
+    if (fixedCols) {
+      if (!fixed.small && labels.some((x) => x.includes('רגילים'))) fixed.small = grab(fixedCols);
+      else if (!fixed.large && labels.some((x) => x.includes('גדולים'))) fixed.large = grab(fixedCols);
+    }
+  }
+  return perChild ? { perChild, perChildSpecial, fixed } : null;
+}
+
+/* נתוני התקצוב פר מכינה מ"דוח ביצוע (3)": זכאים לתקצוב (העמודות במקטע
+   "נתונים לחישוב תקציב" — ההופעה האחרונה של הכותרת), ימים, בי"ס גדול */
+function parsePrepExec(wb) {
+  const sn = wb.SheetNames.find((n) => norm(n).includes('דוח ביצוע'));
+  if (!sn) return {};
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  let cols = null;
+  const out = {};
+  for (const row of rows) {
+    const labels = (row || []).map(norm);
+    if (!cols) {
+      const sym = labels.findIndex((x) => x.includes('סמל בית ספר'));
+      if (sym < 0) continue;
+      const lastIdx = (needle) => { let k = -1; labels.forEach((x, j) => { if (x.includes(needle)) k = j; }); return k; };
+      cols = {
+        sym,
+        days: labels.findIndex((x) => x.includes('ימי פעילות בפוע')),
+        reg: lastIdx('תלמידים חינוך רגיל'),
+        spec: lastIdx('תלמידים חינוך מיוחד'),
+        large: labels.findIndex((x) => x.includes('גדולים')),
+      };
+      continue;
+    }
+    const s = norm(row[cols.sym]);
+    if (!/^\d{4,7}$/.test(s)) continue;
+    out[s] = {
+      days: cols.days >= 0 ? (num(row[cols.days]) || 0) : 0,
+      reg: cols.reg >= 0 ? (num(row[cols.reg]) || 0) : 0,
+      spec: cols.spec >= 0 ? (num(row[cols.spec]) || 0) : 0,
+      large: cols.large >= 0 && (num(row[cols.large]) || 0) > 0,
+    };
+  }
+  return out;
+}
+
+/* "שיעור תקצוב בהתאם לבקרה" פר מוסד — לשונית "נתוני בקרות מוסדות" (ברירת מחדל 1) */
+function parsePrepControlRates(wb) {
+  const sn = wb.SheetNames.find((n) => norm(n).includes('נתוני בקרות'));
+  if (!sn) return {};
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null });
+  const out = {};
+  for (const row of rows) {
+    const s = norm((row || [])[0]);
+    if (!/^\d{4,7}$/.test(s)) continue;
+    const v = num((row || [])[2]);
+    if (v != null && v >= 0 && v <= 1) out[s] = v;
+  }
+  return out;
+}
+
 /* ימי הפעילות בפועל פר בי"ס — עמודת "מספר ימי פעילות בפועל" בלשונית
    "דוח ביצוע (3)". בהרחבה זהו המקור ליחס הימים (התא בבלוק מאופס כשבקרת
    האיוש "לא תקין"); הערכים גולמיים וזמינים גם בקובץ קפוא */
@@ -743,6 +827,37 @@ function parseBudgetFile(buf, opts = {}) {
   // בלוקים קיימים אך אף אחד בלי סמל אמיתי — הקובץ לא חוּשב (נוסחאות קפואות
   // או שלא נבחרה רשות בגיליון "נתונים כלליים")
   const schoolsNotComputed = blockCount > 0 && validBlocks === 0;
+
+  // מכינות קיץ: חישוב המשרד אופס (איוש משרות "לא תקין") — משחזרים לפי
+  // נוסחאות הבלוק: זכאים × תעריף-לילד + ימים × תעריף-ליום למוסד, × שיעור
+  // הבקרה (כלל רעות 22.9: הגיבוי חל על כל הפרויקטים)
+  if (opts.program === 'base' && institutions.length && institutions.every((i) => !(i.total > 0))) {
+    const rates = parsePrepRates(rows);
+    const exec = parsePrepExec(wb);
+    const ctrl = parsePrepControlRates(wb);
+    if (rates) {
+      for (const inst of institutions) {
+        const ex = exec[String(inst.symbol)];
+        if (!ex || !(ex.reg > 0 || ex.spec > 0)) continue;
+        const q = ctrl[String(inst.symbol)] ?? 1;
+        const days = ex.days || inst.days || 0;
+        if (ex.large) inst.size = 'large';
+        const fx = rates.fixed[ex.large ? 'large' : 'small'] || rates.fixed.small || { management: 0, coordinator: 0 };
+        const spec = rates.perChildSpecial;
+        const per = (key) => (rates.perChild[key] * ex.reg + (ex.spec > 0 && spec ? spec[key] * ex.spec : 0)) * q;
+        const b = inst.baskets;
+        b.instruction = Math.round(per('instruction') * 100) / 100;
+        b.enrichment = Math.round(per('enrichment') * 100) / 100;
+        b.management = Math.round((per('management') + days * (fx.management || 0) * q) * 100) / 100;
+        if (fx.coordinator > 0) b.coordinator = Math.round(days * fx.coordinator * q * 100) / 100;
+        inst.total = Math.round(Object.values(b).reduce((s, v) => s + (v || 0), 0) * 100) / 100;
+        inst.eligibleReg = ex.reg;
+        inst.eligibleSpec = ex.spec;
+        inst.days = days;
+        inst.ratesFallback = true;
+      }
+    }
+  }
 
   // חישוב המשרד אופס (איוש משרות לא מולא) אך דווחו ילדים — בונים תקציב
   // מטבלת התעריפים הרשמית שבקובץ: לתלמיד × ילדים + קבוע למוסד (רכז/סגן/ניהול)
