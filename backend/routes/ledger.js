@@ -4,7 +4,7 @@ const router = express.Router();
 const multer = require('multer');
 const { z } = require('zod');
 const { getDB } = require('../db');
-const { parseLedgerFile, basketForCardName, BASKET_HE } = require('../lib/ledger');
+const { parseLedgerFile, basketForCardName, BASKET_HE, basketOptionsFor } = require('../lib/ledger');
 const { ledgerReconcile, payerBreakdown, expenseComparison } = require('../lib/reconcile');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -75,7 +75,7 @@ router.get('/reports/:id/ledger', ah(async (req, res) => {
   res.json({
     files,
     cards,
-    basketOptions: Object.entries(BASKET_HE).map(([value, label]) => ({ value, label })),
+    basketOptions: basketOptionsFor(report.framework),
     reconcile: await ledgerReconcile(db, report, client),
     payerMatrix: await payerBreakdown(db, report, client),
     expenseMatrix: await expenseComparison(db, report, client),

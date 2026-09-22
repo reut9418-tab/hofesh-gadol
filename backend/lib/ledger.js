@@ -47,6 +47,23 @@ const BASKET_HE = {
 };
 const SALARY_BASKET_TYPES = ['instruction', 'coordinator', 'deputy'];
 
+/* רשימת השיוך במסך שלב 2 לפי סוג הפרויקט (כלל רעות 23.9): במכינות קיץ מבנה
+   הסלים של קובץ המשרד הוא הדרכה/העשרה/ניהול/ריכוז + גמיש/תקורה — בלי סגנים,
+   אבטחה, ארוחת בוקר ומלגות של בתי"ס/גנים, ובשמות הסלים של המכינות. */
+const PREP_BASKET_HE = {
+  instruction: 'סל הדרכה',
+  coordinator: 'סל שכר ריכוז',
+  enrichment: 'סל העשרה',
+  management: 'סל ניהול',
+  flexible: 'סל גמיש',
+  overhead: 'תקורה',
+  income: BASKET_HE.income,
+};
+function basketOptionsFor(framework) {
+  const he = framework === 'prep' ? PREP_BASKET_HE : BASKET_HE;
+  return Object.entries(he).map(([value, label]) => ({ value, label }));
+}
+
 /* מפענח קובץ כרטסת → [{key, name, debit, credit, net, txCount}] */
 function parseLedgerFile(buf) {
   const wb = XLSX.read(buf, { type: 'buffer' });
@@ -89,4 +106,4 @@ function parseLedgerFile(buf) {
   return { cards };
 }
 
-module.exports = { parseLedgerFile, basketForCardName, BASKET_HE, SALARY_BASKET_TYPES };
+module.exports = { parseLedgerFile, basketForCardName, BASKET_HE, SALARY_BASKET_TYPES, basketOptionsFor };
