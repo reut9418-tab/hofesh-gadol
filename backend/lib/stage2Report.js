@@ -62,8 +62,10 @@ async function stage2Data(db, report, client, authority) {
     // ניהול ותפעול (תקורת ה-7%): מוכרת במלואה — 100% מתקציב הסל (כלל רעות
     // 16.9.2026, "ברוב המקרים") — ללא תלות בכרטסות; פר מוסד בבתי"ס, במרוכז בגנים
     const mgmtRecognized = r2(u.management || 0);
+    // מכינות: פעילות חוץ (יום סיור) ו-AI מוכרים לפי הכרטסות עד תקרת הסל הייעודי
+    const tripAiRecognized = r2((u.tripRecognized || 0) + (u.aiRecognized || 0));
     const income = (u.children && d.tariff) ? r2(u.children * d.tariff) : 0;
-    const computedExpected = r2(salaryRecognized + enrichRecognized + bfsRecognized + mgmtRecognized - income);
+    const computedExpected = r2(salaryRecognized + enrichRecognized + bfsRecognized + mgmtRecognized + tripAiRecognized - income);
     // "צפוי לקבל" מהקובץ: סה"כ לתשלום בתוספת גמישות 25% + תוספת סייעות (בנפרד)
     const ip = u.symbol != null ? payBySym[String(u.symbol)] : aggPay;
     const paymentTotal = ip && ip.payment_total != null ? r2(Number(ip.payment_total)) : null;
@@ -75,7 +77,7 @@ async function stage2Data(db, report, client, authority) {
       ...u,
       salaryActual, salaryRecognized,
       enrichAllocated: r2(enrichAllocated), enrichRecognized,
-      bfsRecognized, mgmtRecognized,
+      bfsRecognized, mgmtRecognized, tripAiRecognized,
       income, computedExpected,
       paymentTotal, paymentAides, paymentNote: (ip && ip.payment_note) || null,
       expected,
@@ -89,6 +91,7 @@ async function stage2Data(db, report, client, authority) {
     enrichBudget: total((u) => u.enrichBudget), enrichRecognized: total((u) => u.enrichRecognized),
     flexBudget: total((u) => u.flexBudget), flexConsumed: total((u) => u.flexConsumed), flexAvailable: total((u) => u.flexAvailable),
     bfsRecognized: total((u) => u.bfsRecognized), mgmtRecognized: total((u) => u.mgmtRecognized),
+    tripAiRecognized: total((u) => u.tripAiRecognized),
     income: total((u) => u.income), expected: total((u) => u.expected),
     computedExpected: total((u) => u.computedExpected),
     paymentTotal: units.some((u) => u.paymentTotal != null) ? total((u) => u.paymentTotal) : null,
@@ -197,19 +200,18 @@ function renderStage2Html(d) {
     <td class="num">₪${fmt(t.salaryRecognized)}</td>
   </tr>`;
 
-  const payRows = d.units.map((u, i) => `<tr${i % 2 ? ' class="z"' : ''}>
-      <td>${u.symbol ? `${esc(u.name)} <span class="soft">(${esc(u.symbol)})</span>` : esc(u.name)}</td>
-      <td class="num">₪${fmt(u.salaryRecognized)}</td>
-      <td class="num">${u.enrichRecognized > 0 ? '₪' + fmt(u.enrichRecognized) : '—'}</td>
-      <td class="num">${u.bfsRecognized > 0 ? '₪' + fmt(u.bfsRecognized) : '—'}</td>
-      <td class="num">${u.mgmtRecognized > 0 ? '₪' + fmt(u.mgmtRecognized) : '—'}</td>
-      <td class="num">${u.income > 0 ? '−₪' + fmt(u.income) : '—'}</td>
-      <td class="num"><b>₪${fmt(u.expected)}</b></td>
-    </tr>`).join('');
-  const payTotals = isSingle ? '' : `<tr class="total"><td>סה"כ לפרויקט</td>
-    <td class="num">₪${fmt(t.salaryRecognized)}</td><td class="num">₪${fmt(t.enrichRecognized)}</td>
-    <td class="num">₪${fmt(t.bfsRecognized)}</td><td class="num">₪${fmt(t.mgmtRecognized)}</td>
-    <td class="num">−₪${fmt(t.income)}</td><td class="num">₪${fmt(t.expected)}</td></tr>`;
+  // סעיף ג' מוצג בסיכום בלבד (בקשת רעות 23.9): שורת סה"כ אחת לפרויקט —
+  // בגנים ממילא במרוכז, בבתי"ס ובמכינות בלי פירוט פר מוסד
+  const anyTripAi = (t.tripAiRecognized || 0) > 0;
+  const payRows = `<tr class="total"><td>${isSingle ? esc(d.units[0].name) : `סה"כ לפרויקט — ${d.units.length} מוסדות`}</td>
+    <td class="num">₪${fmt(t.salaryRecognized)}</td>
+    <td class="num">${t.enrichRecognized > 0 ? '₪' + fmt(t.enrichRecognized) : '—'}</td>
+    <td class="num">${t.bfsRecognized > 0 ? '₪' + fmt(t.bfsRecognized) : '—'}</td>
+    <td class="num">${t.mgmtRecognized > 0 ? '₪' + fmt(t.mgmtRecognized) : '—'}</td>
+    ${anyTripAi ? `<td class="num">₪${fmt(t.tripAiRecognized)}</td>` : ''}
+    <td class="num">${t.income > 0 ? '−₪' + fmt(t.income) : '—'}</td>
+    <td class="num"><b>₪${fmt(t.computedExpected)}</b></td></tr>`;
+  const payTotals = '';
 
   return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
 <title>דוח בקרות ותשלום צפוי — ${esc(who)} — ${esc(d.label)}</title>
@@ -272,37 +274,32 @@ ${(d.expenseMatrix && d.expenseMatrix.rows.length) ? `
 
 <h2>ג. התשלום הצפוי מהמשרד — מתוך קובץ דוח הביצוע</h2>
 <table>
-  <thead><tr><th>${d.report.framework === 'gardens' ? 'מסגרת' : 'בית ספר'}</th>
+  <thead><tr><th>מסגרת</th>
     <th class="num">סה"כ לתשלום בתוספת גמישות 25% במעבר בין הסלים</th>
     <th class="num">תוספת סייעות רפואיות או אישיות</th>
     <th class="num">אומדן המערכת</th><th class="num">פער</th></tr></thead>
   <tbody>
-  ${d.units.map((u, i) => `<tr${i % 2 ? ' class="z"' : ''}>
-    <td>${u.symbol ? `${esc(u.name)} <span class="soft">(${esc(u.symbol)})</span>` : esc(u.name)}</td>
-    <td class="num">${u.paymentTotal != null ? `<b>₪${fmt(u.paymentTotal)}</b>` : u.paymentNote ? `<span class="soft">${esc(u.paymentNote)}</span>` : '<span class="soft">לא חושב בקובץ</span>'}</td>
-    <td class="num">${u.paymentAides > 0 ? '₪' + fmt(u.paymentAides) : '—'}</td>
-    <td class="num">₪${fmt(u.computedExpected)}</td>
-    <td class="num">${u.paymentTotal != null ? (Math.abs(u.paymentTotal + u.paymentAides - u.computedExpected) <= 200 ? '<span style="color:#4C7A45">תואם ✓</span>' : `₪${fmt(u.paymentTotal + u.paymentAides - u.computedExpected)}`) : '—'}</td>
-  </tr>`).join('')}
-  ${isSingle ? '' : `<tr class="total"><td>סה"כ</td>
-    <td class="num">${t.paymentTotal != null ? '₪' + fmt(t.paymentTotal) : '—'}</td>
+  <tr class="total"><td>${isSingle ? esc(d.units[0].name) : `סה"כ לפרויקט — ${d.units.length} מוסדות`}</td>
+    <td class="num">${t.paymentTotal != null ? `<b>₪${fmt(t.paymentTotal)}</b>` : '<span class="soft">לא חושב בקובץ</span>'}</td>
     <td class="num">${t.paymentAides > 0 ? '₪' + fmt(t.paymentAides) : '—'}</td>
-    <td class="num">₪${fmt(t.computedExpected)}</td><td></td></tr>`}
+    <td class="num">₪${fmt(t.computedExpected)}</td>
+    <td class="num">${t.paymentTotal != null ? (Math.abs(t.paymentTotal + t.paymentAides - t.computedExpected) <= 200 * Math.max(1, d.units.length) ? '<span style="color:#4C7A45">תואם ✓</span>' : `₪${fmt(t.paymentTotal + t.paymentAides - t.computedExpected)}`) : '—'}</td>
+  </tr>
   </tbody>
 </table>
-<div class="soft">"סה"כ לתשלום" ו"תוספת סייעות" נקראים משורות הסיכום של קובץ דוח הביצוע (${d.report.framework === 'gardens' ? 'כל הגנים במרוכז' : 'פר בית ספר'}); כשהקובץ לא חושב — "צפוי לקבל" נשען על אומדן המערכת.</div>
+<div class="soft">"סה"כ לתשלום" ו"תוספת סייעות" נקראים משורות הסיכום של קובץ דוח הביצוע${d.report.framework === 'gardens' ? ' (כל הגנים במרוכז)' : ' (סיכום כל המוסדות)'}; כשהקובץ לא חושב — "צפוי לקבל" נשען על אומדן המערכת.</div>
 
-<h3 style="font-size:13.5px;color:#9A7B2F;margin:18px 0 4px">פירוט ההכרה — אומדן המערכת</h3>
+<h3 style="font-size:13.5px;color:#9A7B2F;margin:18px 0 4px">פירוט ההכרה — אומדן המערכת (סיכום)</h3>
 <table>
-  <thead><tr><th>${d.report.framework === 'gardens' ? 'מסגרת' : 'בית ספר'}</th>
+  <thead><tr><th>מסגרת</th>
     <th class="num">שכר מוכר</th><th class="num">העשרה</th><th class="num">ארוחות בוקר/מלגות</th>
-    <th class="num">ניהול ותפעול</th><th class="num">השתתפות הורים</th><th class="num">אומדן מחושב</th></tr></thead>
+    <th class="num">ניהול ותפעול</th>${anyTripAi ? '<th class="num">פעילות חוץ + AI</th>' : ''}<th class="num">השתתפות הורים</th><th class="num">אומדן מחושב</th></tr></thead>
   <tbody>${payRows}${payTotals}</tbody>
 </table>
 <div class="expected">💰 <b>סה"כ צפוי להתקבל מהמשרד בפרויקט זה: ₪${fmt(t.expected)}</b>
   <span class="soft">— ${t.paymentTotal > 0
     ? `מתוך קובץ דוח הביצוע: סה"כ לתשלום בתוספת גמישות 25% ₪${fmt(t.paymentTotal)}${t.paymentAides > 0 ? ` + תוספת סייעות רפואיות/אישיות ₪${fmt(t.paymentAides)}` : ''} (אומדן המערכת: ₪${fmt(t.computedExpected)}).`
-    : `אומדן המערכת (הקובץ לא חושב): שכר מוכר ₪${fmt(t.salaryRecognized)} + העשרה ₪${fmt(t.enrichRecognized)}${t.bfsRecognized > 0 ? ` + ארוחות בוקר/מלגות ₪${fmt(t.bfsRecognized)}` : ''}${t.mgmtRecognized > 0 ? ` + ניהול ₪${fmt(t.mgmtRecognized)}` : ''} − השתתפות הורים ₪${fmt(t.income)}.`} תקורת הניהול מוכרת ב-100% מתקציב הסל.</span>
+    : `אומדן המערכת (הקובץ לא חושב): שכר מוכר ₪${fmt(t.salaryRecognized)} + העשרה ₪${fmt(t.enrichRecognized)}${t.bfsRecognized > 0 ? ` + ארוחות בוקר/מלגות ₪${fmt(t.bfsRecognized)}` : ''}${t.mgmtRecognized > 0 ? ` + ניהול ₪${fmt(t.mgmtRecognized)}` : ''}${t.tripAiRecognized > 0 ? ` + פעילות חוץ/AI ₪${fmt(t.tripAiRecognized)}` : ''} − השתתפות הורים ₪${fmt(t.income)}.`} תקורת הניהול מוכרת ב-100% מתקציב הסל.</span>
 </div>
 </body></html>`;
 }

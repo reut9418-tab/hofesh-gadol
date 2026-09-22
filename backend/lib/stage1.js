@@ -168,6 +168,27 @@ async function stage1Data(db, report, client, authority) {
     return { instr, coord };
   };
 
+  // סלי המכינות הייעודיים (פעילות חוץ=יום סיור / AI): הקצאת הכרטסות המשויכות
+  // פר מוסד — תואמת-שם למוסד שלה, כללית — פיצול יחסי לילדים (כמו במילוי הייצוא)
+  const extraAlloc = { trip: {}, ai: {} }; // symbol -> נטו מוקצה
+  if (report.framework === 'prep') {
+    const extraCards = (await db.prepare(
+      "SELECT * FROM ledger_cards WHERE report_id = ? AND basket_type IN ('trip','ai')"
+    ).all(report.id)).filter((c) => (c.net || 0) > 0);
+    if (extraCards.length) {
+      const cardSyms = matchDeptsToInstitutions(insts, [...new Set(extraCards.map((c) => c.card_name))]);
+      const totKids = insts.reduce((s, i) => s + (i.children_count || 0), 0);
+      for (const c of extraCards) {
+        const m = extraAlloc[c.basket_type];
+        const sym = cardSyms[c.card_name];
+        if (sym) m[String(sym)] = (m[String(sym)] || 0) + c.net;
+        else if (totKids > 0) insts.forEach((i) => {
+          m[String(i.symbol)] = (m[String(i.symbol)] || 0) + c.net * ((i.children_count || 0) / totKids);
+        });
+      }
+    }
+  }
+
   const mkUnit = (name, symbol, baskets, salaryNet, split, children, salaryByPayer) => {
     // מול התקציב משווים את הניצול המוכר: עלות + מע"מ ללקוח חייב, מוגבל
     // פר-עובד לתקרת 140% (כמו בדיווח). ההשוואה סל-מול-סל: הדרכה לבד,
@@ -181,6 +202,11 @@ async function stage1Data(db, report, client, authority) {
     const enrichB = baskets.enrichment || 0;
     const flexB = baskets.flexible || 0;
     const breakfastB = baskets.breakfast || 0;
+    // סלי המכינות הייעודיים — תקציב מהקובץ מול ההוצאה שהוקצתה מהכרטסות
+    const tripBudget = baskets.trip || 0, aiBudget = baskets.ai || 0;
+    const allocOf = (m) => (symbol == null ? Object.values(m).reduce((s, v) => s + v, 0) : (m[String(symbol)] || 0));
+    const tripAllocated = Math.round(allocOf(extraAlloc.trip) * vatFactor * 100) / 100;
+    const aiAllocated = Math.round(allocOf(extraAlloc.ai) * vatFactor * 100) / 100;
     /* מטריצת הניוד בין הסלים (עד 25% מתקציב סל המקור בכל ניוד):
        שכר → העשרה / גמיש / רכזות / ניהול; רכזות → שכר בלבד;
        גמיש → ארוחות בוקר / שכר / חריגת רכזות; העשרה ↔ ניהול (ומקבלים משכר) */
@@ -228,6 +254,9 @@ async function stage1Data(db, report, client, authority) {
       flexConsumed, flexAvailable, uncovered, enrichShift,
       coordToSalary, salaryToCoord, // ניודים פנימיים בין סלי השכר (רכזות↔שכר)
       management: baskets.management || 0,
+      // מכינות: פעילות חוץ (יום סיור) ו-AI — ההכרה עד תקרת הסל
+      tripBudget, tripAllocated, tripRecognized: Math.min(tripAllocated, tripBudget),
+      aiBudget, aiAllocated, aiRecognized: Math.min(aiAllocated, aiBudget),
       optionA: { enrich: enrichB + enrichBonus, enrichBonus, flexForFood: flexAvailable },
       optionB: { enrich: enrichB, flexRemaining: flexAvailable },
       // יעדי הכרטסות (הטבלה המסכמת): שכר = דוח העלות (נטו); ארוחת בוקר = תקציב +
@@ -246,6 +275,8 @@ async function stage1Data(db, report, client, authority) {
         enrichment: net(enrichB + enrichBonus),
         // אופציית 75% — הכרה מופחתת בהעשרה כשקיימת חריגת שכר לא מכוסה
         enrichmentReduced: net(enrichB - enrichShift),
+        // מכינות: יעד הכרטסת = תקציב הסל הייעודי (תקרת ההכרה של המשרד)
+        trip: net(tripBudget), ai: net(aiBudget),
         income: children && tariff ? Math.round((children * tariff / vatFactor) * 100) / 100 : 0,
       },
     };
@@ -384,9 +415,12 @@ function renderStage1Html(d) {
     const transferLines = `${u.coordToSalary > 0
       ? `<div>ניוד מסל הרכזות לשכר: <b>₪${fmt(u.coordToSalary)}</b> מיתרת הריכוז מכסים חלק מחריגת ההדרכה <span class="soft">(רכזות מתניידות לשכר בלבד, עד 25% מסל הרכזות)</span>.</div>` : ''}${u.salaryToCoord > 0
       ? `<div>ניוד מסל השכר לרכזות: <b>₪${fmt(u.salaryToCoord)}</b> מיתרת ההדרכה מכסים חלק מחריגת הריכוז <span class="soft">(עד 25% מסל השכר)</span>.</div>` : ''}`;
+    // סלי המכינות הייעודיים — הוצאות הכרטסות המיוחסות מול תקציב הסל
+    const extraBasketLines = `${basketLine('סל פעילות חוץ (יום סיור)', u.tripAllocated, u.tripBudget)}
+      ${basketLine('סל AI', u.aiAllocated, u.aiBudget)}`;
     const salaryLine = `${basketLine('סל הדרכה — שכר הצוות החינוכי', u.instrActual, u.instrBudget).replace('</div>', instrCutNote + '</div>')}
       ${basketLine(u.symbol == null ? 'סל ריכוז — רכזות גנים' : 'סל ריכוז — רכז/ת וסגן/ית', u.coordActual, u.coordBudget)}
-      ${transferLines}${flexLine}${booksNote ? `<div>${booksNote}</div>` : ''}`;
+      ${transferLines}${flexLine}${extraBasketLines}${booksNote ? `<div>${booksNote}</div>` : ''}`;
     // כשהסל הגמיש נבלע כולו בחריגת השכר — אין שתי אופציות, רק מצב נתון
     const optionsBlock = u.flexAvailable <= 0 && u.overflow > 0
       ? `<div class="opt" style="flex:none">
@@ -438,7 +472,10 @@ function renderStage1Html(d) {
   const salaryLabel = d.report.framework === 'gardens' ? 'שכר מובילות + רכזים' : 'שכר מורים + רכזים';
   const salaryCols = multiPayer ? d.payers.map((p) => `${salaryLabel} — ${esc(p)}`) : [salaryLabel];
   const anyFlexRemain = d.units.some((u) => u.targets.flexRemain > 0);
-  const headCols = [...salaryCols, ...(anyBreakfast ? ['ארוחת בוקר'] : []), ...enrichCols, ...(anyFlexRemain ? ['סל גמיש'] : []), ...(anyIncome ? ['הכנסות משתתפים'] : [])];
+  // סלי המכינות הייעודיים — עמודות רק כשקיים תקציב (בבתי"ס/גנים אין אותם)
+  const anyTrip = d.units.some((u) => u.targets.trip > 0);
+  const anyAi = d.units.some((u) => u.targets.ai > 0);
+  const headCols = [...salaryCols, ...(anyBreakfast ? ['ארוחת בוקר'] : []), ...enrichCols, ...(anyTrip ? ['פעילות חוץ (יום סיור)'] : []), ...(anyAi ? ['סל AI'] : []), ...(anyFlexRemain ? ['סל גמיש'] : []), ...(anyIncome ? ['הכנסות משתתפים'] : [])];
   const salaryCells = (u) => multiPayer
     ? d.payers.map((p) => (u.targets.salaryByPayer[p] ? `₪${fmt(u.targets.salaryByPayer[p])}` : '—'))
     : [`₪${fmt(u.targets.salary)}`];
@@ -447,6 +484,8 @@ function renderStage1Html(d) {
       ...salaryCells(u),
       ...(anyBreakfast ? [u.targets.breakfast > 0 ? `₪${fmt(u.targets.breakfast)}` : '—'] : []),
       ...enrichCells(u),
+      ...(anyTrip ? [u.targets.trip > 0 ? `₪${fmt(u.targets.trip)}` : '—'] : []),
+      ...(anyAi ? [u.targets.ai > 0 ? `₪${fmt(u.targets.ai)}` : '—'] : []),
       ...(anyFlexRemain ? [u.targets.flexRemain > 0 ? `₪${fmt(u.targets.flexRemain)}` : '—'] : []),
       ...(anyIncome ? [u.targets.income > 0 ? `₪${fmt(u.targets.income)}` : '—'] : []),
     ];
@@ -462,13 +501,14 @@ function renderStage1Html(d) {
         salary: a.salary + u.targets.salary, breakfast: a.breakfast + u.targets.breakfast,
         enrichment: a.enrichment + u.targets.enrichment,
         enrichmentReduced: a.enrichmentReduced + u.targets.enrichmentReduced,
+        trip: a.trip + u.targets.trip, ai: a.ai + u.targets.ai,
         flexRemain: a.flexRemain + u.targets.flexRemain,
         income: a.income + u.targets.income,
       };
-    }, { byPayer: {}, salary: 0, breakfast: 0, enrichment: 0, enrichmentReduced: 0, flexRemain: 0, income: 0 });
+    }, { byPayer: {}, salary: 0, breakfast: 0, enrichment: 0, enrichmentReduced: 0, trip: 0, ai: 0, flexRemain: 0, income: 0 });
     const sc = multiPayer ? d.payers.map((p) => `₪${fmt(t.byPayer[p] || 0)}`) : [`₪${fmt(t.salary)}`];
     const ec = anyShift ? [`₪${fmt(t.enrichmentReduced)}`, `₪${fmt(t.enrichment)}`] : [`₪${fmt(t.enrichment)}`];
-    const cells = [...sc, ...(anyBreakfast ? [`₪${fmt(t.breakfast)}`] : []), ...ec, ...(anyFlexRemain ? [`₪${fmt(t.flexRemain)}`] : []), ...(anyIncome ? [`₪${fmt(t.income)}`] : [])];
+    const cells = [...sc, ...(anyBreakfast ? [`₪${fmt(t.breakfast)}`] : []), ...ec, ...(anyTrip ? [`₪${fmt(t.trip)}`] : []), ...(anyAi ? [`₪${fmt(t.ai)}`] : []), ...(anyFlexRemain ? [`₪${fmt(t.flexRemain)}`] : []), ...(anyIncome ? [`₪${fmt(t.income)}`] : [])];
     totalsRow = `<tr class="total"><td>סה"כ</td>${cells.map((c) => `<td class="num">${c}</td>`).join('')}</tr>`;
   }
   // אין מוסדות (טרם הועלה קובץ המשרד) או שכל השכר טרם שויך לסמלים —
@@ -483,7 +523,7 @@ function renderStage1Html(d) {
     <thead><tr><th>${d.units.length > 1 ? 'בית ספר' : 'מסגרת'}</th>${headCols.map((h) => `<th class="num">${h}</th>`).join('')}</tr></thead>
     <tbody>${d.units.map(unitRow).join('')}${totalsRow}</tbody>
   </table>
-  <p class="note">שכר — הסכום שדווח בדוח הביצוע בניכוי מע"מ (יעד הכרטסת), לצד העלות בספרים${multiPayer ? ', בהפרדה לפי המשלם (כרטסת נפרדת בספרי כל משלם)' : ''}. ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש שנותרה אחרי בליעת חריגת השכר (בהנחת אופציה א'); אם יוחלט אחרת, ראו סעיף 4. העשרה — כולל ניוד יתרת שכר היכן שקיימת (עד 25% מתקציב סל המקור ניתן לניוד; הסל המקבל אינו מוגבל)${anyShift ? '; בשל חריגת השכר מוצגות שתי אופציות — 75% מהתקציב (מומלץ: 25% מנותבים לכיסוי חריגת השכר) או 100% מהתקציב (החריגה נותרת ללא כיסוי)' : ''}. סל גמיש — היתרה שנותרה אחרי בליעת חריגות השכר. הכנסות משתתפים — כמות הילדים בדוח הביצוע × תעריף המשרד${d.tariff ? ` (₪${fmt(d.tariff)} לילד)` : ''}.${d.hasVat ? ' <b>כל היעדים בטבלה רשומים נטו, ללא מע"מ</b> — כפי שנרשם בכרטסת; בדוח הביצוע למשרד הסכומים מדווחים בתוספת מע"מ 18%.' : ''}</p>`;
+  <p class="note">שכר — הסכום שדווח בדוח הביצוע בניכוי מע"מ (יעד הכרטסת), לצד העלות בספרים${multiPayer ? ', בהפרדה לפי המשלם (כרטסת נפרדת בספרי כל משלם)' : ''}. ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש שנותרה אחרי בליעת חריגת השכר (בהנחת אופציה א'); אם יוחלט אחרת, ראו סעיף 4. העשרה — כולל ניוד יתרת שכר היכן שקיימת (עד 25% מתקציב סל המקור ניתן לניוד; הסל המקבל אינו מוגבל)${anyShift ? '; בשל חריגת השכר מוצגות שתי אופציות — 75% מהתקציב (מומלץ: 25% מנותבים לכיסוי חריגת השכר) או 100% מהתקציב (החריגה נותרת ללא כיסוי)' : ''}.${anyTrip || anyAi ? ' פעילות חוץ (יום סיור) וסל AI — תקציב הסל הייעודי בקובץ המשרד (תקרת ההכרה להוצאות אלו).' : ''} סל גמיש — היתרה שנותרה אחרי בליעת חריגות השכר. הכנסות משתתפים — כמות הילדים בדוח הביצוע × תעריף המשרד${d.tariff ? ` (₪${fmt(d.tariff)} לילד)` : ''}.${d.hasVat ? ' <b>כל היעדים בטבלה רשומים נטו, ללא מע"מ</b> — כפי שנרשם בכרטסת; בדוח הביצוע למשרד הסכומים מדווחים בתוספת מע"מ 18%.' : ''}</p>`;
 
   return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
 <title>מכתב שלב 1 — ${esc(to)} — ${esc(d.label)}</title>
