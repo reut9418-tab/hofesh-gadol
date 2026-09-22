@@ -21,6 +21,24 @@ const SCHOOL_TYPE_MAP = {
   'סייעת ממשיכה': { staffType: 'מורה', role: 'עוזר/ת חינוך' },
   'רכזת גן': { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' },
 };
+/* גנים: הצמדת איש-צוות/תפקיד לרשימת תבנית הגנים בלבד (כלל רעות 22.9:
+   "תפקידים רק מתוך הרשימה בפרויקט") — תפקיד בתי"ס שזלג ("רכזת תכנית
+   בבית הספר") לא נספר בקובץ לסל רכזות הגנים */
+function mapGardensStaff(staffType, role) {
+  const st = String(staffType || '').trim();
+  const entry = STAFF_TYPES.find((x) => x.type === st);
+  if (entry) {
+    const exact = role && entry.roles.find((r) => r.trim() === String(role).trim());
+    return { staffType: entry.type, role: exact || entry.roles[0] };
+  }
+  if (/רכז|סג[נן]/.test(st)) return { staffType: 'רכזת גן', role: 'רכז/ת גן' };
+  if (/סייע|סיעת/.test(st)) return { staffType: 'סייעת ממשיכה', role: 'סייעת' };
+  if (/גננת|מוביל/.test(st)) return { staffType: 'גננת', role: 'גננת של הגן' };
+  if (/מדצ/.test(st)) return { staffType: 'מדצ', role: 'מדצ/ית' };
+  if (/מור/.test(st)) return { staffType: 'מורה', role: 'מורה' };
+  return { staffType: st || null, role: role || null };
+}
+
 function mapSchoolsStaff(staffType, role, schoolTypes) {
   let st = staffType, rl = role;
   const m = st && SCHOOL_TYPE_MAP[String(st).trim()];
@@ -441,6 +459,7 @@ router.get('/:id/prep', ah(async (req, res) => {
     // "מורה" עם תפקיד לפי מדרגת הברוטו השעתי (כלל רעות 22.9, גוש עציון)
     if (isSchools && !stVal) ({ staffType: stVal, role: roleVal } = defaultSchoolsStaff(r.gross != null && r.hours ? r.gross / r.hours : 0));
     if (isSchools) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, schoolTypes));
+    else if (stVal) ({ staffType: stVal, role: roleVal } = mapGardensStaff(stVal, roleVal));
     return {
       rowId: r.id, empId: r.emp_id, name: r.emp_name,
       firstName: r.first_name, lastName: r.last_name, dept: r.dept, instName: r.inst_name,
@@ -1232,6 +1251,7 @@ router.get('/:id/export', ah(async (req, res) => {
     // בתי"ס בלי שום סיווג — ברירת מחדל לפי מדרגת הברוטו השעתי (כלל 22.9)
     if (isSch && !stVal) ({ staffType: stVal, role: roleVal } = defaultSchoolsStaff(hourlyGross || 0));
     if (isSch) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, exSchoolTypes));
+    else if (stVal) ({ staffType: stVal, role: roleVal } = mapGardensStaff(stVal, roleVal));
     return [
       resolveSymbol(r), null, r.emp_id,
       r.first_name || (r.emp_name || '').split(' ')[0] || '',
