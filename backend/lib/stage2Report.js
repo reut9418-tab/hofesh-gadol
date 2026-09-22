@@ -274,20 +274,23 @@ ${(d.expenseMatrix && d.expenseMatrix.rows.length) ? `
 
 <h2>ג. התשלום הצפוי מהמשרד — מתוך קובץ דוח הביצוע</h2>
 <table>
-  <thead><tr><th>מסגרת</th>
-    <th class="num">סה"כ לתשלום בתוספת גמישות 25% במעבר בין הסלים</th>
-    <th class="num">תוספת סייעות רפואיות או אישיות</th>
-    <th class="num">אומדן המערכת</th><th class="num">פער</th></tr></thead>
+  <thead><tr><th>${d.report.framework === 'gardens' ? 'מסגרת' : 'בית ספר'}</th>
+    <th class="num">צפוי לקבל — סה"כ לתשלום בתוספת גמישות 25% במעבר בין הסלים</th>
+    <th class="num">תוספת סייעות רפואיות או אישיות</th></tr></thead>
   <tbody>
-  <tr class="total"><td>${isSingle ? esc(d.units[0].name) : `סה"כ לפרויקט — ${d.units.length} מוסדות`}</td>
-    <td class="num">${t.paymentTotal != null ? `<b>₪${fmt(t.paymentTotal)}</b>` : '<span class="soft">לא חושב בקובץ</span>'}</td>
-    <td class="num">${t.paymentAides > 0 ? '₪' + fmt(t.paymentAides) : '—'}</td>
-    <td class="num">₪${fmt(t.computedExpected)}</td>
-    <td class="num">${t.paymentTotal != null ? (Math.abs(t.paymentTotal + t.paymentAides - t.computedExpected) <= 200 * Math.max(1, d.units.length) ? '<span style="color:#4C7A45">תואם ✓</span>' : `₪${fmt(t.paymentTotal + t.paymentAides - t.computedExpected)}`) : '—'}</td>
-  </tr>
+  ${d.units.map((u, i) => `<tr${i % 2 ? ' class="z"' : ''}>
+    <td>${u.symbol ? `${esc(u.name)} <span class="soft">(${esc(u.symbol)})</span>` : esc(u.name)}</td>
+    <td class="num">${u.paymentTotal > 0 ? `<b>₪${fmt(u.paymentTotal)}</b>`
+      : u.paymentNote ? `<span class="soft">${esc(u.paymentNote)}</span>`
+      : `<b>₪${fmt(u.computedExpected)}</b> <span class="soft">(אומדן)</span>`}</td>
+    <td class="num">${u.paymentAides > 0 ? '₪' + fmt(u.paymentAides) : '—'}</td>
+  </tr>`).join('')}
+  ${isSingle ? '' : `<tr class="total"><td>סה"כ לפרויקט — ${d.units.length} מוסדות</td>
+    <td class="num">₪${fmt(d.units.reduce((s, u) => s + (u.paymentTotal > 0 ? u.paymentTotal : u.computedExpected), 0))}</td>
+    <td class="num">${t.paymentAides > 0 ? '₪' + fmt(t.paymentAides) : '—'}</td></tr>`}
   </tbody>
 </table>
-<div class="soft">"סה"כ לתשלום" ו"תוספת סייעות" נקראים משורות הסיכום של קובץ דוח הביצוע${d.report.framework === 'gardens' ? ' (כל הגנים במרוכז)' : ' (סיכום כל המוסדות)'}; כשהקובץ לא חושב — "צפוי לקבל" נשען על אומדן המערכת.</div>
+<div class="soft">הסכום לכל ${d.report.framework === 'gardens' ? 'מסגרת' : 'בית ספר'} נלקח משורת הסיכום של הטבלה שלו בקובץ דוח הביצוע ("סה"כ לתשלום בתוספת גמישות 25%"), והסייעות הרפואיות/אישיות מוצגות בעמודה נפרדת; כשהקובץ לא חושב — מוצג אומדן המערכת (מסומן).</div>
 
 <h3 style="font-size:13.5px;color:#9A7B2F;margin:18px 0 4px">פירוט ההכרה — אומדן המערכת (סיכום)</h3>
 <table>
