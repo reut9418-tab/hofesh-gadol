@@ -802,13 +802,17 @@ router.put('/:id/prep', ah(async (req, res) => {
 
 /* ---------- לשונית "דוח הוצאות בפועל" מהכרטסות (§6) ---------- */
 const EXPENSE_BASKETS = ['enrichment', 'breakfast', 'scholarships', 'management'];
-const EXPENSE_HE = { enrichment: 'העשרה', breakfast: 'ארוחת בוקר', scholarships: 'מלגות להורים', management: 'ניהול ותפעול' };
+// מכינות קיץ: מהויות ההוצאה של התבנית — כולל פעילות חוץ (יום סיור) ו-AI;
+// התוויות חייבות להתאים במדויק לרשימה הנפתחת של הלשונית
+const PREP_EXPENSE_BASKETS = ['enrichment', 'scholarships', 'management', 'trip', 'ai'];
+const EXPENSE_HE = { enrichment: 'העשרה', breakfast: 'ארוחת בוקר', scholarships: 'מלגות להורים', management: 'ניהול ותפעול', trip: 'פעילות חוץ', ai: 'AI' };
 const OPERATION_SOURCE = 'קבלן משנה';
 
 async function buildExpenseFill(db, report, client) {
+  const basketList = report.framework === 'prep' ? PREP_EXPENSE_BASKETS : EXPENSE_BASKETS;
   const cards = (await db.prepare(
-    `SELECT * FROM ledger_cards WHERE report_id = ? AND basket_type IN (${EXPENSE_BASKETS.map(() => '?').join(',')})`
-  ).all(report.id, ...EXPENSE_BASKETS)).filter((c) => (c.net || 0) > 0);
+    `SELECT * FROM ledger_cards WHERE report_id = ? AND basket_type IN (${basketList.map(() => '?').join(',')})`
+  ).all(report.id, ...basketList)).filter((c) => (c.net || 0) > 0);
   const vat = client && client.has_vat ? 1.18 : 1;
   const r2 = (n) => Math.round(n * vat * 100) / 100;
   const round2 = (n) => Math.round(n * 100) / 100;
