@@ -198,6 +198,8 @@ export type Assignment = {
   symbol: string | null; staffType: string | null; role: string | null;
   // תעריפים ידניים (כלל 22.9): נשלחים רק כשנערכו; null = שחזור ערכי דוח העלות
   hours?: number | null; hourlyGross?: number | null; hourlyCost?: number | null;
+  // תיקון ת.ז לא תקינה (כלל 23.9): נשלח רק כשנערך — מעדכן את כל שורות העובד ונלמד
+  empId?: string | null;
 };
 export const getReportPrep = (reportId: number): Promise<PrepData> =>
   api.get(`/reports/${reportId}/prep`).then((r) => r.data);

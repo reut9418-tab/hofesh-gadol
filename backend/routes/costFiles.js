@@ -30,6 +30,15 @@ async function saveRouting(db, clientId, deptKey, reportId) {
   ).run(clientId, deptKey, val);
 }
 
+/* תיקוני ת.ז שנלמדו ללקוח (כלל רעות 23.9, emp_id_fix) — מוחלים על כל קליטת
+   קובץ עלות, כך שתיקון ידני במסך השיוכים שורד החלפת/קליטת קובץ מחדש */
+async function applyIdFixes(db, clientId, records) {
+  const fixes = {};
+  (await db.prepare("SELECT map_key, map_value FROM client_mappings WHERE client_id = ? AND mapping_type = 'emp_id_fix'")
+    .all(clientId)).forEach((r) => { fixes[r.map_key] = r.map_value; });
+  if (Object.keys(fixes).length) records.forEach((r) => { if (fixes[String(r.id)]) r.id = fixes[String(r.id)]; });
+}
+
 /* דוחות הלקוח עם תווית קריאה — יעדי הניתוב */
 async function clientReports(db, clientId) {
   const reports = await db.prepare('SELECT * FROM reports WHERE client_id = ? ORDER BY id').all(clientId);
@@ -88,6 +97,7 @@ router.post('/clients/:clientId/cost-files', upload.single('file'), ah(async (re
   if (!parsed.records.length) {
     return res.status(422).json({ error: 'לא זוהו שורות שכר בקובץ (ת.ז / עלות / ברוטו). ניתן לשייך עמודות ידנית בהמשך.' });
   }
+  await applyIdFixes(db, clientId, parsed.records);
 
   const fileRow = await db.prepare(
     'INSERT INTO cost_files (client_id, filename, software, sheets_used, row_count) VALUES (?, ?, ?, ?, ?)'
@@ -328,6 +338,7 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
   try { parsed = parseCostFile(buf, learned); }
   catch { return res.status(422).json({ error: 'הקליטה מחדש נכשלה — לא הצלחתי לקרוא את הקובץ.' }); }
   if (!parsed.records.length) return res.status(422).json({ error: 'עם השיוך הזה לא זוהו שורות שכר — בדקי את עמודת תעודת הזהות.' });
+  await applyIdFixes(db, file.client_id, parsed.records);
 
   const oldRows = await db.prepare('SELECT * FROM cost_rows WHERE cost_file_id = ?').all(fileId);
   const keep = new Map(oldRows.map((r) => [`${r.emp_id}|${norm(r.dept)}`, r]));

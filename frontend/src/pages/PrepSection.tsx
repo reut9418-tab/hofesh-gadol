@@ -6,6 +6,20 @@ import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1D
 const fmt = (n: number | null, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
 
+/* בדיקת ספרת הביקורת של ת.ז ישראלית — כמו בבקרת "ת.ז לא תקינה" בשרת */
+const isValidIsraeliId = (raw: string | null | undefined) => {
+  const s = String(raw ?? '').replace(/\D/g, '');
+  if (s.length < 5 || s.length > 9) return false;
+  const p = s.padStart(9, '0');
+  let sum = 0;
+  for (let i = 0; i < 9; i++) {
+    let d = Number(p[i]) * (i % 2 === 0 ? 1 : 2);
+    if (d > 9) d -= 9;
+    sum += d;
+  }
+  return sum % 10 === 0;
+};
+
 /* הכנת דוח הביצוע (§9): שיוך כל עובד לגן/מוסד + איש צוות + תפקיד,
    ואז ייצוא קובץ המשרד עם גיליון "פירוט עלויות כח אדם" ממולא. */
 export default function PrepSection({ reportId }: { reportId: number }) {
@@ -42,7 +56,9 @@ export default function PrepSection({ reportId }: { reportId: number }) {
     setAssign((p) => {
       const next = { ...p };
       shown.forEach((r) => {
+        // שימור עריכות קיימות בשורה (תעריפים ידניים / תיקון ת.ז) בעת שיוך קבוצתי
         next[r.rowId] = {
+          ...next[r.rowId],
           symbol: bulk.symbol ?? next[r.rowId]?.symbol ?? null,
           staffType: bulk.staffType ?? next[r.rowId]?.staffType ?? null,
           role: bulk.role ?? next[r.rowId]?.role ?? null,
@@ -331,6 +347,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
           <thead>
             <tr style={{ position: 'sticky', top: 0, background: T.tealSoft, textAlign: 'right', color: T.ink, fontSize: 11, zIndex: 1 }}>
               <th style={{ padding: '6px 8px', fontWeight: 600 }}>עובד</th>
+              <th style={{ padding: '6px 8px', fontWeight: 600, width: 96 }} title="ת.ז אדומה = ספרת ביקורת שגויה; עריכה מתקנת את כל שורות העובד ונלמדת ללקוח">ת.ז</th>
               <th style={{ padding: '6px 8px', fontWeight: 600 }}>מחלקה</th>
               <th style={{ padding: '6px 8px', fontWeight: 600, width: 130 }}>סמל מקום פעילות</th>
               <th style={{ padding: '6px 8px', fontWeight: 600, width: 130 }}>איש צוות</th>
@@ -349,6 +366,21 @@ export default function PrepSection({ reportId }: { reportId: number }) {
               return (
                 <tr key={r.rowId} style={{ borderTop: `1px solid ${T.line}`, background: complete ? T.greenBg + '44' : undefined }}>
                   <td style={{ padding: '5px 8px', fontWeight: 600, whiteSpace: 'nowrap' }}>{r.name || `${r.firstName || ''} ${r.lastName || ''}`}</td>
+                  {/* תיקון ת.ז לא תקינה (כלל 23.9): נערך → מעדכן את כל שורות העובד ונלמד ללקוח */}
+                  {(() => {
+                    const shownId = a.empId !== undefined && a.empId !== null ? a.empId : (r.empId || '');
+                    const idOk = isValidIsraeliId(shownId);
+                    return (
+                      <td style={{ padding: '5px 8px' }}>
+                        <input value={shownId} dir="ltr" inputMode="numeric"
+                          onChange={(e) => set(r.rowId, { empId: e.target.value.replace(/\D/g, '') } as any)}
+                          title={idOk ? 'ת.ז תקינה' : 'ת.ז לא תקינה (ספרת ביקורת) — ניתן לתקן כאן; השמירה מעדכנת את כל שורות העובד'}
+                          style={{ ...input, padding: '4px 6px', fontSize: 11.5, width: '100%', textAlign: 'center',
+                            borderColor: idOk ? (a.empId !== undefined ? T.amber : T.line) : '#B3261E',
+                            background: idOk ? undefined : '#FBECEA', color: idOk ? undefined : '#B3261E' }} />
+                      </td>
+                    );
+                  })()}
                   <td style={{ padding: '5px 8px', color: T.inkSoft, fontSize: 11 }}>{r.dept}</td>
                   <td style={{ padding: '5px 8px' }}>
                     <input list={`inst-${reportId}`} value={a.symbol || ''} placeholder="סמל…"

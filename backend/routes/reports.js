@@ -721,6 +721,8 @@ const prepSchema = z.object({
     symbol: z.string().nullable().optional(),
     staffType: z.string().nullable().optional(),
     role: z.string().nullable().optional(),
+    // תיקון ת.ז לא תקינה (כלל רעות 23.9) — מעדכן את כל שורות העובד ונלמד ללקוח
+    empId: z.string().nullable().optional(),
     // תעריפים ידניים (כלל 22.9): מה שבתוכנה קובע — נכתב על השורה עצמה
     hours: z.number().nonnegative().nullable().optional(),
     hourlyGross: z.number().nonnegative().nullable().optional(),
@@ -781,6 +783,22 @@ router.put('/:id/prep', ah(async (req, res) => {
     try { await applyManualRates(db, id, parseInt(rowId), a); }
     catch (e) { console.error('עדכון תעריפים ידני נכשל לשורה ' + rowId + ':', e.message); }
   }
+  // תיקון ת.ז (כלל רעות 23.9): מעדכן את כל שורות העובד אצל הלקוח (בכל
+  // הפרויקטים) ונלמד ב-client_mappings emp_id_fix — מוחל מחדש בכל קליטת קובץ
+  for (const [rowId, a] of entries) {
+    if (a.empId === undefined || a.empId === null) continue;
+    const newId = String(a.empId).replace(/\D/g, '');
+    if (!newId) continue;
+    const row = await db.prepare('SELECT emp_id, client_id FROM cost_rows WHERE id = ? AND report_id = ?').get(parseInt(rowId), id);
+    if (!row || String(row.emp_id) === newId) continue;
+    await db.prepare('UPDATE cost_rows SET emp_id = ? WHERE client_id = ? AND emp_id = ?').run(newId, row.client_id, String(row.emp_id));
+    await db.prepare(
+      `INSERT INTO client_mappings (client_id, mapping_type, map_key, map_value) VALUES (?, 'emp_id_fix', ?, ?)
+       ON CONFLICT(client_id, mapping_type, map_key) DO UPDATE SET map_value = excluded.map_value`
+    ).run(row.client_id, String(row.emp_id), newId);
+    updated++;
+  }
+
   // זיכרון השיוך הידני פר-עובד/ת (כלל 22.9): נשמר ללקוח ושורד החלפת דוח עלות
   try {
     const ids = entries.map(([rowId]) => parseInt(rowId)).filter(Number.isFinite);
