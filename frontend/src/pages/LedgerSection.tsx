@@ -60,7 +60,7 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
                 style={btn('ghost')}>🖨 PDF</button>
             </>
           )}
-          <input ref={inputRef} type="file" accept=".xlsx,.xls" multiple style={{ display: 'none' }} onChange={(e) => onPick(e.target.files)} />
+          <input ref={inputRef} type="file" accept=".xlsx,.xls,.pdf" multiple style={{ display: 'none' }} onChange={(e) => onPick(e.target.files)} />
           <button onClick={() => inputRef.current?.click()} disabled={busy}
             style={{ ...btn(data?.cards.length ? 'ghost' : 'primary'), opacity: busy ? 0.6 : 1 }}>
             {busy ? 'קולט…' : '＋ העלאת כרטסת'}

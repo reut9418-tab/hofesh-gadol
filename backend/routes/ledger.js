@@ -5,6 +5,7 @@ const multer = require('multer');
 const { z } = require('zod');
 const { getDB } = require('../db');
 const { parseLedgerFile, basketForCardName, BASKET_HE, basketOptionsFor } = require('../lib/ledger');
+const { parseLedgerPdf, isPdfBuffer } = require('../lib/ledgerPdf');
 const { ledgerReconcile, payerBreakdown, expenseComparison } = require('../lib/reconcile');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -41,11 +42,15 @@ router.post('/reports/:id/ledger-file', upload.single('file'), ah(async (req, re
   if (!req.file) return res.status(400).json({ error: 'לא צורף קובץ' });
   const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
 
+  // כרטסת PDF (בקשת רעות 23.9) — אותו מבנה חשבשבת, מחולץ מהטקסט של הקובץ
+  const pdf = isPdfBuffer(req.file.buffer);
   let parsed;
-  try { parsed = parseLedgerFile(req.file.buffer); }
+  try { parsed = pdf ? await parseLedgerPdf(req.file.buffer) : parseLedgerFile(req.file.buffer); }
   catch { return res.status(422).json({ error: 'לא הצלחתי לקרוא את קובץ הכרטסת.' }); }
   if (!parsed.cards.length) {
-    return res.status(422).json({ error: 'לא זוהו כרטיסי הנהלת חשבונות בקובץ (מבנה "מפתח חשבון" של חשבשבת).' });
+    return res.status(422).json({ error: pdf
+      ? 'לא זוהו כרטיסי הנהלת חשבונות ב-PDF. אם זה קובץ סרוק (צילום) — אין בו טקסט לקריאה; יש לייצא מהנה"ח כ-PDF טקסט או כאקסל.'
+      : 'לא זוהו כרטיסי הנהלת חשבונות בקובץ (מבנה "מפתח חשבון" של חשבשבת).' });
   }
 
   const aliases = await learnedAliases(db, report.client_id);
