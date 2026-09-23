@@ -26,6 +26,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
   const [data, setData] = useState<PrepData | null>(null);
   const [assign, setAssign] = useState<Record<string, Assignment>>({});
   const [deptFilter, setDeptFilter] = useState('');
+  const [search, setSearch] = useState(''); // חיפוש עובד/ת — שם או ת.ז
   const [bulk, setBulk] = useState<Assignment>({ symbol: null, staffType: null, role: null });
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -41,7 +42,17 @@ export default function PrepSection({ reportId }: { reportId: number }) {
   useEffect(() => { load(); }, [reportId]);
 
   const depts = useMemo(() => [...new Set((data?.rows || []).map((r) => r.dept))], [data]);
-  const shown = (data?.rows || []).filter((r) => !deptFilter || r.dept === deptFilter);
+  const q = search.trim();
+  const shown = (data?.rows || []).filter((r) => {
+    if (deptFilter && r.dept !== deptFilter) return false;
+    if (!q) return true;
+    const name = (r.name || `${r.firstName || ''} ${r.lastName || ''}`).trim();
+    // התאמת שם גם בסדר הפוך (משפחה פרטי / פרטי משפחה) — כל מילות החיפוש מופיעות בשם
+    const words = q.split(/\s+/);
+    const nameHit = words.every((w) => name.includes(w));
+    const idHit = /\d/.test(q) && String(r.empId || '').includes(q.replace(/\D/g, ''));
+    return nameHit || idHit;
+  });
   const missing = (data?.rows || []).filter((r) => {
     const a = assign[r.rowId] || {};
     return !a.symbol || !a.staffType || !a.role;
@@ -313,8 +324,13 @@ export default function PrepSection({ reportId }: { reportId: number }) {
         </div>
       )}
 
-      {/* שיוך קבוצתי — לפי מחלקה */}
+      {/* שיוך קבוצתי — לפי מחלקה + חיפוש עובד/ת */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', background: T.paper, borderRadius: 8, padding: '8px 12px', marginBottom: 10 }}>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="🔎 חיפוש עובד/ת — שם או ת.ז"
+          style={{ ...input, padding: '6px 10px', fontSize: 12, width: 190 }} />
+        {q && <span style={{ fontSize: 11.5, color: T.inkSoft }}>{shown.length} תוצאות
+          <button onClick={() => setSearch('')} title="ניקוי החיפוש"
+            style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, padding: '0 4px' }}>✕</button></span>}
         <span style={{ fontSize: 12, color: T.inkSoft }}>שיוך קבוצתי:</span>
         <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)} style={{ ...input, padding: '6px 8px', fontSize: 12 }}>
           <option value="">כל המחלקות ({data.rows.length})</option>
