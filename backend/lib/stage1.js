@@ -4,7 +4,7 @@
    בתי"ס פר סמל מוסד, גנים במרוכז. מוגש כדף HTML להדפסה/PDF. */
 
 const { costDataForReport } = require('./reportCosts');
-const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles } = require('./salaryCheck');
+const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles, coordHoursCapFor, isCoordType } = require('./salaryCheck');
 const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions } = require('./nameMatch');
 const { reportLabel } = require('./domain');
@@ -140,9 +140,9 @@ async function stage1Data(db, report, client, authority) {
       const na = String(a.emp_name || ''), nb = String(b.emp_name || '');
       return na < nb ? -1 : na > nb ? 1 : 0;
     });
-    // כלל רעות 16.9 (בתי"ס): רכז אחד לכל היותר בבי"ס, סגן 0 או 1 —
-    // מסווגי-שעות עודפים יורדים למורה
-    const demoted = report.framework !== 'gardens' ? demoteExtraSchoolRoles(ordered) : new Set();
+    // כלל רעות 23.9 (בתי"ס): רכזים עד תקרת שעות 7.6×ימי הפרויקט, סגן 0 או 1 —
+    // מסווגי-שעות עודפים יורדים למורה; שיוך ידני לא נדרס (שעותיו נספרות)
+    const demoted = report.framework !== 'gardens' ? demoteExtraSchoolRoles(ordered, coordHoursCapFor(report)) : new Set();
     const staffOf = (r) => {
       const byHours = report.framework !== 'gardens' && !demoted.has(r.id) ? schoolsRoleByHours(r.hours) : null;
       // תפקיד שמולא בקובץ שהועלה (ת"ז): בגנים קודם לניחוש (יבנה 16.9);
@@ -157,15 +157,17 @@ async function stage1Data(db, report, client, authority) {
     // דיווח הסגן מוכר רק כשמדווח גם רכז (תנאי הנוסחה בלשונית האיוש)
     const hasCoordRow = ordered.some((r) => basketForStaff(staffOf(r)) === 'coordinator');
     let depTaken = false;
+    let coordHours = 0; // סך שעות הרכזים — לבקרת תקרת 7.6×ימים במכתב
     for (const r of ordered) {
       const v = recognizedRowCost(r, vatFactor);
-      const basket = basketForStaff(staffOf(r));
-      if (basket === 'coordinator') coord += v;
+      const st = staffOf(r);
+      const basket = basketForStaff(st);
+      if (basket === 'coordinator') { coord += v; if (isCoordType(String(st || ''))) coordHours += r.hours || 0; }
       else if (basket === 'deputy' && report.framework === 'gardens') coord += v;
       else if (basket === 'deputy' && !depTaken) { depTaken = true; if (deputyEntitled && hasCoordRow) coord += v; }
       else instr += v;
     }
-    return { instr, coord };
+    return { instr, coord, coordHours };
   };
 
   // סלי המכינות הייעודיים (פעילות חוץ=יום סיור / AI): הקצאת הכרטסות המשויכות
@@ -253,6 +255,9 @@ async function stage1Data(db, report, client, authority) {
       enrichBudget: enrichB, flexBudget: flexB, breakfastBudget: breakfastB,
       flexConsumed, flexAvailable, uncovered, enrichShift,
       coordToSalary, salaryToCoord, // ניודים פנימיים בין סלי השכר (רכזות↔שכר)
+      // תקרת שעות הריכוז (כלל רעות 23.9): 7.6 ש' × ימי הפרויקט; בגנים לא רלוונטי
+      coordHours: split.coordHours || 0,
+      coordHoursCap: report.framework !== 'gardens' ? coordHoursCapFor(report) : null,
       management: baskets.management || 0,
       // מכינות: פעילות חוץ (יום סיור) ו-AI — ההכרה עד תקרת הסל
       tripBudget, tripAllocated, tripRecognized: Math.min(tripAllocated, tripBudget),
@@ -318,7 +323,7 @@ async function stage1Data(db, report, client, authority) {
       const stBud = (i.staff_coord_budget || 0) + (i.staff_dep_budget || 0);
       if (stRep > 0 || stBud > 0) {
         const total = split.instr + split.coord;
-        split = { instr: Math.max(0, total - stRep), coord: stBud };
+        split = { instr: Math.max(0, total - stRep), coord: stBud, coordHours: split.coordHours };
       }
       units.push(mkUnit(i.name || i.symbol, String(i.symbol), bkts, actual, split, i.children_count || 0, payerSplit(unitRows)));
     }
@@ -354,6 +359,8 @@ function renderStage1Html(d) {
   if (d.idIssues.length) highlights.push(`נמצאו <b>${d.idIssues.length} עובדים</b> עם תעודת זהות שאינה תקינה (פירוט בסעיף 1).`);
   const hasOverflow = d.units.some((u) => u.overflow > 0) || (d.recs && d.recs.relevant && (d.recs.moves || []).length > 0);
   if (hasOverflow) highlights.push(`קיימת <b>חריגת שכר</b> מול התקציב — מצורפות המלצות לניוד דיווח בין מוסדות (סעיף 3).`);
+  const overCapUnits = d.units.filter((u) => u.coordHoursCap != null && u.coordHours > u.coordHoursCap + 0.01 && u.uncovered > 1).length;
+  if (overCapUnits > 0) highlights.push(`ב-<b>${overCapUnits} ${overCapUnits === 1 ? 'מוסד' : 'מוסדות'}</b> שעות הריכוז חורגות מתקרת השעות (7.6 ש' × ימי הפרויקט) — העודף צפוי לא להיות מוכר (פירוט בסעיף 4).`);
   const cutUnits = d.units.filter((u) => u.instrUnderCut).length;
   if (cutUnits > 0) highlights.push(`ב-<b>${cutUnits} ${cutUnits === 1 ? 'מוסד' : 'מוסדות'}</b> ניצול סל ההדרכה נמוך מ-75% מהתקציב — <b>צפוי קיזוז מהמשרד</b> (פירוט בסעיף 4).`);
   if (d.units.some((u) => u.enrichShift > 0))
@@ -420,8 +427,14 @@ function renderStage1Html(d) {
     // סלי המכינות הייעודיים — הוצאות הכרטסות המיוחסות מול תקציב הסל
     const extraBasketLines = `${basketLine('סל פעילות חוץ (יום סיור)', u.tripAllocated, u.tripBudget)}
       ${basketLine('סל AI', u.aiAllocated, u.aiBudget)}`;
+    // תקרת שעות הריכוז (כלל רעות 23.9): 7.6 ש' × ימי הפרויקט — מותר יותר
+    // מרכז/ת אחד/ת. אזהרה רק כשהחריגה בשעות גם עולה כסף (ניצול מעל תקציב
+    // הריכוז) — סלים שמלאים במדויק (ביתר) לא מוצפים באזהרות סרק
+    const coordHoursNote = u.coordHoursCap != null && u.coordHours > u.coordHoursCap + 0.01 && u.uncovered > 1
+      ? ` <span class="red">שעות הריכוז: ${fmt(u.coordHours)} מתוך תקרת ${fmt(u.coordHoursCap)} (7.6 ש' × ימי הפרויקט) — העודף צפוי לא להיות מוכר.</span>`
+      : '';
     const salaryLine = `${basketLine('סל הדרכה — שכר הצוות החינוכי', u.instrActual, u.instrBudget).replace('</div>', instrCutNote + '</div>')}
-      ${basketLine(u.symbol == null ? 'סל ריכוז — רכזות גנים' : 'סל ריכוז — רכז/ת וסגן/ית', u.coordActual, u.coordBudget)}
+      ${basketLine(u.symbol == null ? 'סל ריכוז — רכזות גנים' : 'סל ריכוז — רכז/ת וסגן/ית', u.coordActual, u.coordBudget).replace('</div>', coordHoursNote + '</div>')}
       ${transferLines}${flexLine}${extraBasketLines}${booksNote ? `<div>${booksNote}</div>` : ''}`;
     // כשהסל הגמיש נבלע כולו בחריגת השכר — אין שתי אופציות, רק מצב נתון
     const optionsBlock = u.flexAvailable <= 0 && u.overflow > 0

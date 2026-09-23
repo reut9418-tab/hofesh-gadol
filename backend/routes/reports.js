@@ -13,7 +13,7 @@ const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff, parseGardenExecKids, norm } = require('../lib/budgetFile');
 const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
   SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework } = require('../lib/fillMinistry');
-const { salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff } = require('../lib/salaryCheck');
+const { salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor } = require('../lib/salaryCheck');
 const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = require('../lib/applyAssignments');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
@@ -397,7 +397,8 @@ router.get('/:id/prep', ah(async (req, res) => {
       if (!bySchool.has(s)) bySchool.set(s, []);
       bySchool.get(s).push(r);
     }
-    for (const g of bySchool.values()) for (const id of demoteExtraSchoolRoles(g)) demotedPrep.add(id);
+    const capPrep = coordHoursCapFor(report);
+    for (const g of bySchool.values()) for (const id of demoteExtraSchoolRoles(g, capPrep)) demotedPrep.add(id);
   }
   const rows = rawRows.map((r) => {
     const sug = suggestRole(r.dept);
@@ -1204,7 +1205,7 @@ router.get('/:id/export', ah(async (req, res) => {
   const round2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
   // רשימות איש-צוות/תפקיד של תבנית בתי הספר — מהקובץ עצמו (מחרוזות מדויקות)
   const exSchoolTypes = report.framework !== 'gardens' ? exMd.schoolTypes : null;
-  // כלל רעות 16.9 (בתי"ס): רכז אחד לכל היותר בבי"ס, סגן 0 או 1
+  // כלל רעות 23.9 (בתי"ס): רכזים עד תקרת שעות (7.6×ימים), סגן 0 או 1
   const demotedEx = new Set();
   if (report.framework !== 'gardens') {
     const bySchool = new Map();
@@ -1213,7 +1214,8 @@ router.get('/:id/export', ah(async (req, res) => {
       if (!bySchool.has(s)) bySchool.set(s, []);
       bySchool.get(s).push(r);
     }
-    for (const g of bySchool.values()) for (const rid of demoteExtraSchoolRoles(g)) demotedEx.add(rid);
+    const capEx = coordHoursCapFor(report);
+    for (const g of bySchool.values()) for (const rid of demoteExtraSchoolRoles(g, capEx)) demotedEx.add(rid);
   }
   // ללקוח חייב מע"מ — העלות השעתית המדווחת למשרד כוללת מע"מ (הברוטו נשאר כפי שהוא).
   // העלות המדווחת מוגבלת לנמוך מבין עלות×מע"מ לבין ברוטו שעתי×140% (תקרת המשרד);
