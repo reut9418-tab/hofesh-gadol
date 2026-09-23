@@ -7,7 +7,7 @@
    4. ניחושי המערכת (התאמת שמות, כלל שעות). */
 
 const XLSX = require('xlsx');
-const { extractWorkerAssignments } = require('./fillMinistry');
+const { extractWorkerAssignments, extractSchoolStaffTypes, clampStaffForFramework } = require('./fillMinistry');
 
 const digits = (v) => String(v || '').replace(/\D/g, '').replace(/^0+/, '');
 
@@ -15,6 +15,12 @@ async function applyFileAssignments(db, reportId, buf) {
   let ws;
   try { ws = extractWorkerAssignments(XLSX.read(buf, { type: 'buffer' })); } catch { return 0; }
   if (!Object.keys(ws).length) return 0;
+  // כלל רעות 23.9: תפקיד מלשונית כח האדם של הקובץ מוצמד לרשימת תבנית
+  // הפרויקט — תפקיד זר (רכז בתי"ס בגנים) לא נספר בקובץ לסל שלו
+  const rep = await db.prepare('SELECT framework FROM reports WHERE id = ?').get(reportId);
+  const framework = rep && rep.framework;
+  let schoolTypes = null;
+  if (framework && framework !== 'gardens') { try { schoolTypes = extractSchoolStaffTypes(buf); } catch { /* ברירת מחדל */ } }
   const rows = await db.prepare('SELECT id, emp_id, inst_symbol, staff_type, role, symbol_override FROM cost_rows WHERE report_id = ?').all(reportId);
   const updates = [];
   for (const r of rows) {
@@ -25,8 +31,9 @@ async function applyFileAssignments(db, reportId, buf) {
     // לא דורס אותו (באג ביתר: קליטת קובץ קרסה פיצול רכזים לסמל יחיד);
     // דוח העלות האחרון (inst_symbol) גובר על קובץ ביצוע ישן
     const sym = r.symbol_override || (!r.inst_symbol ? a.symbol : null) || null;
-    const st = r.staff_type || a.staffType || null;
-    const role = r.role || a.role || null;
+    let st = r.staff_type || a.staffType || null;
+    let role = r.role || a.role || null;
+    if (framework && (st || role)) ({ staffType: st, role } = clampStaffForFramework(framework, st, role, schoolTypes));
     if (sym === (r.symbol_override || null) && st === (r.staff_type || null) && role === (r.role || null)) continue;
     updates.push([sym, st, role, r.id]);
   }
@@ -114,6 +121,9 @@ async function applyManualAssignments(db, reportId) {
     if (parts.length >= 3) byEmpDept.set(`${parts[1]}|${parts.slice(2).join(':')}`, val);
     else byEmp.set(parts[1], val);
   }
+  // הצמדת התפקיד לרשימת תבנית הפרויקט (כלל רעות 23.9) — גם ערכים מהזיכרון
+  const fwRow = await db.prepare('SELECT framework FROM reports WHERE id = ?').get(reportId);
+  const framework = fwRow && fwRow.framework;
   const rows = await db.prepare('SELECT id, emp_id, dept, symbol_override, staff_type, role FROM cost_rows WHERE report_id = ?').all(reportId);
   const updates = [];
   for (const r of rows) {
@@ -121,8 +131,9 @@ async function applyManualAssignments(db, reportId) {
     const a = byEmpDept.get(`${emp}|${normDept(r.dept)}`) || byEmp.get(emp);
     if (!a) continue;
     const sym = a.symbol || r.symbol_override || null;
-    const st = a.staffType || r.staff_type || null;
-    const role = a.role || r.role || null;
+    let st = a.staffType || r.staff_type || null;
+    let role = a.role || r.role || null;
+    if (framework && (st || role)) ({ staffType: st, role } = clampStaffForFramework(framework, st, role));
     if (sym === (r.symbol_override || null) && st === (r.staff_type || null) && role === (r.role || null)) continue;
     updates.push([sym, st, role, r.id]);
   }

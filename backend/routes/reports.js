@@ -11,49 +11,8 @@ const { cascadeReport } = require('./clients');
 const { costDataForReport } = require('../lib/reportCosts');
 const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff, parseGardenExecKids, norm } = require('../lib/budgetFile');
-const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes } = require('../lib/fillMinistry');
-
-/* בבתי ספר אין "גננת"/"סייעת" — תרגום סוגי צוות של גנים (שמגיעים מדוח
-   העלות) לערכי הרשימה של תבנית בתי הספר, והצמדה למחרוזות המדויקות בקובץ */
-const SCHOOL_TYPE_MAP = {
-  'גננת': { staffType: 'מורה', role: 'בעל/ת תעודת הוראה שסיימ/ה 80% מהתואר' },
-  'סייעת חדשה': { staffType: 'מורה', role: 'עוזר/ת חינוך' },
-  'סייעת ממשיכה': { staffType: 'מורה', role: 'עוזר/ת חינוך' },
-  'רכזת גן': { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' },
-};
-/* גנים: הצמדת איש-צוות/תפקיד לרשימת תבנית הגנים בלבד (כלל רעות 22.9:
-   "תפקידים רק מתוך הרשימה בפרויקט") — תפקיד בתי"ס שזלג ("רכזת תכנית
-   בבית הספר") לא נספר בקובץ לסל רכזות הגנים */
-function mapGardensStaff(staffType, role) {
-  const st = String(staffType || '').trim();
-  const entry = STAFF_TYPES.find((x) => x.type === st);
-  if (entry) {
-    const exact = role && entry.roles.find((r) => r.trim() === String(role).trim());
-    return { staffType: entry.type, role: exact || entry.roles[0] };
-  }
-  if (/רכז|סג[נן]/.test(st)) return { staffType: 'רכזת גן', role: 'רכז/ת גן' };
-  if (/סייע|סיעת/.test(st)) return { staffType: 'סייעת ממשיכה', role: 'סייעת' };
-  if (/גננת|מוביל/.test(st)) return { staffType: 'גננת', role: 'גננת של הגן' };
-  if (/מדצ/.test(st)) return { staffType: 'מדצ', role: 'מדצ/ית' };
-  if (/מור/.test(st)) return { staffType: 'מורה', role: 'מורה' };
-  return { staffType: st || null, role: role || null };
-}
-
-function mapSchoolsStaff(staffType, role, schoolTypes) {
-  let st = staffType, rl = role;
-  const m = st && SCHOOL_TYPE_MAP[String(st).trim()];
-  if (m) { st = m.staffType; rl = m.role; }
-  const list = schoolTypes || SCHOOL_STAFF_TYPES;
-  if (st) {
-    const entry = list.find((x) => x.type.trim() === String(st).trim());
-    if (entry) {
-      st = entry.type; // המחרוזת המדויקת של הקובץ — ההשוואות בו תו-בתו
-      const exact = rl && entry.roles.find((r) => r.trim() === String(rl).trim());
-      rl = exact || entry.roles[0];
-    }
-  }
-  return { staffType: st, role: rl };
-}
+const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
+  SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework } = require('../lib/fillMinistry');
 const { salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff } = require('../lib/salaryCheck');
 const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = require('../lib/applyAssignments');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
@@ -765,11 +724,20 @@ router.put('/:id/prep', ah(async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'מבנה שיוך לא תקין' });
   const db = getDB();
   const id = parseInt(req.params.id);
-  if (!(await db.prepare('SELECT id FROM reports WHERE id = ?').get(id))) return res.status(404).json({ error: 'דוח לא נמצא' });
+  const putReport = await db.prepare('SELECT id, framework FROM reports WHERE id = ?').get(id);
+  if (!putReport) return res.status(404).json({ error: 'דוח לא נמצא' });
   // עדכון ישיר עם תנאי report_id (בלי SELECT מקדים) ובמקביל בקבוצות —
   // כל סבב-רשת ל-DB בענן עולה ~50ms, ושמירת 90 שיוכים לקחה שניות
   let updated = 0;
   const entries = Object.entries(parsed.data.assignments);
+  // כלל רעות 23.9: התפקידים אך ורק מהרשימה הנפתחת של תבנית הפרויקט —
+  // כל ערך שנשמר מוצמד לרשימה (גם אם הגיע מזיכרון ישן או מקריאת API)
+  for (const [, a] of entries) {
+    if (a.staffType !== undefined || a.role !== undefined) {
+      const c = clampStaffForFramework(putReport.framework, a.staffType || null, a.role || null);
+      a.staffType = c.staffType; a.role = c.role;
+    }
+  }
   const CHUNK = 10;
   for (let i = 0; i < entries.length; i += CHUNK) {
     const results = await Promise.all(entries.slice(i, i + CHUNK).map(([rowId, a]) =>

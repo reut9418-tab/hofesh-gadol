@@ -564,7 +564,9 @@ function extractExecGardens(buf) {
 }
 
 /* רשימות "איש צוות" והתפקידים המותרים — מגיליון העזר של קובץ המשרד (גנים).
-   בתבניות בתי ספר הרשימות שונות מעט — יזוהו מהקובץ בהמשך; אלו ברירות המחדל. */
+   כלל רעות 22-23.9: התפקידים אך ורק מהרשימה הנפתחת של תבנית הפרויקט —
+   תפקידי בתי"ס שהיו כאן ("מורה"/"רכזת תכנית בבית הספר"/"סגנית רכזת") גרמו
+   לכך שרכז בגנים לא הוצמד ל"רכזת גן" והקובץ לא ספר את תקציב הריכוז. */
 const STAFF_TYPES = [
   { type: 'גננת', roles: ['גננת של הגן', 'בעל/ת תעודת הוראה שסיימ/ה 80% מהתואר', 'סייעת', 'סטודנט/ית', 'מדריכ/ה מוסמכ/ת', 'אחר'] },
   { type: 'סייעת חדשה', roles: ['סייעת'] },
@@ -572,10 +574,6 @@ const STAFF_TYPES = [
   { type: 'מדצ', roles: ['מדצ/ית'] },
   { type: 'רכזת גן', roles: ['רכז/ת גן'] },
   { type: 'תוספת כח אדם', roles: ['יועצ/ת', 'קלינאי/ת תקשורת', 'מנתח/ת התנהגות', 'מרפא/ה בעיסוק', 'גננת שילוב', 'אחר'] },
-  // בתי ספר — הערכים המדויקים של רשימות המשרד בתבנית תשפ"ו
-  { type: 'מורה', roles: ['מורה'] },
-  { type: 'רכזת תכנית בבית הספר', roles: ['רכז/ת תכנית בבית הספר'] },
-  { type: 'סגנית רכזת מעל 150', roles: ['סגנ/ית רכז/ת>150'] },
 ];
 
 /* רשימת ברירת מחדל לתבנית בתי הספר (כשהגיליון לא נמצא) — הערכים המדויקים
@@ -588,6 +586,58 @@ const SCHOOL_STAFF_TYPES = [
   { type: 'תוספת כח אדם', roles: ['יועצ/ת', 'מורה להוראה מתקנת', 'מורה מקצוע/ית למתמטיקה/אנגלית/מדעים'] },
   { type: 'סייעת רפואית או אישית', roles: ['סייעת'] },
 ];
+
+/* בבתי ספר אין "גננת"/"סייעת" — תרגום סוגי צוות של גנים (שמגיעים מדוח
+   העלות) לערכי הרשימה של תבנית בתי הספר, והצמדה למחרוזות המדויקות בקובץ */
+const SCHOOL_TYPE_MAP = {
+  'גננת': { staffType: 'מורה', role: 'בעל/ת תעודת הוראה שסיימ/ה 80% מהתואר' },
+  'סייעת חדשה': { staffType: 'מורה', role: 'עוזר/ת חינוך' },
+  'סייעת ממשיכה': { staffType: 'מורה', role: 'עוזר/ת חינוך' },
+  'רכזת גן': { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' },
+};
+
+/* גנים: הצמדת איש-צוות/תפקיד לרשימת תבנית הגנים בלבד (כלל רעות 22.9:
+   "תפקידים רק מתוך הרשימה בפרויקט") — תפקיד בתי"ס שזלג ("רכזת תכנית
+   בבית הספר") לא נספר בקובץ לסל רכזות הגנים */
+function mapGardensStaff(staffType, role) {
+  const st = String(staffType || '').trim();
+  const entry = STAFF_TYPES.find((x) => x.type === st);
+  if (entry) {
+    const exact = role && entry.roles.find((r) => r.trim() === String(role).trim());
+    return { staffType: entry.type, role: exact || entry.roles[0] };
+  }
+  if (/רכז|סג[נן]/.test(st)) return { staffType: 'רכזת גן', role: 'רכז/ת גן' };
+  if (/סייע|סיעת/.test(st)) return { staffType: 'סייעת ממשיכה', role: 'סייעת' };
+  if (/גננת|מוביל/.test(st)) return { staffType: 'גננת', role: 'גננת של הגן' };
+  if (/מדצ/.test(st)) return { staffType: 'מדצ', role: 'מדצ/ית' };
+  // "מורה" אינו ברשימת הגנים — המקבילה בתבנית: גננת בעל/ת תעודת הוראה
+  if (/מור/.test(st)) return { staffType: 'גננת', role: 'בעל/ת תעודת הוראה שסיימ/ה 80% מהתואר' };
+  return { staffType: st || null, role: role || null };
+}
+
+function mapSchoolsStaff(staffType, role, schoolTypes) {
+  let st = staffType, rl = role;
+  const m = st && SCHOOL_TYPE_MAP[String(st).trim()];
+  if (m) { st = m.staffType; rl = m.role; }
+  const list = schoolTypes || SCHOOL_STAFF_TYPES;
+  if (st) {
+    const entry = list.find((x) => x.type.trim() === String(st).trim());
+    if (entry) {
+      st = entry.type; // המחרוזת המדויקת של הקובץ — ההשוואות בו תו-בתו
+      const exact = rl && entry.roles.find((r) => r.trim() === String(rl).trim());
+      rl = exact || entry.roles[0];
+    }
+  }
+  return { staffType: st, role: rl };
+}
+
+/* הצמדה לפי מסגרת הדוח — לכל נקודת כתיבה של איש צוות/תפקיד */
+function clampStaffForFramework(framework, staffType, role, schoolTypes = null) {
+  if (!staffType && !role) return { staffType: staffType || null, role: role || null };
+  return framework === 'gardens'
+    ? mapGardensStaff(staffType, role)
+    : mapSchoolsStaff(staffType, role, schoolTypes);
+}
 
 /* רשימת אנשי הצוות והתפקידים מתוך גיליון "סיווג התפקידים והעלויות" של
    הקובץ עצמו — המחרוזות חייבות להתאים אחד-לאחד (כולל רווחים) לרשימות
@@ -664,6 +714,7 @@ function extractInstitutions(buf) {
 module.exports = {
   fillMinistryReport, detectStartRow, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, parseExpenseActuals,
   SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
+  SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework,
   detectExpenseSheet, EXPENSE_LABEL_HE,
   STAFF_TYPES, MINISTRY_SHEET_HINT, COORD_SHEET_HINT,
 };
