@@ -471,11 +471,12 @@ function renderStage1Html(d) {
   const multiPayer = (d.payers || []).length > 1;
   const salaryLabel = d.report.framework === 'gardens' ? 'שכר מובילות + רכזים' : 'שכר מורים + רכזים';
   const salaryCols = multiPayer ? d.payers.map((p) => `${salaryLabel} — ${esc(p)}`) : [salaryLabel];
-  const anyFlexRemain = d.units.some((u) => u.targets.flexRemain > 0);
+  // עמודת "סל גמיש" הוסרה (בקשת רעות 23.9) — היא הייתה כפילות של "ארוחת
+  // בוקר": שתיהן יתרת הסל הגמיש שנותרה אחרי בליעת חריגות השכר
   // סלי המכינות הייעודיים — עמודות רק כשקיים תקציב (בבתי"ס/גנים אין אותם)
   const anyTrip = d.units.some((u) => u.targets.trip > 0);
   const anyAi = d.units.some((u) => u.targets.ai > 0);
-  const headCols = [...salaryCols, ...(anyBreakfast ? ['ארוחת בוקר'] : []), ...enrichCols, ...(anyTrip ? ['פעילות חוץ (יום סיור)'] : []), ...(anyAi ? ['סל AI'] : []), ...(anyFlexRemain ? ['סל גמיש'] : []), ...(anyIncome ? ['הכנסות משתתפים'] : [])];
+  const headCols = [...salaryCols, ...(anyBreakfast ? ['ארוחת בוקר'] : []), ...enrichCols, ...(anyTrip ? ['פעילות חוץ (יום סיור)'] : []), ...(anyAi ? ['סל AI'] : []), ...(anyIncome ? ['הכנסות משתתפים'] : [])];
   const salaryCells = (u) => multiPayer
     ? d.payers.map((p) => (u.targets.salaryByPayer[p] ? `₪${fmt(u.targets.salaryByPayer[p])}` : '—'))
     : [`₪${fmt(u.targets.salary)}`];
@@ -486,7 +487,6 @@ function renderStage1Html(d) {
       ...enrichCells(u),
       ...(anyTrip ? [u.targets.trip > 0 ? `₪${fmt(u.targets.trip)}` : '—'] : []),
       ...(anyAi ? [u.targets.ai > 0 ? `₪${fmt(u.targets.ai)}` : '—'] : []),
-      ...(anyFlexRemain ? [u.targets.flexRemain > 0 ? `₪${fmt(u.targets.flexRemain)}` : '—'] : []),
       ...(anyIncome ? [u.targets.income > 0 ? `₪${fmt(u.targets.income)}` : '—'] : []),
     ];
     const name = u.symbol ? `${esc(u.name)} <span class="soft">(${esc(u.symbol)})</span>` : esc(u.name);
@@ -508,7 +508,7 @@ function renderStage1Html(d) {
     }, { byPayer: {}, salary: 0, breakfast: 0, enrichment: 0, enrichmentReduced: 0, trip: 0, ai: 0, flexRemain: 0, income: 0 });
     const sc = multiPayer ? d.payers.map((p) => `₪${fmt(t.byPayer[p] || 0)}`) : [`₪${fmt(t.salary)}`];
     const ec = anyShift ? [`₪${fmt(t.enrichmentReduced)}`, `₪${fmt(t.enrichment)}`] : [`₪${fmt(t.enrichment)}`];
-    const cells = [...sc, ...(anyBreakfast ? [`₪${fmt(t.breakfast)}`] : []), ...ec, ...(anyTrip ? [`₪${fmt(t.trip)}`] : []), ...(anyAi ? [`₪${fmt(t.ai)}`] : []), ...(anyFlexRemain ? [`₪${fmt(t.flexRemain)}`] : []), ...(anyIncome ? [`₪${fmt(t.income)}`] : [])];
+    const cells = [...sc, ...(anyBreakfast ? [`₪${fmt(t.breakfast)}`] : []), ...ec, ...(anyTrip ? [`₪${fmt(t.trip)}`] : []), ...(anyAi ? [`₪${fmt(t.ai)}`] : []), ...(anyIncome ? [`₪${fmt(t.income)}`] : [])];
     totalsRow = `<tr class="total"><td>סה"כ</td>${cells.map((c) => `<td class="num">${c}</td>`).join('')}</tr>`;
   }
   // אין מוסדות (טרם הועלה קובץ המשרד) או שכל השכר טרם שויך לסמלים —
@@ -523,7 +523,7 @@ function renderStage1Html(d) {
     <thead><tr><th>${d.units.length > 1 ? 'בית ספר' : 'מסגרת'}</th>${headCols.map((h) => `<th class="num">${h}</th>`).join('')}</tr></thead>
     <tbody>${d.units.map(unitRow).join('')}${totalsRow}</tbody>
   </table>
-  <p class="note">שכר — הסכום שדווח בדוח הביצוע בניכוי מע"מ (יעד הכרטסת), לצד העלות בספרים${multiPayer ? ', בהפרדה לפי המשלם (כרטסת נפרדת בספרי כל משלם)' : ''}. ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש שנותרה אחרי בליעת חריגת השכר (בהנחת אופציה א'); אם יוחלט אחרת, ראו סעיף 4. העשרה — כולל ניוד יתרת שכר היכן שקיימת (עד 25% מתקציב סל המקור ניתן לניוד; הסל המקבל אינו מוגבל)${anyShift ? '; בשל חריגת השכר מוצגות שתי אופציות — 75% מהתקציב (מומלץ: 25% מנותבים לכיסוי חריגת השכר) או 100% מהתקציב (החריגה נותרת ללא כיסוי)' : ''}.${anyTrip || anyAi ? ' פעילות חוץ (יום סיור) וסל AI — תקציב הסל הייעודי בקובץ המשרד (תקרת ההכרה להוצאות אלו).' : ''} סל גמיש — היתרה שנותרה אחרי בליעת חריגות השכר. הכנסות משתתפים — כמות הילדים בדוח הביצוע × תעריף המשרד${d.tariff ? ` (₪${fmt(d.tariff)} לילד)` : ''}.${d.hasVat ? ' <b>כל היעדים בטבלה רשומים נטו, ללא מע"מ</b> — כפי שנרשם בכרטסת; בדוח הביצוע למשרד הסכומים מדווחים בתוספת מע"מ 18%.' : ''}</p>`;
+  <p class="note">שכר — הסכום שדווח בדוח הביצוע בניכוי מע"מ (יעד הכרטסת), לצד העלות בספרים${multiPayer ? ', בהפרדה לפי המשלם (כרטסת נפרדת בספרי כל משלם)' : ''}. ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש שנותרה אחרי בליעת חריגת השכר (בהנחת אופציה א'); אם יוחלט אחרת, ראו סעיף 4. העשרה — כולל ניוד יתרת שכר היכן שקיימת (עד 25% מתקציב סל המקור ניתן לניוד; הסל המקבל אינו מוגבל)${anyShift ? '; בשל חריגת השכר מוצגות שתי אופציות — 75% מהתקציב (מומלץ: 25% מנותבים לכיסוי חריגת השכר) או 100% מהתקציב (החריגה נותרת ללא כיסוי)' : ''}.${anyTrip || anyAi ? ' פעילות חוץ (יום סיור) וסל AI — תקציב הסל הייעודי בקובץ המשרד (תקרת ההכרה להוצאות אלו).' : ''} הכנסות משתתפים — כמות הילדים בדוח הביצוע × תעריף המשרד${d.tariff ? ` (₪${fmt(d.tariff)} לילד)` : ''}.${d.hasVat ? ' <b>כל היעדים בטבלה רשומים נטו, ללא מע"מ</b> — כפי שנרשם בכרטסת; בדוח הביצוע למשרד הסכומים מדווחים בתוספת מע"מ 18%.' : ''}</p>`;
 
   return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
 <title>מכתב שלב 1 — ${esc(to)} — ${esc(d.label)}</title>
