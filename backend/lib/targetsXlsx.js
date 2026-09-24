@@ -32,10 +32,14 @@ function buildTargetsXlsx(d) {
   const anyIncome = d.units.some((u) => u.targets.income > 0);
   const anyShift = d.units.some((u) => u.enrichShift > 0);
   const salaryLabel = isGardens ? 'שכר מובילות + רכזים' : 'שכר מורים + רכזים';
+  // פיצול יעד השכר (כלל רעות 24.9): הדרכה | ריכוז | סה"כ (לכרטסת משולבת)
+  const instrLabel = isGardens ? 'שכר הדרכה (מובילות/סייעות)' : 'שכר הדרכה (מורים)';
+  const coordLabel = isGardens ? 'שכר ריכוז (רכזות גנים)' : 'שכר ריכוז (רכז/ת וסגן/ית)';
 
   const head = [
     isGardens ? 'מסגרת' : 'בית ספר',
-    ...(multiPayer ? d.payers.map((p) => `${salaryLabel} — ${p}`) : [salaryLabel]),
+    instrLabel, coordLabel, `סה"כ ${salaryLabel} — כרטסת משולבת`,
+    ...(multiPayer ? d.payers.map((p) => `${salaryLabel} — ${p}`) : []),
     ...(anyBreakfast ? ['ארוחת בוקר'] : []),
     ...(anyShift ? ['העשרה — מומלץ: 75%', 'העשרה — 100%'] : ['העשרה']),
     ...(anyFlex ? ['סל גמיש'] : []),
@@ -45,9 +49,10 @@ function buildTargetsXlsx(d) {
 
   const unitCells = (u, z) => [
     cell(u.symbol ? `${u.name} (${u.symbol})` : u.name, S.cellR(z)),
-    ...(multiPayer
-      ? d.payers.map((p) => cell(num(u.targets.salaryByPayer[p]), S.cellN(z)))
-      : [cell(num(u.targets.salary), S.cellN(z))]),
+    cell(num(u.targets.salaryInstr), S.cellN(z)),
+    cell(num(u.targets.salaryCoord), S.cellN(z)),
+    cell(num(u.targets.salary), S.cellN(z)),
+    ...(multiPayer ? d.payers.map((p) => cell(num(u.targets.salaryByPayer[p]), S.cellN(z))) : []),
     ...(anyBreakfast ? [cell(num(u.targets.breakfast), S.cellN(z))] : []),
     ...(anyShift
       ? [cell(num(u.targets.enrichmentReduced), S.cellN(z)), cell(num(u.targets.enrichment), S.cellN(z))]
@@ -59,9 +64,10 @@ function buildTargetsXlsx(d) {
   const sum = (f) => d.units.reduce((s, u) => s + (f(u) || 0), 0);
   const totalsRow = d.units.length > 1 ? [
     cell('סה"כ', S.totalR),
-    ...(multiPayer
-      ? d.payers.map((p) => cell(num(sum((u) => u.targets.salaryByPayer[p])), S.total))
-      : [cell(num(sum((u) => u.targets.salary)), S.total)]),
+    cell(num(sum((u) => u.targets.salaryInstr)), S.total),
+    cell(num(sum((u) => u.targets.salaryCoord)), S.total),
+    cell(num(sum((u) => u.targets.salary)), S.total),
+    ...(multiPayer ? d.payers.map((p) => cell(num(sum((u) => u.targets.salaryByPayer[p])), S.total)) : []),
     ...(anyBreakfast ? [cell(num(sum((u) => u.targets.breakfast)), S.total)] : []),
     ...(anyShift
       ? [cell(num(sum((u) => u.targets.enrichmentReduced)), S.total), cell(num(sum((u) => u.targets.enrichment)), S.total)]
@@ -71,7 +77,7 @@ function buildTargetsXlsx(d) {
   ] : null;
 
   const noteText = [
-    `${salaryLabel} — הסכום שדווח בדוח הביצוע${d.hasVat ? ' בניכוי מע"מ' : ''} (יעד הכרטסת)${multiPayer ? ', בהפרדה לפי המשלם' : ''}.`,
+    `שכר — יעד הכרטסת זהה לדוח העלות, בפיצול להדרכה ולריכוז (ללקוח עם כרטסות נפרדות) ובסה"כ (ללקוח עם כרטסת שכר משולבת)${multiPayer ? ', ובהפרדה לפי המשלם' : ''}.`,
     anyBreakfast ? 'ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש (בהנחת אופציה א\').' : '',
     'העשרה — כולל ניוד יתרת שכר היכן שקיימת (עד 25% מסל המקור).',
     anyShift ? 'בשל חריגת שכר מוצגות שתי אופציות להעשרה: 75% מהתקציב (מומלץ) או 100%.' : '',
