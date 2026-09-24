@@ -707,6 +707,52 @@ router.post('/:id/split-row', ah(async (req, res) => {
   res.json({ ok: true, rowId, createdIds, parts: parts.map((p, i) => ({ symbol: p.symbol, cost: cost[i], gross: gross[i], hours: hours[i] })) });
 }));
 
+/* הוספת עובד/ת ידנית לדוח (בקשת רעות 24.9) — למשל עובד/ת בחשבונית שאינו/ה
+   בדוח העלות. השורות נשמרות בקובץ וירטואלי "עובדים שנוספו ידנית" של הלקוח,
+   ולכן החלפת/מחיקת דוח עלות רגיל אינה נוגעת בהן. */
+const MANUAL_FILE_NAME = 'עובדים שנוספו ידנית';
+const addWorkerSchema = z.object({
+  name: z.string().min(2),
+  empId: z.string().optional(),        // ת.ז או ח.פ (חשבונית)
+  dept: z.string().optional(),
+  symbol: z.string().nullable().optional(),
+  staffType: z.string().nullable().optional(),
+  role: z.string().nullable().optional(),
+  hours: z.number().nonnegative().optional(),
+  gross: z.number().nonnegative().optional(),
+  cost: z.number().nonnegative().optional(), // חשבונית: הסכום = העלות
+});
+router.post('/:id/workers', ah(async (req, res) => {
+  const parsed = addWorkerSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'פרטי עובד/ת לא תקינים — נדרש לפחות שם' });
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const report = await db.prepare('SELECT id, client_id, framework FROM reports WHERE id = ?').get(id);
+  if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
+  const w = parsed.data;
+  // הקובץ הווירטואלי של הלקוח — נוצר בהוספה הראשונה
+  let mf = await db.prepare('SELECT id FROM cost_files WHERE client_id = ? AND filename = ?').get(report.client_id, MANUAL_FILE_NAME);
+  if (!mf) {
+    mf = { id: (await db.prepare("INSERT INTO cost_files (client_id, filename, software, sheets_used, row_count, routed) VALUES (?, ?, 'ידני', '[]', 0, 1)")
+      .run(report.client_id, MANUAL_FILE_NAME)).lastInsertRowid };
+  }
+  // תפקיד מוצמד לרשימת התבנית של הפרויקט (כלל 23.9)
+  const c = clampStaffForFramework(report.framework, w.staffType || null, w.role || null);
+  const gross = w.gross ?? w.cost ?? null;
+  const cost = w.cost ?? w.gross ?? null;
+  const nameParts = w.name.trim().split(/\s+/);
+  const ins = await db.prepare(
+    `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept,
+       inst_symbol, component_names, gross, cost, hours, staff_type, role, symbol_override)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(mf.id, report.client_id, id, String(w.empId || '').replace(/\D/g, '') || null, w.name.trim(),
+    nameParts[0] || null, nameParts.slice(1).join(' ') || null, w.dept || 'הוספה ידנית',
+    w.symbol || null, '[]', gross, cost, w.hours ?? null, c.staffType, c.role, w.symbol || null);
+  await db.prepare('UPDATE cost_files SET row_count = row_count + 1 WHERE id = ?').run(mf.id);
+  await db.prepare('UPDATE reports SET has_cost_report = 1 WHERE id = ?').run(id);
+  res.status(201).json({ ok: true, rowId: ins.lastInsertRowid });
+}));
+
 /* מחיקת שורת עובד/ת מהדוח (בקשת רעות 24.9) — למשל שורה כפולה או עובד/ת
    שאינו/ה שייך/ת לפרויקט. קליטה מחדש של קובץ העלות תחזיר את השורה. */
 router.delete('/:id/cost-rows/:rowId', ah(async (req, res) => {

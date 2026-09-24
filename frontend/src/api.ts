@@ -278,6 +278,12 @@ export const autoAssign = (reportId: number) =>
   api.post(`/reports/${reportId}/auto-assign`).then((r) => r.data);
 export const deleteCostRow = (reportId: number, rowId: number) =>
   api.delete(`/reports/${reportId}/cost-rows/${rowId}`).then((r) => r.data);
+export type NewWorker = {
+  name: string; empId?: string; dept?: string; symbol?: string | null;
+  staffType?: string | null; role?: string | null; hours?: number; gross?: number; cost?: number;
+};
+export const addWorker = (reportId: number, w: NewWorker) =>
+  api.post(`/reports/${reportId}/workers`, w).then((r) => r.data);
 export const costMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/cost-match-doc`;
 export const enrichMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/enrich-match-doc`;
 export const stage2DocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/stage2-doc`;

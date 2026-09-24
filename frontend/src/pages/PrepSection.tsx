@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { T } from '../theme';
 import { btn, card, input } from '../ui';
-import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, downloadCostAssignedXlsx, downloadTargetsXlsx, applyMove, applyBumps, autoAssign, deleteCostRow, PrepData, Assignment } from '../api';
+import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, downloadCostAssignedXlsx, downloadTargetsXlsx, applyMove, applyBumps, autoAssign, deleteCostRow, addWorker, NewWorker, PrepData, Assignment } from '../api';
 
 const fmt = (n: number | null, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -31,6 +31,10 @@ export default function PrepSection({ reportId }: { reportId: number }) {
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // הוספת עובד/ת ידנית (למשל עובד/ת בחשבונית) — כלל רעות 24.9
+  const [addOpen, setAddOpen] = useState(false);
+  const emptyWorker: NewWorker = { name: '', empId: '', symbol: null, staffType: null, role: null };
+  const [nw, setNw] = useState<NewWorker>(emptyWorker);
 
   const load = () =>
     getReportPrep(reportId).then((d) => {
@@ -357,6 +361,54 @@ export default function PrepSection({ reportId }: { reportId: number }) {
       <datalist id={`inst-${reportId}`}>
         {data.institutions.map((i) => <option key={i.symbol} value={i.symbol}>{i.name}</option>)}
       </datalist>
+
+      {/* הוספת עובד/ת ידנית — למשל עובד/ת בחשבונית שאינו/ה בדוח העלות */}
+      <div style={{ marginBottom: 10 }}>
+        <button onClick={() => setAddOpen((o) => !o)} style={btn('ghost')}
+          title="הוספת עובד/ת שאינו/ה בדוח העלות — למשל עובד/ת בחשבונית. נשמר בנפרד ושורד החלפת דוח עלות">
+          {addOpen ? '✕ סגירה' : '＋ הוספת עובד/ת (למשל בחשבונית)'}
+        </button>
+        {addOpen && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', background: '#FDF6EC', borderRadius: 8, padding: '8px 12px', marginTop: 6 }}>
+            <input placeholder="שם מלא *" value={nw.name} onChange={(e) => setNw({ ...nw, name: e.target.value })}
+              style={{ ...input, padding: '6px 8px', fontSize: 12, width: 150 }} />
+            <input placeholder="ת.ז / ח.פ" dir="ltr" value={nw.empId || ''} onChange={(e) => setNw({ ...nw, empId: e.target.value.replace(/\D/g, '') })}
+              style={{ ...input, padding: '6px 8px', fontSize: 12, width: 110 }} />
+            <input list={`inst-${reportId}`} placeholder="סמל מוסד" value={nw.symbol || ''} onChange={(e) => setNw({ ...nw, symbol: e.target.value || null })}
+              style={{ ...input, padding: '6px 8px', fontSize: 12, width: 120 }} />
+            <select value={nw.staffType || ''} onChange={(e) => {
+              const st = e.target.value || null;
+              setNw({ ...nw, staffType: st, role: st && rolesFor(st).length === 1 ? rolesFor(st)[0] : null });
+            }} style={{ ...input, padding: '6px 8px', fontSize: 12 }}>
+              <option value="">איש צוות…</option>
+              {data.staffTypes.map((s) => <option key={s.type} value={s.type}>{s.type}</option>)}
+            </select>
+            <select value={nw.role || ''} onChange={(e) => setNw({ ...nw, role: e.target.value || null })}
+              style={{ ...input, padding: '6px 8px', fontSize: 12 }}>
+              <option value="">תפקיד…</option>
+              {rolesFor(nw.staffType || null).map((ro) => <option key={ro} value={ro}>{ro}</option>)}
+            </select>
+            <input type="number" min={0} step="0.01" placeholder="שעות" value={nw.hours ?? ''}
+              onChange={(e) => setNw({ ...nw, hours: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+              style={{ ...input, padding: '6px 8px', fontSize: 12, width: 70 }} />
+            <input type="number" min={0} step="0.01" placeholder="ברוטו ₪" value={nw.gross ?? ''}
+              onChange={(e) => setNw({ ...nw, gross: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+              style={{ ...input, padding: '6px 8px', fontSize: 12, width: 90 }} />
+            <input type="number" min={0} step="0.01" placeholder="עלות ₪ (חשבונית)" value={nw.cost ?? ''}
+              onChange={(e) => setNw({ ...nw, cost: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+              style={{ ...input, padding: '6px 8px', fontSize: 12, width: 110 }}
+              title="לעובד/ת בחשבונית — סכום החשבונית; אם רק שדה אחד מלא, הברוטו והעלות מושווים" />
+            <button disabled={busy || !nw.name || nw.name.trim().length < 2 || (nw.cost == null && nw.gross == null)}
+              onClick={async () => {
+                setBusy(true);
+                try { await addWorker(reportId, nw); setNw(emptyWorker); setAddOpen(false); await load(); setMsg('העובד/ת נוסף/ה לדוח.'); }
+                catch (e: any) { setMsg(e?.response?.data?.error || 'ההוספה נכשלה.'); }
+                finally { setBusy(false); }
+              }} style={btn('dark')}>הוספה</button>
+            <span style={{ fontSize: 11, color: T.inkSoft }}>נשמר בנפרד מדוח העלות — לא נמחק בהחלפת קובץ.</span>
+          </div>
+        )}
+      </div>
 
       <div style={{ maxHeight: '52vh', overflowY: 'auto', overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
