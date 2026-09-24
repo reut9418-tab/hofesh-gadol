@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { T } from '../theme';
 import { btn, card, input } from '../ui';
-import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, downloadCostAssignedXlsx, downloadTargetsXlsx, applyMove, applyBumps, autoAssign, PrepData, Assignment } from '../api';
+import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, downloadCostAssignedXlsx, downloadTargetsXlsx, applyMove, applyBumps, autoAssign, deleteCostRow, PrepData, Assignment } from '../api';
 
 const fmt = (n: number | null, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -435,12 +435,22 @@ export default function PrepSection({ reportId }: { reportId: number }) {
                       </td>
                     );
                   })}
-                  <td style={{ padding: '5px 2px', textAlign: 'center' }}>
+                  <td style={{ padding: '5px 2px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                     {(r.manualRates || a.hours !== undefined || a.hourlyGross !== undefined || a.hourlyCost !== undefined) && (
                       <button title="שחזור שעות ותעריפים מדוח העלות"
                         onClick={() => set(r.rowId, { hours: null, hourlyGross: null, hourlyCost: null })}
                         style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, padding: 0 }}>↺</button>
                     )}
+                    <button title="מחיקת השורה מהדוח (קליטה מחדש של הקובץ תחזיר אותה)"
+                      onClick={async () => {
+                        const nm = r.name || `${r.firstName || ''} ${r.lastName || ''}`;
+                        if (!window.confirm(`למחוק את השורה של ${nm} מהדוח?\nהמחיקה מסירה את העובד/ת מהחישובים והייצוא; קליטה מחדש של קובץ העלות תחזיר את השורה.`)) return;
+                        setBusy(true);
+                        try { await deleteCostRow(reportId, r.rowId); await load(); setMsg(`השורה של ${nm} נמחקה.`); }
+                        catch (e: any) { setMsg(e?.response?.data?.error || 'המחיקה נכשלה.'); }
+                        finally { setBusy(false); }
+                      }}
+                      style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, padding: '0 2px', opacity: 0.55 }}>🗑</button>
                   </td>
                 </tr>
               );

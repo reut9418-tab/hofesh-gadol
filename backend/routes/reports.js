@@ -707,6 +707,18 @@ router.post('/:id/split-row', ah(async (req, res) => {
   res.json({ ok: true, rowId, createdIds, parts: parts.map((p, i) => ({ symbol: p.symbol, cost: cost[i], gross: gross[i], hours: hours[i] })) });
 }));
 
+/* מחיקת שורת עובד/ת מהדוח (בקשת רעות 24.9) — למשל שורה כפולה או עובד/ת
+   שאינו/ה שייך/ת לפרויקט. קליטה מחדש של קובץ העלות תחזיר את השורה. */
+router.delete('/:id/cost-rows/:rowId', ah(async (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const rowId = parseInt(req.params.rowId);
+  const row = await db.prepare('SELECT id, emp_name FROM cost_rows WHERE id = ? AND report_id = ?').get(rowId, id);
+  if (!row) return res.status(404).json({ error: 'שורה לא נמצאה בדוח' });
+  await db.prepare('DELETE FROM cost_rows WHERE id = ?').run(rowId);
+  res.json({ ok: true, deleted: row.emp_name || rowId });
+}));
+
 /* אישור התאמות ברוטו: מגדיל את הברוטו השעתי בדיוק כדי לעמוד בתקרת ה-140%
    (עד 5 ₪ לשעה — מעבר לזה דורש בדיקה מעמיקה, לא מוצע אוטומטית) */
 router.post('/:id/apply-bumps', ah(async (req, res) => {

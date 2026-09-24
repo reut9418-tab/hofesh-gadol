@@ -276,6 +276,8 @@ export const applyBumps = (reportId: number, rowIds: number[]) =>
   api.post(`/reports/${reportId}/apply-bumps`, { rowIds }).then((r) => r.data);
 export const autoAssign = (reportId: number) =>
   api.post(`/reports/${reportId}/auto-assign`).then((r) => r.data);
+export const deleteCostRow = (reportId: number, rowId: number) =>
+  api.delete(`/reports/${reportId}/cost-rows/${rowId}`).then((r) => r.data);
 export const costMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/cost-match-doc`;
 export const enrichMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/enrich-match-doc`;
 export const stage2DocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/stage2-doc`;
