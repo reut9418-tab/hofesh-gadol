@@ -1,7 +1,7 @@
 /* ייצוא סעיף 5 של המכתב — טבלת יעדי הכרטסות — כקובץ אקסל מעוצב (מותג
-   המשרד: זהב/שמפניה/גרפיט, RTL). העמודות זהות לטבלה שבמכתב: שכר (פר
-   משלם כשיש כמה), ארוחת בוקר (גנים), העשרה (כולל אופציית 75% כשיש חריגה),
-   סל גמיש, הכנסות משתתפים — ושורת סה"כ. */
+   המשרד: זהב/שמפניה/גרפיט, RTL). העמודות זהות לטבלה שבמכתב: שכר בפיצול
+   הדרכה/ריכוז/סה"כ (ופר משלם כשיש כמה), ארוחת בוקר, העשרה (כולל אופציית
+   75% כשיש חריגה), הכנסות משתתפים — ושורת סה"כ. */
 const XLSXS = require('xlsx-js-style');
 
 function buildTargetsXlsx(d) {
@@ -28,7 +28,8 @@ function buildTargetsXlsx(d) {
   const isGardens = d.report.framework === 'gardens';
   const multiPayer = (d.payers || []).length > 1;
   const anyBreakfast = d.units.some((u) => u.targets.breakfast > 0);
-  const anyFlex = d.units.some((u) => u.targets.flexRemain > 0);
+  // עמודת "סל גמיש" הוסרה (בקשת רעות 24.9) — כפילות של "ארוחת בוקר":
+  // שתיהן יתרת הסל הגמיש שנותרה אחרי בליעת חריגות השכר
   const anyIncome = d.units.some((u) => u.targets.income > 0);
   const anyShift = d.units.some((u) => u.enrichShift > 0);
   const salaryLabel = isGardens ? 'שכר מובילות + רכזים' : 'שכר מורים + רכזים';
@@ -42,7 +43,6 @@ function buildTargetsXlsx(d) {
     ...(multiPayer ? d.payers.map((p) => `${salaryLabel} — ${p}`) : []),
     ...(anyBreakfast ? ['ארוחת בוקר'] : []),
     ...(anyShift ? ['העשרה — מומלץ: 75%', 'העשרה — 100%'] : ['העשרה']),
-    ...(anyFlex ? ['סל גמיש'] : []),
     ...(anyIncome ? ['הכנסות משתתפים'] : []),
   ];
   const W = head.length;
@@ -57,7 +57,6 @@ function buildTargetsXlsx(d) {
     ...(anyShift
       ? [cell(num(u.targets.enrichmentReduced), S.cellN(z)), cell(num(u.targets.enrichment), S.cellN(z))]
       : [cell(num(u.targets.enrichment), S.cellN(z))]),
-    ...(anyFlex ? [cell(num(u.targets.flexRemain), S.cellN(z))] : []),
     ...(anyIncome ? [cell(num(u.targets.income), S.cellN(z))] : []),
   ];
 
@@ -72,7 +71,6 @@ function buildTargetsXlsx(d) {
     ...(anyShift
       ? [cell(num(sum((u) => u.targets.enrichmentReduced)), S.total), cell(num(sum((u) => u.targets.enrichment)), S.total)]
       : [cell(num(sum((u) => u.targets.enrichment)), S.total)]),
-    ...(anyFlex ? [cell(num(sum((u) => u.targets.flexRemain)), S.total)] : []),
     ...(anyIncome ? [cell(num(sum((u) => u.targets.income)), S.total)] : []),
   ] : null;
 
@@ -81,7 +79,6 @@ function buildTargetsXlsx(d) {
     anyBreakfast ? 'ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש (בהנחת אופציה א\').' : '',
     'העשרה — כולל ניוד יתרת שכר היכן שקיימת (עד 25% מסל המקור).',
     anyShift ? 'בשל חריגת שכר מוצגות שתי אופציות להעשרה: 75% מהתקציב (מומלץ) או 100%.' : '',
-    anyFlex ? 'סל גמיש — היתרה אחרי בליעת חריגות השכר.' : '',
     anyIncome ? `הכנסות משתתפים — ילדים × תעריף המשרד${d.tariff ? ` (₪${d.tariff} לילד)` : ''}.` : '',
     d.hasVat ? 'כל היעדים רשומים נטו, ללא מע"מ — כפי שנרשם בכרטסת.' : '',
   ].filter(Boolean).join(' ');
