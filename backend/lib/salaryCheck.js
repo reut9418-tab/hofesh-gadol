@@ -52,8 +52,12 @@ function demoteExtraSchoolRoles(schoolRows, coordCap = COORD_HOURS_PER_DAY * 15)
     return bh && isCoordType(String(bh.staffType));
   });
   inferredCoords.sort((a, b) => (b.hours || 0) - (a.hours || 0) || (b.gross || 0) - (a.gross || 0));
+  // הרכז/ת הראשון/ה נשאר/ת תמיד — גם מעל התקרה (אחרת בי"ס עם רכז יחיד של
+  // 136 שעות נשאר בלי רכז והמשרד לא מתקצב אותו); התקרה מגבילה רכזים נוספים
   let used = explicitHours;
+  let hasKept = schoolRows.some((r) => r.staff_type && isCoordType(String(r.staff_type)));
   for (const r of inferredCoords) {
+    if (!hasKept) { hasKept = true; used += r.hours || 0; continue; }
     if (used + (r.hours || 0) <= coordCap + 0.01) used += r.hours || 0;
     else demoted.add(r.id);
   }
