@@ -654,6 +654,57 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
   res.json({ ok: true, assigned, gardens: gardens.length, coordinators: coordDesignated, coordPositions });
 }));
 
+/* ---------- פיצול שורת עובד/ת בין מוסדות (כלל רעות 17.9: "פיצול שורות
+   מותר" — רכז/ת צף/ה מתחלק/ת בין בתי ספר בתוך יתרות סל הריכוז) ----------
+   השורה המקורית מקבלת את החלק הראשון; לכל חלק נוסף נוצרת שורה חדשה.
+   הפיצול יחסי לעלות: שעות/ברוטו לפי חלק העלות, השארית נספגת בחלק האחרון
+   כך שהסכומים סוגרים בדיוק על שורת המקור. hoursTotal מאפשר לקבוע סך
+   שעות שונה (תקן רכז 114) — הכספים אינם משתנים. */
+const splitSchema = z.object({
+  rowId: z.number().int(),
+  parts: z.array(z.object({ symbol: z.string().min(1), cost: z.number().positive() })).min(2).max(12),
+  hoursTotal: z.number().positive().optional(),
+});
+router.post('/:id/split-row', ah(async (req, res) => {
+  const parsed = splitSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'מבנה פיצול לא תקין' });
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const { rowId, parts, hoursTotal } = parsed.data;
+  const src = await db.prepare('SELECT * FROM cost_rows WHERE id = ? AND report_id = ?').get(rowId, id);
+  if (!src) return res.status(404).json({ error: 'שורה לא נמצאה בדוח' });
+  const totalCost = parts.reduce((s, p) => s + p.cost, 0);
+  if (Math.abs(totalCost - (src.cost || 0)) > 1) {
+    return res.status(400).json({ error: `סכום החלקים (₪${totalCost.toFixed(2)}) חייב להיות שווה לעלות השורה (₪${(src.cost || 0).toFixed(2)})` });
+  }
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const H = hoursTotal || src.hours || 0;
+  // חלוקה יחסית לעלות; החלק האחרון סופג את שאריות העיגול
+  const shares = parts.map((p) => p.cost / src.cost);
+  const gross = shares.map((f) => r2((src.gross || 0) * f));
+  const hours = shares.map((f) => r2(H * f));
+  const cost = parts.map((p) => r2(p.cost));
+  const last = parts.length - 1;
+  gross[last] = r2((src.gross || 0) - gross.slice(0, last).reduce((s, v) => s + v, 0));
+  hours[last] = r2(H - hours.slice(0, last).reduce((s, v) => s + v, 0));
+  cost[last] = r2((src.cost || 0) - cost.slice(0, last).reduce((s, v) => s + v, 0));
+
+  const createdIds = [];
+  for (let i = 1; i < parts.length; i++) {
+    const ins = await db.prepare(
+      `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept,
+         inst_symbol, inst_name, component_names, gross, cost, hours, staff_type, role, symbol_override)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(src.cost_file_id, src.client_id, id, src.emp_id, src.emp_name, src.first_name, src.last_name, src.dept,
+      src.inst_symbol, src.inst_name, src.component_names || '[]', gross[i], cost[i], hours[i],
+      src.staff_type, src.role, String(parts[i].symbol));
+    createdIds.push(ins.lastInsertRowid);
+  }
+  await db.prepare('UPDATE cost_rows SET symbol_override = ?, gross = ?, cost = ?, hours = ? WHERE id = ?')
+    .run(String(parts[0].symbol), gross[0], cost[0], hours[0], rowId);
+  res.json({ ok: true, rowId, createdIds, parts: parts.map((p, i) => ({ symbol: p.symbol, cost: cost[i], gross: gross[i], hours: hours[i] })) });
+}));
+
 /* אישור התאמות ברוטו: מגדיל את הברוטו השעתי בדיוק כדי לעמוד בתקרת ה-140%
    (עד 5 ₪ לשעה — מעבר לזה דורש בדיקה מעמיקה, לא מוצע אוטומטית) */
 router.post('/:id/apply-bumps', ah(async (req, res) => {
