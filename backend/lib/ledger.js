@@ -14,7 +14,8 @@ const num = (v) => {
   return Number(s);
 };
 
-/* שיוך סל לפי שם הכרטסת. "שכר מורים+רכז" הוא כרטיס שכר משולב → הדרכה. */
+/* שיוך סל לפי שם הכרטסת. "שכר מורים+רכז" = כרטיס שכר משולב → סל השכר
+   המשולב (כלל רעות 24.9) — נספר בהשוואות השכר יחד עם הדרכה וריכוז. */
 function basketForCardName(name) {
   const n = norm(name);
   if (!n) return null;
@@ -29,8 +30,11 @@ function basketForCardName(name) {
   if (/מלגות/.test(n)) return 'scholarships';
   if (/ניהול|תקורה|תפעול|הנהלה/.test(n)) return 'management';
   if (/גמיש/.test(n)) return 'flexible';
-  if (/סגן/.test(n)) return 'deputy';
-  if (/רכז/.test(n) && !/מור|מוביל|סייע/.test(n)) return 'coordinator';
+  if (/סג[נן]/.test(n)) return 'deputy'; // נו"ן רגילה וסופית — "סגן" וגם "סגני/סגנית"
+  // כרטסת משולבת: גם רכז וגם מילת צוות באותו שם ("שכר מורים+רכז", "שכר גננות
+  // ורכזות") — "שכר רכזים" לבדו נשאר סל ריכוז
+  if (/רכז/.test(n) && /מור|מוביל|סייע|גננ|צוות/.test(n)) return 'salary_combined';
+  if (/רכז/.test(n)) return 'coordinator';
   if (/שכר|משכורת|מוביל|סייע|גננ|מור/.test(n)) return 'instruction';
   return null;
 }
@@ -39,6 +43,7 @@ function basketForCardName(name) {
 const BASKET_HE = {
   instruction: 'שכר הדרכה (מובילות/מורים)',
   coordinator: 'שכר רכזים/רכזות',
+  salary_combined: 'שכר הדרכה + ריכוז (כרטסת משולבת)', // כרטסת שכר אחת לצוות ולרכזים
   deputy: 'שכר סגני רכזים',
   enrichment: 'העשרה',
   flexible: 'סל גמיש',
@@ -51,7 +56,7 @@ const BASKET_HE = {
   ai: 'סל AI',                    // מכינות: "סל AI (ארבעה ימי פעילות)"
   income: 'הכנסות משתתפים (גבייה מהורים)', // ללשונית תשלומי ההורים — לא נכלל בהתאמת ההוצאות
 };
-const SALARY_BASKET_TYPES = ['instruction', 'coordinator', 'deputy'];
+const SALARY_BASKET_TYPES = ['instruction', 'coordinator', 'deputy', 'salary_combined'];
 
 /* רשימת השיוך במסך שלב 2 לפי סוג הפרויקט (כלל רעות 22.9): הרשימה של כל
    פרויקט = הרשימה הנפתחת בלשונית "דוח הוצאות בפועל" של תבנית המשרד + סלי
@@ -60,6 +65,7 @@ const SALARY_BASKET_TYPES = ['instruction', 'coordinator', 'deputy'];
 const PREP_BASKET_HE = {
   instruction: 'שכר הדרכה (צוות חינוכי)',
   coordinator: 'שכר רכזים (סל ריכוז)',
+  salary_combined: 'שכר הדרכה + ריכוז (כרטסת משולבת)',
   deputy: 'שכר סגני רכזים',
   enrichment: 'העשרה',
   scholarships: 'מלגות להורים',
@@ -69,7 +75,7 @@ const PREP_BASKET_HE = {
   income: BASKET_HE.income,
 };
 // בתי"ס/גנים — הרשימה כפי שהייתה (בלי סלי המכינות)
-const SCHOOLS_GARDENS_KEYS = ['instruction', 'coordinator', 'deputy', 'enrichment',
+const SCHOOLS_GARDENS_KEYS = ['instruction', 'coordinator', 'salary_combined', 'deputy', 'enrichment',
   'flexible', 'security', 'breakfast', 'scholarships', 'management', 'overhead', 'income'];
 function basketOptionsFor(framework) {
   if (framework === 'prep') return Object.entries(PREP_BASKET_HE).map(([value, label]) => ({ value, label }));
