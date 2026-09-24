@@ -53,10 +53,10 @@ export default function PrepSection({ reportId }: { reportId: number }) {
     const idHit = /\d/.test(q) && String(r.empId || '').includes(q.replace(/\D/g, ''));
     return nameHit || idHit;
   });
-  const missing = (data?.rows || []).filter((r) => {
-    const a = assign[r.rowId] || {};
-    return !a.symbol || !a.staffType || !a.role;
-  }).length;
+  // כלל רעות 24.9: רכזת גן בגנים אינה צריכה שיוך לסמל — שלמה עם תפקיד בלבד
+  const rowComplete = (a: Assignment) =>
+    !!(a.staffType && a.role && (a.symbol || a.staffType === 'רכזת גן'));
+  const missing = (data?.rows || []).filter((r) => !rowComplete(assign[r.rowId] || { symbol: null, staffType: null, role: null })).length;
 
   if (!data || data.rows.length === 0) return null;
 
@@ -377,7 +377,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
           <tbody>
             {shown.map((r) => {
               const a = assign[r.rowId] || { symbol: null, staffType: null, role: null };
-              const complete = a.symbol && a.staffType && a.role;
+              const complete = rowComplete(a);
               const instName = data.institutions.find((i) => i.symbol === a.symbol)?.name;
               return (
                 <tr key={r.rowId} style={{ borderTop: `1px solid ${T.line}`, background: complete ? T.greenBg + '44' : undefined }}>

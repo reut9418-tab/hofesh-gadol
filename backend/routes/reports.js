@@ -618,6 +618,8 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
   for (const r of rows) {
     const sym = symbolOf(r);
     const st = staffOf(r);
+    // כלל רעות 24.9: רכזת גן אינה צריכה שיוך לסמל — לא מחלקים לה גן
+    if (/רכזת גן/.test(String(st || ''))) continue;
     const kind = /סייע/.test(st) ? 'say' : /גננת|מוביל/.test(st) ? 'gan' : null;
     if (sym && staffed.has(sym)) { if (kind) staffed.get(sym)[kind]++; }
     else if (!sym) unassigned.push({ r, kind: kind || 'gan', st });
