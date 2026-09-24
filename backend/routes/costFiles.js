@@ -232,17 +232,26 @@ router.get('/cost-files/:fileId', ah(async (req, res) => {
   });
 }));
 
-/* ---------- מחיקת קובץ עלות ---------- */
+/* ---------- מחיקת קובץ עלות ----------
+   כלל רעות 24.9: מחיקת דוח עלות = איפוס מלא ומתחילים מהתחלה — נמחק גם
+   זיכרון השיוכים הידני (worker_assign) של הדוחות שהקובץ הזין, כדי ששיוכי
+   העבר לא יוחלו על הקובץ הבא ("הדוח האחרון שאני שולחת הוא הקובע"). */
 router.delete('/cost-files/:fileId', ah(async (req, res) => {
   const db = getDB();
   const fileId = parseInt(req.params.fileId);
+  const file = await db.prepare('SELECT client_id FROM cost_files WHERE id = ?').get(fileId);
   const affected = (await db.prepare('SELECT DISTINCT report_id FROM cost_rows WHERE cost_file_id = ? AND report_id IS NOT NULL').all(fileId)).map((r) => r.report_id);
   await db.prepare('DELETE FROM cost_rows WHERE cost_file_id = ?').run(fileId);
   // גם עותק המקור נמחק — שלא תישאר שום התייחסות לקובץ שהוחלף
   await db.prepare('DELETE FROM cost_file_blobs WHERE cost_file_id = ?').run(fileId);
   await db.prepare('DELETE FROM cost_files WHERE id = ?').run(fileId);
-  for (const rid of affected) await refreshReportFlag(db, rid);
-  res.json({ ok: true });
+  for (const rid of affected) {
+    if (file) await db.prepare(
+      "DELETE FROM client_mappings WHERE client_id = ? AND mapping_type = 'worker_assign' AND map_key LIKE ?"
+    ).run(file.client_id, `${rid}:%`);
+    await refreshReportFlag(db, rid);
+  }
+  res.json({ ok: true, resetReports: affected });
 }));
 
 /* ---------- שיוך עמודות ידני: כותרת בדוח העלות → שדה במערכת ---------- */
