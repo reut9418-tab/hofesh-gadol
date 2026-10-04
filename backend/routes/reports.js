@@ -215,11 +215,13 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
     return res.status(422).json({ error: 'לא נמצאו מוסדות עם תקציב מחושב בקובץ. ודאי שכמות הילדים מולאה ב"מצבת והרשמה" ושהקובץ נשמר ב-Excel.' });
   }
 
-  // גנים: כשבקרת הזכאות בקובץ איפסה את תקציב הרכזות אך יש גנים מסומנים
-  // בלשונית "רכזות גנים - דוח ביצוע" — תקציב הריכוז = מס' הגנים × התעריף לגן
+  // גנים: תקציב הריכוז = מס' הגנים הזכאים (המובילה אינה גננת) × עלות הרכזת
+  // לגן. מחושב אצלנו תמיד — גם כשהקובץ חישב ערך: נוסחת המשרד (ריכוז נתונים
+  // AC14) מכפילה את סה"כ המשרות (0.2 לגן) בעלות לגן — באג באקסל של משרד
+  // החינוך שמניב חמישית מהתקציב (עכו: 1.2×1,864.8 במקום 6×1,864.8; רעות 4.10)
   if (report.framework === 'gardens') {
     const inst0 = parsed.institutions[0];
-    if (inst0 && !(inst0.baskets.coordinator > 0) && inst0.coordRatePerGarden > 0) {
+    if (inst0 && inst0.coordRatePerGarden > 0) {
       try {
         const cg = extractCoordinatorGardens(req.file.buffer);
         if (cg.length) {
@@ -230,9 +232,10 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
             const exec = parseGardenExecKids(XLSX2.read(req.file.buffer, { type: 'buffer' }));
             if (exec && exec.daysBySymbol) eligible = cg.reduce((s, sym) => s + (exec.daysBySymbol[String(sym)] ?? 1), 0);
           } catch { /* בלי יחס ימים — ספירה מלאה */ }
-          const add = Math.round(eligible * inst0.coordRatePerGarden * 100) / 100;
-          inst0.baskets.coordinator = add;
-          inst0.total = (inst0.total || 0) + add;
+          const coord = Math.round(eligible * inst0.coordRatePerGarden * 100) / 100;
+          // מחליפים את ערך הקובץ (אם חושב) — גם בסה"כ
+          inst0.total = (inst0.total || 0) - (inst0.baskets.coordinator || 0) + coord;
+          inst0.baskets.coordinator = coord;
         }
       } catch { /* בלי הלשונית — נשאר כפי שחישב המשרד */ }
     }
