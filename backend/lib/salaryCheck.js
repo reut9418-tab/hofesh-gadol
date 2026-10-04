@@ -87,7 +87,9 @@ function staffFromRoleText(text) {
   // "רכזת"/"רכז" סתמי — רכז/ת התכנית (בגנים הסל זהה: רכז ⇒ סל ריכוז)
   if (/רכז/.test(t)) return { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' };
   if (/מורה/.test(t)) return { staffType: 'מורה', role: 'מורה' };
-  if (/מדצ|מד"צ/.test(t)) return { staffType: 'מדצ', role: 'מדצ/ית' };
+  // מד"צ בדוח השכר נרשם כסייעת (כלל רעות 4.10.2026) — כך נספר באיוש הגן;
+  // בבתי"ס הייצוא מתרגם סייעת למורה/עוזר/ת חינוך (SCHOOL_TYPE_MAP)
+  if (/מדצ|מד"צ/.test(t)) return { staffType: 'סייעת ממשיכה', role: 'סייעת' };
   return null;
 }
 
