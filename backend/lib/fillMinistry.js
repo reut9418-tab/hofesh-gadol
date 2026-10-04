@@ -672,6 +672,7 @@ const SCHOOL_STAFF_TYPES = [
    העלות) לערכי הרשימה של תבנית בתי הספר, והצמדה למחרוזות המדויקות בקובץ */
 const SCHOOL_TYPE_MAP = {
   'גננת': { staffType: 'מורה', role: 'בעל/ת תעודת הוראה שסיימ/ה 80% מהתואר' },
+  'סייעת': { staffType: 'מורה', role: 'עוזר/ת חינוך' },
   'סייעת חדשה': { staffType: 'מורה', role: 'עוזר/ת חינוך' },
   'סייעת ממשיכה': { staffType: 'מורה', role: 'עוזר/ת חינוך' },
   'רכזת גן': { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' },
@@ -680,7 +681,20 @@ const SCHOOL_TYPE_MAP = {
 /* גנים: הצמדת איש-צוות/תפקיד לרשימת תבנית הגנים בלבד (כלל רעות 22.9:
    "תפקידים רק מתוך הרשימה בפרויקט") — תפקיד בתי"ס שזלג ("רכזת תכנית
    בבית הספר") לא נספר בקובץ לסל רכזות הגנים */
-function mapGardensStaff(staffType, role) {
+/* סוג הסייעת לפי המשלם (כלל רעות 4.10.2026): סייעת ממשיכה = של הרשות/
+   המועצה; סייעת חדשה = של המתנ"ס/החברה/המפעיל. payer = הערך שנכתב
+   ב"הועסק ע"י" (משלם הקובץ, ובהיעדרו שם הרשות) */
+function aideTypeForPayer(payer, authorityName) {
+  const p = String(payer || '').trim();
+  if (!p) return 'סייעת ממשיכה';
+  // מתנ"ס/חברה/עמותה — מפעיל, גם כשבשמו מופיע שם הרשות ("מתנ"ס אלעד")
+  if (/מתנ"?ס|מתנס|חבר[הת]|בע"?מ|עמות/.test(p)) return 'סייעת חדשה';
+  if (/רשות|עירי|מועצ/.test(p)) return 'סייעת ממשיכה';
+  if (authorityName && p.includes(String(authorityName).trim())) return 'סייעת ממשיכה';
+  return 'סייעת חדשה';
+}
+
+function mapGardensStaff(staffType, role, aideType = 'סייעת ממשיכה') {
   const st = String(staffType || '').trim();
   const entry = STAFF_TYPES.find((x) => x.type === st);
   if (entry) {
@@ -688,7 +702,8 @@ function mapGardensStaff(staffType, role) {
     return { staffType: entry.type, role: exact || entry.roles[0] };
   }
   if (/רכז|סג[נן]/.test(st)) return { staffType: 'רכזת גן', role: 'רכז/ת גן' };
-  if (/סייע|סיעת/.test(st)) return { staffType: 'סייעת ממשיכה', role: 'סייעת' };
+  // "סייעת" כללית (זיהוי אוטומטי) — ממשיכה/חדשה לפי המשלם
+  if (/סייע|סיעת/.test(st)) return { staffType: aideType, role: 'סייעת' };
   if (/גננת|מוביל/.test(st)) return { staffType: 'גננת', role: 'גננת של הגן' };
   if (/מדצ/.test(st)) return { staffType: 'מדצ', role: 'מדצ/ית' };
   // "מורה" אינו ברשימת הגנים — המקבילה בתבנית: גננת בעל/ת תעודת הוראה
@@ -795,7 +810,7 @@ function extractInstitutions(buf) {
 module.exports = {
   fillMinistryReport, detectStartRow, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, parseExpenseActuals,
   SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
-  SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework,
+  SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer,
   detectExpenseSheet, EXPENSE_LABEL_HE,
   STAFF_TYPES, MINISTRY_SHEET_HINT, COORD_SHEET_HINT,
 };

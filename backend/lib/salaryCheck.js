@@ -8,7 +8,8 @@
 function suggestRole(dept) {
   const d = String(dept || '');
   if (/רכזות גנים|רכזת גן/.test(d)) return { staffType: 'רכזת גן', role: 'רכז/ת גן' };
-  if (/סייע/.test(d)) return { staffType: 'סייעת ממשיכה', role: 'סייעת' };
+  // "סייעת" כללית — ממשיכה/חדשה נקבע לפי המשלם (aideTypeForPayer) במסך ובייצוא
+  if (/סייע/.test(d)) return { staffType: 'סייעת', role: 'סייעת' };
   if (/מוביל|גננת|גננות/.test(d)) return { staffType: 'גננת', role: 'גננת של הגן' };
   // "מורים +רכזות" = מחלקה משולבת של בי"ס — ברירת המחדל מורה (הרכזת תסומן ידנית)
   if (/מור(ה|ים)/.test(d)) return { staffType: 'מורה', role: 'מורה' };
@@ -78,8 +79,9 @@ function demoteExtraSchoolRoles(schoolRows, coordCap = COORD_HOURS_PER_DAY * 15)
 function staffFromRoleText(text) {
   const t = String(text || '');
   if (!t) return null;
-  // סיעת = שגיאת כתיב נפוצה של סייעת (אור עקיבא)
-  if (/סייע|סיעת/.test(t)) return { staffType: 'סייעת ממשיכה', role: 'סייעת' };
+  // סיעת = שגיאת כתיב נפוצה של סייעת (אור עקיבא). "סייעת" כללית — ממשיכה
+  // (רשות/מועצה) או חדשה (מתנ"ס/חברה/מפעיל) נקבע לפי משלם הקובץ במסך ובייצוא
+  if (/סייע|סיעת/.test(t)) return { staffType: 'סייעת', role: 'סייעת' };
   if (/מוביל|גננת/.test(t)) return { staffType: 'גננת', role: 'גננת של הגן' };
   // סג[נן] — נו"ן רגילה וסופית: "סגן" וגם "סגנית"
   if (/סג[נן]/.test(t)) return { staffType: 'סגנית רכזת מעל 150', role: 'סגנ/ית רכז/ת>150' };
@@ -89,7 +91,7 @@ function staffFromRoleText(text) {
   if (/מורה/.test(t)) return { staffType: 'מורה', role: 'מורה' };
   // מד"צ בדוח השכר נרשם כסייעת (כלל רעות 4.10.2026) — כך נספר באיוש הגן;
   // בבתי"ס הייצוא מתרגם סייעת למורה/עוזר/ת חינוך (SCHOOL_TYPE_MAP)
-  if (/מדצ|מד"צ/.test(t)) return { staffType: 'סייעת ממשיכה', role: 'סייעת' };
+  if (/מדצ|מד"צ/.test(t)) return { staffType: 'סייעת', role: 'סייעת' };
   return null;
 }
 

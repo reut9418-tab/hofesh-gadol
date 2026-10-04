@@ -12,7 +12,7 @@ const { costDataForReport } = require('../lib/reportCosts');
 const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff, parseGardenExecKids, norm } = require('../lib/budgetFile');
 const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
-  SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework } = require('../lib/fillMinistry');
+  SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer } = require('../lib/fillMinistry');
 const { salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor } = require('../lib/salaryCheck');
 const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = require('../lib/applyAssignments');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
@@ -390,9 +390,14 @@ router.get('/:id/prep', ah(async (req, res) => {
   const rawRows = await db.prepare(
     `SELECT cr.id, cr.emp_id, cr.emp_name, cr.first_name, cr.last_name, cr.dept,
             cr.inst_symbol, cr.inst_name, cr.symbol_override, cr.staff_type, cr.role,
-            cr.gross, cr.cost, cr.hours, cr.gross_bump, cr.manual_rates
-     FROM cost_rows cr WHERE cr.report_id = ? ORDER BY cr.dept, cr.emp_name`
+            cr.gross, cr.cost, cr.hours, cr.gross_bump, cr.manual_rates, cf.payer
+     FROM cost_rows cr LEFT JOIN cost_files cf ON cf.id = cr.cost_file_id
+     WHERE cr.report_id = ? ORDER BY cr.dept, cr.emp_name`
   ).all(id);
+  // סוג סייעת לפי המשלם — כמו "הועסק ע"י" בייצוא (משלם הקובץ, ובהיעדרו הרשות)
+  const prepAuth = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  const prepClient = await db.prepare('SELECT name FROM clients WHERE id = ?').get(report.client_id);
+  const prepEmployer = (prepAuth && prepAuth.name) || (prepClient && prepClient.name) || '';
 
   // הצעת סמל: שם הגן/בי"ס שבשורת העובד מול לשונית ההרשמה, ובבתי"ס גם לפי שם המחלקה
   let deptSymbol = {};
@@ -447,7 +452,7 @@ router.get('/:id/prep', ah(async (req, res) => {
     // "מורה" עם תפקיד לפי מדרגת הברוטו השעתי (כלל רעות 22.9, גוש עציון)
     if (isSchools && !stVal) ({ staffType: stVal, role: roleVal } = defaultSchoolsStaff(r.gross != null && r.hours ? r.gross / r.hours : 0));
     if (isSchools) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, schoolTypes));
-    else if (stVal) ({ staffType: stVal, role: roleVal } = mapGardensStaff(stVal, roleVal));
+    else if (stVal) ({ staffType: stVal, role: roleVal } = mapGardensStaff(stVal, roleVal, aideTypeForPayer(r.payer || prepEmployer, prepAuth && prepAuth.name)));
     return {
       rowId: r.id, empId: r.emp_id, name: r.emp_name,
       firstName: r.first_name, lastName: r.last_name, dept: r.dept, instName: r.inst_name,
@@ -1382,7 +1387,7 @@ router.get('/:id/export', ah(async (req, res) => {
     // בתי"ס בלי שום סיווג — ברירת מחדל לפי מדרגת הברוטו השעתי (כלל 22.9)
     if (isSch && !stVal) ({ staffType: stVal, role: roleVal } = defaultSchoolsStaff(hourlyGross || 0));
     if (isSch) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, exSchoolTypes));
-    else if (stVal) ({ staffType: stVal, role: roleVal } = mapGardensStaff(stVal, roleVal));
+    else if (stVal) ({ staffType: stVal, role: roleVal } = mapGardensStaff(stVal, roleVal, aideTypeForPayer(r.payer || employer, authority && authority.name)));
     // עמודת התפקיד בקובץ היא נוסחת משרד שגוזרת לבד את התפקיד לסוגי הצוות
     // החד-תפקידיים — שם משאירים אותה; כותבים תפקיד רק לסוגים שהנוסחה לא
     // מכסה (גננת/מורה/תוספת כח אדם...), אחרת התא נשאר ריק ונעול
