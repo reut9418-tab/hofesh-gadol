@@ -176,6 +176,10 @@ async function migrate(db) {
     // + "תוספת סייעות רפואיות או אישיות" — המקור ל"צפוי לקבל" בדוח שלב 2
     'payment_total REAL', 'payment_aides REAL', 'payment_note TEXT']) await add('institutions', c);
   for (const c of ['budget_file_name TEXT', 'budget_file_path TEXT', 'parent_tariff REAL DEFAULT 0']) await add('reports', c);
+  // הערכת עלות שכר רשות (כשאין דוח עלות מהרשות) — סכום סופי לדוח הביצוע,
+  // סל (instruction/coordinator), הערה, ופיצול ידני פר סמל (JSON) בבתי"ס
+  for (const c of ['authority_estimate REAL DEFAULT 0', 'authority_estimate_basket TEXT',
+    'authority_estimate_note TEXT', 'authority_estimate_split TEXT']) await add('reports', c);
   for (const c of ['symbol_override TEXT', 'staff_type TEXT', 'role TEXT',
     'moved_from_dept TEXT', 'moved_from_symbol TEXT', 'move_declined INTEGER DEFAULT 0']) await add('cost_rows', c);
   await add('cost_files', 'payer TEXT');

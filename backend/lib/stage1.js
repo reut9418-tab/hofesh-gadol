@@ -9,6 +9,7 @@ const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions } = require('./nameMatch');
 const { reportLabel } = require('./domain');
 const { recognizedRowCost, effectiveGross, COST_MARKUP_LIMIT } = require('./ingest');
+const { authorityEstimate } = require('./authorityEstimate');
 
 const fmt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -68,7 +69,7 @@ async function stage1Data(db, report, client, authority) {
   const idIssues = collect(/ת\.ז לא תקינה/);
 
   const salary = await salaryCheck(db, report);
-  const recs = await recommendations(db, report);
+  const recs = await recommendations(db, report, { withEstimate: true });
   const hasVat = !!(client && client.has_vat);
   const vatFactor = hasVat ? 1.18 : 1;
 
@@ -256,6 +257,7 @@ async function stage1Data(db, report, client, authority) {
       name, symbol, children: children || 0,
       salaryBudget, salaryActual, salaryUnused, overflow,
       instrBudget, instrActual, coordBudget, coordActual,
+      authEstAmount: split.est || 0, // הערכת שכר רשות שנכללה בניצול (אין דוח עלות)
       // ניצול הדרכה מתחת ל-75% מהסל (ללא הגמיש) — המשרד צפוי לקזז
       instrUnderCut: instrBudget > 0 && instrActual < instrBudget * 0.75,
       enrichBudget: enrichB, flexBudget: flexB, breakfastBudget: breakfastB,
@@ -304,6 +306,15 @@ async function stage1Data(db, report, client, authority) {
     return m;
   };
 
+  // הערכת עלות שכר רשות (אין דוח עלות מהרשות): נוספת לניצול המוכר של הסל
+  // שנבחר — לא ליעדי הכרטסות (netInstr/netCoord נשארים מדוח העלות)
+  const authEst = authorityEstimate(report);
+  const withEst = (split, symbol) => {
+    if (!authEst) return split;
+    const v = authEst.bySymbol(symbol);
+    return authEst.basket === 'coordinator' ? { ...split, coord: split.coord + v, est: v } : { ...split, instr: split.instr + v, est: v };
+  };
+
   let units = [];
   if (report.framework === 'gardens') {
     const baskets = {};
@@ -317,7 +328,7 @@ async function stage1Data(db, report, client, authority) {
     // שהוא (כלל רעות 17.9) — בלי שער איוש משלנו על בסיס שורות השכר; הכמות
     // בקובץ כבר מגלמת את ימי ההפעלה בפועל (ימים/7 פר גן), ולכן גם שינוי
     // ימי ההרחבה מטופל דרך הקובץ ולא דרך שדה הימים של הדוח
-    units = [mkUnit('כל הגנים (במרוכז)', null, baskets, cost.summary.totalCost, splitRecognized(rows), kids, payerSplit(rows))];
+    units = [mkUnit('כל הגנים (במרוכז)', null, baskets, cost.summary.totalCost, withEst(splitRecognized(rows), null), kids, payerSplit(rows))];
   } else {
     for (const i of insts) {
       const unitRows = rows.filter((r) => rowSymbol(r) === String(i.symbol));
@@ -335,13 +346,14 @@ async function stage1Data(db, report, client, authority) {
         const total = split.instr + split.coord;
         split = { instr: Math.max(0, total - stRep), coord: stBud, coordHours: split.coordHours, netInstr: split.netInstr, netCoord: split.netCoord };
       }
-      units.push(mkUnit(i.name || i.symbol, String(i.symbol), bkts, actual, split, i.children_count || 0, payerSplit(unitRows)));
+      units.push(mkUnit(i.name || i.symbol, String(i.symbol), bkts, actual, withEst(split, i.symbol), i.children_count || 0, payerSplit(unitRows)));
     }
   }
 
   return {
     report, client, authority, cost, salary, recs, hasVat, tariff, payers,
     rateIssues, hoursIssues, idIssues, units, cappedCount, cappedReduction,
+    authEst: authEst ? { total: authEst.total, basket: authEst.basket, note: authEst.note } : null,
     label: reportLabel(report.framework, report.program),
     unassignedCost: report.framework !== 'gardens'
       ? rows.filter((r) => !rowSymbol(r)).reduce((s, r) => s + (r.cost || 0), 0)
@@ -363,6 +375,7 @@ function renderStage1Html(d) {
 
   /* --- נקודות חשובות (תמצית) --- */
   const highlights = [];
+  if (d.authEst) highlights.push(`<b>החישובים במכתב כוללים הערכה של ₪${fmt(d.authEst.total)} לשכר ${d.authEst.basket === 'coordinator' ? 'רכזות' : 'סייעות'} הרשות</b>${d.authEst.note ? ` (${esc(d.authEst.note)})` : ''} — טרם התקבל דוח עלות מהרשות; הניצול, הסל הגמיש והיתרות יעודכנו עם קבלתו. ההערכה אינה חלק מיעדי הכרטסות שלכם.`);
   if (d.rateIssues.length) highlights.push(`נמצאו <b>${d.rateIssues.length} עובדים</b> עם שכר לשעה מעל תקרת המשרד — יש לתקן לפני ההגשה (פירוט בסעיף 1).`);
   if (d.cappedCount > 0) highlights.push(`אצל <b>${d.cappedCount} עובדים</b> העלות השעתית עלתה על 140% מהברוטו — בדוח הביצוע דווח עבורם, בהתאם לכלל, <b>הנמוך מבין</b> העלות${d.hasVat ? ' כולל מע"מ' : ''} לבין ברוטו + 40% (הפחתה כוללת של ₪${fmt(d.cappedReduction)}; הפירוט בדוח ההתאמה לדוח העלות).`);
   if (d.hoursIssues.length) highlights.push(`נמצאו <b>${d.hoursIssues.length} עובדים</b> עם כמות שעות הדורשת בדיקה (פירוט בסעיף 2).`);
@@ -410,9 +423,10 @@ function renderStage1Html(d) {
     const title = u.symbol ? `${esc(u.name)} — סמל ${esc(u.symbol)}` : esc(u.name);
     // ללקוח מע"מ — מציגים גם את הדיווח למשרד כדי שיהיה ברור מקור הפער:
     // יעד הכרטסת = דוח העלות (כלל רעות 23.9); הדיווח = מע"מ + תקרת 140%
+    const estPart = u.authEstAmount > 0 ? ` + הערכת שכר רשות ₪${fmt(u.authEstAmount)}` : '';
     const booksNote = d.hasVat
-      ? ` <span class="soft">(יעד הכרטסת = דוח העלות: ₪${fmt(u.targets.salary)}; בדוח הביצוע דווח, כולל מע"מ ותקרת 140%: ₪${fmt(u.salaryActual)})</span>`
-      : '';
+      ? ` <span class="soft">(יעד הכרטסת = דוח העלות: ₪${fmt(u.targets.salary)}; בדוח הביצוע דווח, כולל מע"מ ותקרת 140%: ₪${fmt(u.salaryActual - u.authEstAmount)}${estPart})</span>`
+      : (u.authEstAmount > 0 ? ` <span class="soft">(הניצול כולל הערכת שכר רשות ₪${fmt(u.authEstAmount)} — אין דוח עלות מהרשות)</span>` : '');
     // השוואה סל-מול-סל: הדרכה לבד, ריכוז לבד; רק הסל הגמיש בולע חריגות
     const basketLine = (label, actual, budget) => {
       if (!(budget > 0) && !(actual > 0)) return '';

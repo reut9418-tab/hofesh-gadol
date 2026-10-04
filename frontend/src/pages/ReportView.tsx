@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { T, STATUS_HE, STATUS_COLOR, BUCKET_COLOR } from '../theme';
 import { btn, card, pill } from '../ui';
-import { getReport, updateReport, getReportCosts, getReportBudget, uploadBudgetFile, stage2DocUrl } from '../api';
+import { getReport, updateReport, getReportCosts, getReportBudget, uploadBudgetFile, stage2DocUrl, saveAuthorityEstimate } from '../api';
 import PrepSection from './PrepSection';
 import LedgerSection from './LedgerSection';
 import type { Nav } from '../App';
@@ -185,6 +185,106 @@ function CostSection({ reportId }: { reportId: number }) {
   );
 }
 
+/* ---------- הערכת עלות שכר רשות (כשהרשות לא מעבירה דוח עלות) — למכתב בלבד ---------- */
+function AuthorityEstimateSection({ rep, onChange }: { rep: any; onChange: () => void }) {
+  const isGardens = rep.framework === 'gardens';
+  const initSplit = (() => {
+    try { return Object.entries(JSON.parse(rep.authority_estimate_split || '{}')).map(([symbol, amount]) => ({ symbol, amount: String(amount) })); }
+    catch { return []; }
+  })();
+  const [amount, setAmount] = useState(rep.authority_estimate ? String(rep.authority_estimate) : '');
+  const [rows, setRows] = useState<{ symbol: string; amount: string }[]>(initSplit.length ? initSplit : [{ symbol: '', amount: '' }]);
+  const [basket, setBasket] = useState(rep.authority_estimate_basket || 'instruction');
+  const [note, setNote] = useState(rep.authority_estimate_note || '');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const num = (s: string) => Number(String(s).replace(/[,₪\s]/g, '')) || 0;
+  const total = isGardens ? num(amount) : rows.reduce((s, r) => s + num(r.amount), 0);
+  const saved = isGardens ? Number(rep.authority_estimate) || 0
+    : initSplit.reduce((s, r) => s + num(r.amount), 0);
+  // דוח עלות עם משלם "רשות" כבר נקלט — סכנת ספירה כפולה
+  const authorityPayer = (rep.cost_payers || []).find((p: string) => /רשות|עירי|מועצ/.test(p) || (rep.authority?.name && p.includes(rep.authority.name)));
+  const symbols: { symbol: string; name: string }[] = rep.institutions || [];
+
+  const save = async (clear = false) => {
+    setBusy(true); setErr(null); setMsg(null);
+    try {
+      const split = isGardens || clear ? null
+        : Object.fromEntries(rows.filter((r) => r.symbol.trim() && num(r.amount) > 0).map((r) => [r.symbol.trim(), num(r.amount)]));
+      await saveAuthorityEstimate(rep.id, { amount: clear ? 0 : (isGardens ? num(amount) : 0), basket, note: clear ? '' : note, split });
+      if (clear) { setAmount(''); setRows([{ symbol: '', amount: '' }]); setNote(''); }
+      setMsg(clear ? 'ההערכה הוסרה.' : 'נשמר — המכתב יחושב עם ההערכה.');
+      onChange();
+    } catch (e: any) { setErr(e?.response?.data?.error || 'השמירה נכשלה.'); }
+    finally { setBusy(false); }
+  };
+
+  const input = { padding: '5px 8px', fontSize: 12.5, borderRadius: 6, fontFamily: 'inherit', border: `1px solid ${T.line}` } as const;
+
+  return (
+    <section style={card}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>הערכת עלות שכר רשות (טרם התקבל דוח עלות)</span>
+        {saved > 0 && <span style={pill(T.amber)}>פעיל במכתב: ₪{fmt(saved)}</span>}
+      </div>
+      <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 12, lineHeight: 1.6 }}>
+        הסכום הסופי כפי שיופיע בדוח הביצוע (בלי תוספת מע"מ ובלי תקרת 140%). משפיע <b>על המכתב בלבד</b> — ניצול השכר מול הסלים, הסל הגמיש והיתרות.
+        לא נכתב לקובץ המשרד ולא נכנס ליעדי הכרטסות. דוח הביצוע יושפע רק כשיועלה דוח עלות של הרשות.
+      </div>
+      {authorityPayer && saved > 0 && (
+        <div style={{ fontSize: 12.5, color: T.red, background: T.redBg, borderRadius: 8, padding: '7px 11px', marginBottom: 10 }}>
+          ⚠ כבר נקלט לדוח זה דוח עלות עם המשלם "{authorityPayer}" — ייתכן שההערכה נספרת פעמיים. אם זה דוח העלות של הרשות, יש להסיר את ההערכה.
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        {isGardens ? (
+          <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+            סכום ההערכה (₪)
+            <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="numeric" placeholder="למשל 320000" style={{ ...input, width: 150 }} />
+          </label>
+        ) : (
+          <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
+            <span>שיוך לסמל מוסד</span>
+            {rows.map((r, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <select value={r.symbol} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, symbol: e.target.value } : x)))} style={{ ...input, width: 230 }}>
+                  <option value="">— בחירת מוסד —</option>
+                  {symbols.map((s) => <option key={s.symbol} value={String(s.symbol)}>{s.symbol} — {s.name}</option>)}
+                </select>
+                <input value={r.amount} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))}
+                  inputMode="numeric" placeholder="סכום ₪" style={{ ...input, width: 120 }} />
+                {rows.length > 1 && <button onClick={() => setRows(rows.filter((_, j) => j !== i))} style={{ ...btn('ghost'), padding: '3px 8px' }}>✕</button>}
+              </div>
+            ))}
+            <button onClick={() => setRows([...rows, { symbol: '', amount: '' }])} style={{ ...btn('ghost'), justifySelf: 'start' }}>＋ מוסד נוסף</button>
+          </div>
+        )}
+        <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+          סל
+          <select value={basket} onChange={(e) => setBasket(e.target.value)} style={{ ...input, width: 190 }}>
+            <option value="instruction">{isGardens ? 'שכר מובילות וסייעות' : 'שכר צוות חינוכי'}</option>
+            <option value="coordinator">{isGardens ? 'שכר רכזות גנים' : 'שכר רכזים'}</option>
+          </select>
+        </label>
+        <label style={{ display: 'grid', gap: 4, fontSize: 12, flex: '1 1 200px' }}>
+          הערה (תופיע במכתב)
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="למשל: לפי שנה קודמת" style={{ ...input }} />
+        </label>
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+        <button onClick={() => save(false)} disabled={busy || !(total > 0)} style={{ ...btn('primary'), opacity: busy || !(total > 0) ? 0.6 : 1 }}>
+          {busy ? 'שומר…' : `שמירה${total > 0 ? ` (₪${fmt(total)})` : ''}`}
+        </button>
+        {saved > 0 && <button onClick={() => save(true)} disabled={busy} style={btn('ghost')}>הסרת ההערכה</button>}
+        {msg && <span style={{ fontSize: 12, color: T.green }}>{msg}</span>}
+        {err && <span style={{ fontSize: 12, color: T.red }}>{err}</span>}
+      </div>
+    </section>
+  );
+}
+
 const STATUSES = ['draft', 'in_progress', 'blocked', 'ready', 'submitted'];
 
 function Flag({ on, label }: { on: boolean; label: string }) {
@@ -297,6 +397,7 @@ export default function ReportView({ reportId, clientId, go }: { reportId: numbe
       {stage === 1 && <>
         <BudgetSection reportId={reportId} onChange={load} />
         <CostSection reportId={reportId} />
+        <AuthorityEstimateSection key={rep.id} rep={rep} onChange={load} />
         <PrepSection reportId={reportId} />
       </>}
 

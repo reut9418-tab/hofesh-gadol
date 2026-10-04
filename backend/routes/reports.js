@@ -136,7 +136,31 @@ router.get('/:id', ah(async (req, res) => {
   const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(report.client_id);
   const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
   const institutions = await db.prepare('SELECT * FROM institutions WHERE report_id = ? ORDER BY symbol').all(report.id);
-  res.json({ ...shapeReport(report), client: client ? { ...client, has_vat: !!client.has_vat } : null, authority, institutions, health: await reportHealth(db, report) });
+  // המשלמים בדוחות העלות שנותבו — לאזהרת ספירה כפולה מול הערכת שכר רשות
+  const cost_payers = (await db.prepare(
+    'SELECT DISTINCT cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id WHERE cr.report_id = ?'
+  ).all(report.id)).map((r) => r.payer).filter(Boolean);
+  res.json({ ...shapeReport(report), client: client ? { ...client, has_vat: !!client.has_vat } : null, authority, institutions, cost_payers, health: await reportHealth(db, report) });
+}));
+
+/* הערכת עלות שכר רשות (כשהרשות לא מעבירה דוח עלות) — סכום סופי לדוח הביצוע */
+const estimateSchema = z.object({
+  amount: z.number().min(0),
+  basket: z.enum(['instruction', 'coordinator']).optional(),
+  note: z.string().max(500).optional(),
+  split: z.record(z.string(), z.number().min(0)).nullable().optional(),
+});
+router.put('/:id/authority-estimate', ah(async (req, res) => {
+  const parsed = estimateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(', ') });
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  if (!(await db.prepare('SELECT id FROM reports WHERE id = ?').get(id))) return res.status(404).json({ error: 'דוח לא נמצא' });
+  const d = parsed.data;
+  const split = d.split && Object.values(d.split).some((v) => v > 0) ? JSON.stringify(d.split) : null;
+  await db.prepare('UPDATE reports SET authority_estimate = ?, authority_estimate_basket = ?, authority_estimate_note = ?, authority_estimate_split = ? WHERE id = ?')
+    .run(d.amount, d.basket || 'instruction', d.note || null, split, id);
+  res.json(shapeReport(await db.prepare('SELECT * FROM reports WHERE id = ?').get(id)));
 }));
 
 router.put('/:id', ah(async (req, res) => {

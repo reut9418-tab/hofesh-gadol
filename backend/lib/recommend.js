@@ -63,11 +63,15 @@ function computeMoves(insts, workers) {
 }
 
 /* עטיפת ה-DB: בונה תקרות פר-מוסד ועובדי-הדרכה משויכים, ומריץ את הלוגיקה */
-async function recommendations(db, report) {
+async function recommendations(db, report, { withEstimate = false } = {}) {
   if (report.framework === 'gardens') {
     return { relevant: false, reason: 'בגנים התקצוב הוא סל אחד לכל הרשות — אין ניוד בין סמלים.' };
   }
   const instRows = await db.prepare('SELECT id, symbol, name FROM institutions WHERE report_id = ?').all(report.id);
+  // הערכת שכר רשות (למכתב) תופסת חלק מתקרת סל ההדרכה של המוסד שנבחר (לא מנוידת)
+  const { authorityEstimate } = require('./authorityEstimate');
+  const est = withEstimate ? authorityEstimate(report) : null;
+  const estFor = (sym) => (est && est.basket === 'instruction' ? est.bySymbol(sym) : 0);
   if (instRows.length < 2) {
     return { relevant: false, reason: 'נדרשים לפחות שני מוסדות עם תקציב (מקובץ דוח הביצוע) כדי להציע ניוד.' };
   }
@@ -76,7 +80,7 @@ async function recommendations(db, report) {
     const cap = Number((await db.prepare(
       `SELECT COALESCE(SUM(budget_amount),0) a FROM baskets
        WHERE institution_id = ? AND basket_type IN ('instruction','flexible')`
-    ).get(i.id)).a);
+    ).get(i.id)).a) - estFor(i.symbol);
     if (cap > 0) insts.push({ symbol: i.symbol, name: i.name, cap });
   }
   if (insts.length < 2) {

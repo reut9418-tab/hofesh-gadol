@@ -123,6 +123,9 @@ export const createReport = (body: any) => api.post('/reports', body).then((r) =
 export const getReport = (id: number) => api.get(`/reports/${id}`).then((r) => r.data);
 export const updateReport = (id: number, body: any) => api.put(`/reports/${id}`, body).then((r) => r.data);
 export const deleteReport = (id: number) => api.delete(`/reports/${id}`).then((r) => r.data);
+// הערכת עלות שכר רשות (למכתב בלבד) — גנים: amount; בתי"ס: split = { סמל: סכום }
+export const saveAuthorityEstimate = (id: number, body: { amount: number; basket?: string; note?: string; split?: Record<string, number> | null }) =>
+  api.put(`/reports/${id}/authority-estimate`, body).then((r) => r.data);
 
 /* ---------- קליטת דוחות עלות + ניתוב (צעד 3) ---------- */
 export type RouteTarget = { id: number; label: string; authorityName: string | null };
