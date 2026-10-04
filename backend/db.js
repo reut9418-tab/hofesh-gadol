@@ -232,6 +232,11 @@ async function initDatabase() {
       ssl: viaHyperdrive ? undefined : { rejectUnauthorized: false },
       max: 5,
     });
+    // חיבור רדום שנסגר מצד Supabase (ריסטרט/השהיה/תחזוקה) — בלי מאזין זה
+    // התהליך כולו קורס; ה-Pool כבר זורק את החיבור ופותח חדש בשאילתה הבאה
+    pool.on('error', (err) => {
+      console.warn('DB: idle connection dropped —', err.message);
+    });
     const db = new PostgresDB(pool);
     await db.exec(schemaSQL(true));
     await migrate(db);
