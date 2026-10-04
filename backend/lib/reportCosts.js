@@ -19,6 +19,9 @@ async function costDataForReport(db, report) {
     gross: r.gross, cost: r.cost, hours: r.hours, source: r.filename,
     payer: r.payer || null, // המשלם (מתנ"ס/רשות) — מוגדר ברמת הקובץ
     staffType: r.staff_type || null, // רכז/סגן — שעותיהם מעל 90 תקינות מובנה
+    // התאמת ברוטו שאושרה (₪ לשעה) כסכום — נצבר בקיבוץ ומוחזר כ-gross_bump לשעה,
+    // כך שהעלות המוכרת במסך זהה לייצוא
+    grossBumpTotal: (Number(r.gross_bump) || 0) * (r.hours || 0),
   }));
   const aggregated = aggregateComponents(shaped);
   const grossCap = programType(report.framework) === 'summer_prep' ? GROSS_CAP.summer_prep : GROSS_CAP.schools_gardens;

@@ -271,6 +271,7 @@ function aggregateComponents(recs) {
       cur.hours = cur.hours === null && r.hours === null ? null : (cur.hours ?? 0) + (r.hours ?? 0);
       cur.extCost = cur.extCost == null && r.extCost == null ? null : (cur.extCost ?? 0) + (r.extCost ?? 0);
       cur.extHours = cur.extHours == null && r.extHours == null ? null : (cur.extHours ?? 0) + (r.extHours ?? 0);
+      if (r.grossBumpTotal) cur.grossBumpTotal = (cur.grossBumpTotal || 0) + r.grossBumpTotal;
       if (!cur.name && r.name) cur.name = r.name;
       if (r.component && !cur.componentNames.includes(r.component)) cur.componentNames.push(r.component);
       if (!cur.instSymbol && r.instSymbol) cur.instSymbol = r.instSymbol;
@@ -280,6 +281,7 @@ function aggregateComponents(recs) {
     ...r,
     hourlyCost: r.cost !== null && r.hours ? r.cost / r.hours : null,
     hourlyGross: r.gross !== null && r.hours ? r.gross / r.hours : null,
+    ...(r.grossBumpTotal ? { gross_bump: r.hours ? r.grossBumpTotal / r.hours : 0 } : {}),
   }));
 }
 
@@ -344,8 +346,11 @@ function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOUR
     // בדיקת תקרת העלות רצה על מה שמדווח בפועל — אחרי כלל הנמוך-מבין (עלות
     // חריגה בקובץ השכר שנבלמת בתקרת ברוטו+40% אינה חריגה בדיווח; היא עדיין
     // מוצגת כמידע בבדיקת ה-140% שלמטה ובדוח ההתאמה)
+    // תקרת ה-140% מחושבת על הברוטו האפקטיבי (כולל התאמת ברוטו שאושרה), כמו בייצוא
+    const bump = Number(r.gross_bump) || 0;
+    const capGross = hourlyGross !== null && hourlyGross > 0 ? hourlyGross + bump : hourlyGross;
     const effectiveHourlyCost = hourlyCost !== null && hourlyGross > 0
-      ? Math.min(hourlyCost, (hourlyGross * COST_MARKUP_LIMIT) / vatFactor)
+      ? Math.min(hourlyCost, (capGross * COST_MARKUP_LIMIT) / vatFactor)
       : hourlyCost;
     if (effectiveHourlyCost !== null && effectiveHourlyCost > costCap)
       flags.push({ level: 'err', text: `עלות מעביד שעתית מעל ${costCap.toFixed(1)} ₪` });
@@ -353,7 +358,7 @@ function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOUR
     // אינה שגיאה אלא מידע: העלות של העובד הוגבלה לתקרה (מוסבר בדוח ההתאמה)
     const recognizedHourlyCost = hourlyCost !== null ? hourlyCost * vatFactor : null;
     if (recognizedHourlyCost !== null && hourlyGross !== null && hourlyGross > 0 &&
-        recognizedHourlyCost > hourlyGross * COST_MARKUP_LIMIT * 1.001) {
+        recognizedHourlyCost > capGross * COST_MARKUP_LIMIT * 1.001) {
       flags.push({
         level: 'warn',
         text: `עלות שעתית ${Math.round((recognizedHourlyCost / hourlyGross) * 100)}% מהברוטו — דווחה לפי תקרת ברוטו+40% (הנמוך מבין)`,

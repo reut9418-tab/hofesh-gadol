@@ -8,7 +8,7 @@ const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtr
 const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions } = require('./nameMatch');
 const { reportLabel } = require('./domain');
-const { recognizedRowCost, COST_MARKUP_LIMIT } = require('./ingest');
+const { recognizedRowCost, effectiveGross, COST_MARKUP_LIMIT } = require('./ingest');
 
 const fmt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -72,11 +72,6 @@ async function stage1Data(db, report, client, authority) {
   const hasVat = !!(client && client.has_vat);
   const vatFactor = hasVat ? 1.18 : 1;
 
-  // עובדים שעלותם דווחה לפי תקרת ברוטו+40% (הנמוך מבין) — מידע, לא חריגה
-  const cappedRows = cost.rows.filter((r) =>
-    r.gross > 0 && r.cost != null && r.cost * vatFactor > r.gross * COST_MARKUP_LIMIT * 1.001);
-  const cappedCount = cappedRows.length;
-  const cappedReduction = cappedRows.reduce((s, r) => s + (r.cost * vatFactor - r.gross * COST_MARKUP_LIMIT), 0);
   const tariff = report.parent_tariff || 0;
 
   const insts = await db.prepare('SELECT * FROM institutions WHERE report_id = ? ORDER BY symbol').all(report.id);
@@ -91,6 +86,12 @@ async function stage1Data(db, report, client, authority) {
   const rows = await db.prepare(
     `SELECT cr.*, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id WHERE cr.report_id = ?`
   ).all(report.id);
+  // עובדים שעלותם דווחה לפי תקרת ברוטו+40% (הנמוך מבין) — מידע, לא חריגה.
+  // על הברוטו האפקטיבי (כולל התאמות ברוטו שאושרו), בדיוק כמו בייצוא ובדוח ההתאמה
+  const cappedRows = rows.filter((r) =>
+    r.gross > 0 && r.cost != null && r.cost * vatFactor > effectiveGross(r) * COST_MARKUP_LIMIT * 1.001);
+  const cappedCount = cappedRows.length;
+  const cappedReduction = cappedRows.reduce((s, r) => s + (r.cost * vatFactor - recognizedRowCost(r, vatFactor)), 0);
   const DEFAULT_PAYER = clientName(client, authority);
   // עמודות שכר נפרדות רק כשבאמת מוגדרים שני משלמים שונים
   const definedPayers = new Set(rows.map((r) => r.payer).filter(Boolean));

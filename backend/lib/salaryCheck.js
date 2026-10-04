@@ -131,7 +131,7 @@ async function salaryCheck(db, report) {
   // הניצול המוכר מוגבל פר-עובד לתקרת ה-140% מהברוטו — כמו בדיווח בפועל
   const { recognizedRowCost } = require('./ingest');
   const actual = { instruction: 0, coordinator: 0, deputy: 0 };
-  const rows = await db.prepare('SELECT dept, staff_type, cost, gross, hours FROM cost_rows WHERE report_id = ?').all(report.id);
+  const rows = await db.prepare('SELECT dept, staff_type, cost, gross, hours, gross_bump FROM cost_rows WHERE report_id = ?').all(report.id);
   const hoursRule = report.framework !== 'gardens';
   rows.forEach((r) => {
     const byHours = hoursRule ? schoolsRoleByHours(r.hours) : null;
