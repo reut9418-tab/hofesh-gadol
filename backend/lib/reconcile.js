@@ -83,9 +83,12 @@ async function ledgerReconcile(db, report, client) {
 
   const hasVat = !!(client && client.has_vat);
   const vatFactor = hasVat ? 1 + VAT_RATE : 1;
-  // דוח הביצוע צפוי = העלות (כרטסת/דוח עלות) בתוספת מע"מ ללקוח חייב
-  const expectedExec = costTotal * vatFactor;
-  const execActual = Number((await db.prepare('SELECT COALESCE(SUM(actual_total),0) a FROM institutions WHERE report_id = ?').get(report.id)).a);
+  // דוח הביצוע צפוי = העלות המוכרת שנכתבת לקובץ: מע"מ ללקוח חייב ותקרת
+  // ברוטו+40% פר עובד (כמו בייצוא)
+  const expectedExec = cost.summary.totalCostRecognized ?? costTotal * vatFactor;
+  // ביצוע השכר בקובץ (הדרכה+רכזים+סגנים) — לא actual_total, שהוא "סה"כ נטו"
+  // אחרי גבייה מהורים וכולל ניהול/העשרה (קריית אונו: 120,562 מול שכר 370,470)
+  const execActual = Number((await db.prepare('SELECT COALESCE(SUM(salary_actual),0) a FROM institutions WHERE report_id = ?').get(report.id)).a);
 
   const checks = [];
   // בסיס אפס עם הפרש ממשי = אי-התאמה מלאה (לא "תקין")
@@ -166,13 +169,14 @@ async function ledgerReconcile(db, report, client) {
   // בדיקה 2: מול דוח הביצוע של המשרד (אם נקלט ביצוע מהקובץ)
   if (execActual > 0 && costTotal > 0) {
     const diff = execActual - expectedExec;
+    const capped = expectedExec < costTotal * vatFactor - 1;
+    const basis = [hasVat && 'כולל מע"מ 18%', capped && 'אחרי תקרת ברוטו+40%'].filter(Boolean);
+    const execBasisNote = basis.length ? ` (${basis.join(', ')})` : '';
     checks.push({
       id: 'exec_vs_cost',
       title: 'שכר — דוח ביצוע מול דוח העלות (והכרטסת)',
       level: level(pct(diff, expectedExec), diff),
-      text: hasVat
-        ? `דוח ביצוע ₪${fmtN(execActual)} מול עלות + מע"מ 18% ₪${fmtN(expectedExec)} — ${Math.abs(diff) <= 200 ? 'תואם (ההפרש מהעלות הוא המע"מ, כצפוי)' : `הפרש ₪${fmtN(diff)}`}.`
-        : `דוח ביצוע ₪${fmtN(execActual)} מול דוח העלות ₪${fmtN(expectedExec)} — ${Math.abs(diff) <= 200 ? 'תואם' : `הפרש ₪${fmtN(diff)}`}.`,
+      text: `שכר בדוח הביצוע ₪${fmtN(execActual)} מול העלות המוכרת מדוח העלות ₪${fmtN(expectedExec)}${execBasisNote} — ${Math.abs(diff) <= 200 ? 'תואם' : `הפרש ₪${fmtN(diff)}`}.`,
       a: execActual, b: expectedExec, diff,
     });
   }

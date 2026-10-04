@@ -174,7 +174,10 @@ async function migrate(db) {
     'staff_coord_budget REAL DEFAULT 0', 'staff_dep_budget REAL DEFAULT 0',
     // שורות התשלום מקובץ המשרד (כלל רעות 16.9): "סה"כ לתשלום בתוספת גמישות 25%"
     // + "תוספת סייעות רפואיות או אישיות" — המקור ל"צפוי לקבל" בדוח שלב 2
-    'payment_total REAL', 'payment_aides REAL', 'payment_note TEXT']) await add('institutions', c);
+    'payment_total REAL', 'payment_aides REAL', 'payment_note TEXT',
+    // ביצוע השכר בקובץ (הדרכה + רכזים + סגנים, עמודת "ביצוע בפועל") — לבקרת
+    // דוח ביצוע מול דוח עלות; actual_total הוא "סה"כ נטו" (אחרי גבייה מהורים)
+    'salary_actual REAL']) await add('institutions', c);
   for (const c of ['budget_file_name TEXT', 'budget_file_path TEXT', 'parent_tariff REAL DEFAULT 0']) await add('reports', c);
   // הערכת עלות שכר רשות (כשאין דוח עלות מהרשות) — סכום סופי לדוח הביצוע,
   // סל (instruction/coordinator), הערה, ופיצול ידני פר סמל (JSON) בבתי"ס

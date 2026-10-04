@@ -94,6 +94,15 @@ async function budgetFileBuf(db, report) {
   return buf;
 }
 
+/* ביצוע השכר בקובץ המשרד למוסד: הדרכה + רכזים + סגנים (עמודת "ביצוע בפועל").
+   null כשהקובץ לא נושא ביצוע לסלים — אז אין מול מה לבדוק */
+function salaryActualOf(inst) {
+  const a = inst && inst.actual;
+  if (!a) return null;
+  const keys = ['instruction', 'coordinator', 'deputy'].filter((k) => a[k] != null);
+  return keys.length ? Math.round(keys.reduce((s, k) => s + (Number(a[k]) || 0), 0) * 100) / 100 : null;
+}
+
 // סוגי הצוות שנוסחת עמודת התפקיד בקובץ המשרד ממלאת לבד (לפי התבנית)
 const FORMULA_ROLE_GARDENS = new Set(['מדצ', 'סייעת ממשיכה', 'סייעת חדשה', 'סייעת רפואית/אישית', 'רכזת גן']);
 const FORMULA_ROLE_SCHOOLS = new Set(['מדצ', 'סגנית רכזת מעל 150', 'רכזת תכנית בבית הספר']);
@@ -276,14 +285,15 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
     const st = inst.staffing || {};
     const iid = (await db.prepare(
       `INSERT INTO institutions (report_id, symbol, name, size_type, children_count, children_regular, children_special, budget_total, actual_total,
-        staff_coord_reported, staff_dep_reported, staff_coord_budget, staff_dep_budget, payment_total, payment_aides, payment_note)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        staff_coord_reported, staff_dep_reported, staff_coord_budget, staff_dep_budget, payment_total, payment_aides, payment_note, salary_actual)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       // תקציב וניצול לתצוגה — משורת "סה"כ נטו" של הקובץ כשקיימת (כלל רעות 16.9)
     ).run(id, inst.symbol, inst.name || '', inst.size || 'small', reg + spec, reg, spec,
       (inst.totalNet != null && inst.totalNet > 0 ? inst.totalNet : inst.total) || 0,
       (inst.netActual != null ? inst.netActual : inst.totalActual) || 0,
       st.coordReported || 0, st.depReported || 0, st.coordBudget || 0, st.depBudget || 0,
-      inst.paymentTotal ?? null, inst.paymentAides ?? null, inst.paymentNote ?? null)).lastInsertRowid;
+      inst.paymentTotal ?? null, inst.paymentAides ?? null, inst.paymentNote ?? null,
+      salaryActualOf(inst))).lastInsertRowid;
     for (const [type, amount] of Object.entries(inst.baskets || {})) {
       if (amount > 0) await db.prepare('INSERT INTO baskets (institution_id, basket_type, budget_amount) VALUES (?, ?, ?)').run(iid, type, amount);
     }
