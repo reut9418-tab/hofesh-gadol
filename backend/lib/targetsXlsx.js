@@ -31,7 +31,9 @@ function buildTargetsXlsx(d) {
   // עמודת "סל גמיש" הוסרה (בקשת רעות 24.9) — כפילות של "ארוחת בוקר":
   // שתיהן יתרת הסל הגמיש שנותרה אחרי בליעת חריגות השכר
   const anyIncome = d.units.some((u) => u.targets.income > 0);
-  const anyShift = d.units.some((u) => u.enrichShift > 0);
+  // העשרה — ההמלצה פר מוסד (75% / העמסת יתרת שכר / בסיס), וחלופת 100% רק למוסד עם חריגה
+  const anyShift = d.units.some((u) => u.targets.enrichPlan === 'shift75');
+  const PLAN_HE = { shift75: '75% מהתקציב', load: 'כולל העמסת יתרת שכר', base: 'תקציב הבסיס' };
   const salaryLabel = isGardens ? 'שכר מובילות + רכזים' : 'שכר מורים + רכזים';
   // פיצול יעד השכר (כלל רעות 24.9): הדרכה | ריכוז | סה"כ (לכרטסת משולבת)
   const instrLabel = isGardens ? 'שכר הדרכה (מובילות/סייעות)' : 'שכר הדרכה (מורים)';
@@ -42,7 +44,7 @@ function buildTargetsXlsx(d) {
     instrLabel, coordLabel, `סה"כ ${salaryLabel} — כרטסת משולבת`,
     ...(multiPayer ? d.payers.map((p) => `${salaryLabel} — ${p}`) : []),
     ...(anyBreakfast ? ['ארוחת בוקר'] : []),
-    ...(anyShift ? ['העשרה — מומלץ: 75%', 'העשרה — 100%'] : ['העשרה']),
+    ...(anyShift ? ['העשרה — מומלץ', 'בסיס ההמלצה', 'העשרה — חלופה: 100%'] : d.units.length > 1 ? ['העשרה — מומלץ', 'בסיס ההמלצה'] : ['העשרה']),
     ...(anyIncome ? ['הכנסות משתתפים'] : []),
   ];
   const W = head.length;
@@ -54,9 +56,9 @@ function buildTargetsXlsx(d) {
     cell(num(u.targets.salary), S.cellN(z)),
     ...(multiPayer ? d.payers.map((p) => cell(num(u.targets.salaryByPayer[p]), S.cellN(z))) : []),
     ...(anyBreakfast ? [cell(num(u.targets.breakfast), S.cellN(z))] : []),
-    ...(anyShift
-      ? [cell(num(u.targets.enrichmentReduced), S.cellN(z)), cell(num(u.targets.enrichment), S.cellN(z))]
-      : [cell(num(u.targets.enrichment), S.cellN(z))]),
+    cell(num(u.targets.enrichmentRecommended), S.cellN(z)),
+    ...(anyShift || d.units.length > 1 ? [cell(PLAN_HE[u.targets.enrichPlan], S.cellR(z))] : []),
+    ...(anyShift ? [cell(u.targets.enrichPlan === 'shift75' ? num(u.targets.enrichmentFull) : null, S.cellN(z))] : []),
     ...(anyIncome ? [cell(num(u.targets.income), S.cellN(z))] : []),
   ];
 
@@ -68,17 +70,17 @@ function buildTargetsXlsx(d) {
     cell(num(sum((u) => u.targets.salary)), S.total),
     ...(multiPayer ? d.payers.map((p) => cell(num(sum((u) => u.targets.salaryByPayer[p])), S.total)) : []),
     ...(anyBreakfast ? [cell(num(sum((u) => u.targets.breakfast)), S.total)] : []),
-    ...(anyShift
-      ? [cell(num(sum((u) => u.targets.enrichmentReduced)), S.total), cell(num(sum((u) => u.targets.enrichment)), S.total)]
-      : [cell(num(sum((u) => u.targets.enrichment)), S.total)]),
+    cell(num(sum((u) => u.targets.enrichmentRecommended)), S.total),
+    ...(anyShift || d.units.length > 1 ? [cell('', S.total)] : []),
+    ...(anyShift ? [cell(num(sum((u) => (u.targets.enrichPlan === 'shift75' ? u.targets.enrichmentFull : 0))), S.total)] : []),
     ...(anyIncome ? [cell(num(sum((u) => u.targets.income)), S.total)] : []),
   ] : null;
 
   const noteText = [
     `שכר — יעד הכרטסת זהה לדוח העלות, בפיצול להדרכה ולריכוז (ללקוח עם כרטסות נפרדות) ובסה"כ (ללקוח עם כרטסת שכר משולבת)${multiPayer ? ', ובהפרדה לפי המשלם' : ''}.`,
     anyBreakfast ? 'ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש (בהנחת אופציה א\').' : '',
-    'העשרה — כולל ניוד יתרת שכר היכן שקיימת (עד 25% מסל המקור).',
-    anyShift ? 'בשל חריגת שכר מוצגות שתי אופציות להעשרה: 75% מהתקציב (מומלץ) או 100%.' : '',
+    'העשרה — ההמלצה לכל מוסד לפי מצבו: תת-ביצוע בשכר → העמסת יתרת השכר (עד 25% מסל השכר); חריגה שאינה מכוסה בסל הגמיש → 75% מהתקציב; אחרת → תקציב הבסיס.',
+    anyShift ? 'למוסדות עם חריגה מוצגת גם חלופת 100% מהתקציב.' : '',
     anyIncome ? `הכנסות משתתפים — ילדים × תעריף המשרד${d.tariff ? ` (₪${d.tariff} לילד)` : ''}.` : '',
     d.hasVat ? 'כל היעדים רשומים נטו, ללא מע"מ — כפי שנרשם בכרטסת.' : '',
   ].filter(Boolean).join(' ');

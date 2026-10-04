@@ -293,6 +293,11 @@ async function stage1Data(db, report, client, authority) {
         enrichment: net(enrichB + enrichBonus),
         // אופציית 75% — הכרה מופחתת בהעשרה כשקיימת חריגת שכר לא מכוסה
         enrichmentReduced: net(enrichB - enrichShift),
+        // ההמלצה פר מוסד (כלל רעות 4.10): חריגה לא מכוסה → 75%; תת-ביצוע
+        // בשכר → העמסת יתרת השכר על ההעשרה; אחרת → תקציב הבסיס
+        enrichmentRecommended: net(enrichShift > 0 ? enrichB - enrichShift : enrichB + enrichBonus),
+        enrichPlan: enrichShift > 0 ? 'shift75' : enrichBonus > 0 ? 'load' : 'base',
+        enrichmentFull: net(enrichB), // חלופת 100% מהתקציב (למוסד עם חריגה)
         // מכינות: יעד הכרטסת = תקציב הסל הייעודי (תקרת ההכרה של המשרד)
         trip: net(tripBudget), ai: net(aiBudget),
         income: children && tariff ? Math.round((children * tariff / vatFactor) * 100) / 100 : 0,
@@ -386,8 +391,11 @@ function renderStage1Html(d) {
   if (overCapUnits > 0) highlights.push(`ב-<b>${overCapUnits} ${overCapUnits === 1 ? 'מוסד' : 'מוסדות'}</b> שעות הריכוז חורגות מתקרת השעות (7.6 ש' × ימי הפרויקט) — העודף צפוי לא להיות מוכר (פירוט בסעיף 4).`);
   const cutUnits = d.units.filter((u) => u.instrUnderCut).length;
   if (cutUnits > 0) highlights.push(`ב-<b>${cutUnits} ${cutUnits === 1 ? 'מוסד' : 'מוסדות'}</b> ניצול סל ההדרכה נמוך מ-75% מהתקציב — <b>צפוי קיזוז מהמשרד</b> (פירוט בסעיף 4).`);
-  if (d.units.some((u) => u.enrichShift > 0))
-    highlights.push(`בשל היקף חריגת השכר אנו ממליצים <b>להכיר ב-75% מתקציב ההעשרה</b> ולנתב 25% ממנו לכיסוי החריגה — פירוט והשוואת האופציות בסעיפים 4–5.`);
+  const shiftUnits = d.units.filter((u) => u.targets.enrichPlan === 'shift75').length;
+  const loadUnits = d.units.filter((u) => u.targets.enrichPlan === 'load').length;
+  const unitsWord = (n) => (d.units.length === 1 ? '' : `ב-<b>${n} ${n === 1 ? 'מוסד' : 'מוסדות'}</b> `);
+  if (shiftUnits > 0)
+    highlights.push(`${unitsWord(shiftUnits)}${d.units.length === 1 ? 'בשל' : 'עם'} חריגת שכר שאינה מכוסה בסל הגמיש אנו ממליצים <b>להכיר ב-75% מתקציב ההעשרה</b> ולנתב 25% ממנו לכיסוי החריגה${loadUnits > 0 ? `; ב-<b>${loadUnits} ${loadUnits === 1 ? 'מוסד' : 'מוסדות'}</b> עם תת-ביצוע בשכר — <b>העמסת יתרת השכר על ההעשרה</b>` : ''} — ההמלצה לכל מוסד בטבלת היעדים (סעיף 5).`);
   const totalUnused = d.units.reduce((s, u) => s + u.salaryUnused, 0);
   if (totalUnused > 1000) highlights.push(`קיימות <b>יתרות תקציב לניצול</b> בסך כ-₪${fmt(totalUnused)} בשכר — ראו יתרות ההעשרה והסל הגמיש (סעיף 4).`);
   if (!highlights.length) highlights.push('כל הבדיקות עברו תקין — ניתן להתקדם לשלב הכרטסות.');
@@ -498,13 +506,18 @@ function renderStage1Html(d) {
   /* --- סעיף 5: טבלת יעדי הכרטסות --- */
   const anyBreakfast = d.units.some((u) => u.targets.breakfast > 0);
   const anyIncome = d.units.some((u) => u.targets.income > 0);
-  // חריגת שכר לא מכוסה → שתי אופציות להעשרה: 100% מהתקציב או 75% (מומלץ —
-  // 25% מנותבים לכיסוי החריגה)
-  const anyShift = d.units.some((u) => u.enrichShift > 0);
-  const enrichCols = anyShift ? ['העשרה — אופציה מומלצת: 75%', 'העשרה — 100%'] : ['העשרה'];
-  const enrichCells = (u) => anyShift
-    ? [`₪${fmt(u.targets.enrichmentReduced)}`, `₪${fmt(u.targets.enrichment)}`]
-    : [`₪${fmt(u.targets.enrichment)}`];
+  // העשרה — ההמלצה פר מוסד (כלל רעות 4.10): 75% במוסד עם חריגה לא מכוסה,
+  // העמסת יתרת שכר במוסד עם תת-ביצוע, תקציב הבסיס בשאר. כשיש מוסד עם
+  // חריגה — עמודה נוספת לחלופת 100% (רק אצלו)
+  const anyShift = d.units.some((u) => u.targets.enrichPlan === 'shift75');
+  const PLAN_HE = { shift75: '75% מהתקציב', load: 'כולל העמסת יתרת שכר', base: 'תקציב הבסיס' };
+  const enrichCols = anyShift ? ['העשרה — מומלץ', 'העשרה — חלופה: 100% מהתקציב'] : ['העשרה'];
+  const enrichCells = (u) => {
+    const rec = `₪${fmt(u.targets.enrichmentRecommended)}${d.units.length > 1 || anyShift ? `<br><span class="soft">${PLAN_HE[u.targets.enrichPlan]}</span>` : ''}`;
+    return anyShift
+      ? [rec, u.targets.enrichPlan === 'shift75' ? `₪${fmt(u.targets.enrichmentFull)}` : '—']
+      : [rec];
+  };
   // כשיש שני משלמים (מתנ"ס/חברה + רשות) — עמודת שכר נפרדת לכל משלם,
   // כי הכרטסות מתנהלות בספרים נפרדים
   const multiPayer = (d.payers || []).length > 1;
@@ -547,16 +560,16 @@ function renderStage1Html(d) {
         byPayer: a.byPayer,
         salaryInstr: a.salaryInstr + u.targets.salaryInstr, salaryCoord: a.salaryCoord + u.targets.salaryCoord,
         salary: a.salary + u.targets.salary, breakfast: a.breakfast + u.targets.breakfast,
-        enrichment: a.enrichment + u.targets.enrichment,
-        enrichmentReduced: a.enrichmentReduced + u.targets.enrichmentReduced,
+        enrichRec: a.enrichRec + u.targets.enrichmentRecommended,
+        enrichFullAlt: a.enrichFullAlt + (u.targets.enrichPlan === 'shift75' ? u.targets.enrichmentFull : 0),
         trip: a.trip + u.targets.trip, ai: a.ai + u.targets.ai,
         flexRemain: a.flexRemain + u.targets.flexRemain,
         income: a.income + u.targets.income,
       };
-    }, { byPayer: {}, salaryInstr: 0, salaryCoord: 0, salary: 0, breakfast: 0, enrichment: 0, enrichmentReduced: 0, trip: 0, ai: 0, flexRemain: 0, income: 0 });
+    }, { byPayer: {}, salaryInstr: 0, salaryCoord: 0, salary: 0, breakfast: 0, enrichRec: 0, enrichFullAlt: 0, trip: 0, ai: 0, flexRemain: 0, income: 0 });
     const sc = [`₪${fmt(t.salaryInstr)}`, `₪${fmt(t.salaryCoord)}`, `₪${fmt(t.salary)}`,
       ...(multiPayer ? d.payers.map((p) => `₪${fmt(t.byPayer[p] || 0)}`) : [])];
-    const ec = anyShift ? [`₪${fmt(t.enrichmentReduced)}`, `₪${fmt(t.enrichment)}`] : [`₪${fmt(t.enrichment)}`];
+    const ec = anyShift ? [`₪${fmt(t.enrichRec)}`, `₪${fmt(t.enrichFullAlt)}`] : [`₪${fmt(t.enrichRec)}`];
     const cells = [...sc, ...(anyBreakfast ? [`₪${fmt(t.breakfast)}`] : []), ...ec, ...(anyTrip ? [`₪${fmt(t.trip)}`] : []), ...(anyAi ? [`₪${fmt(t.ai)}`] : []), ...(anyIncome ? [`₪${fmt(t.income)}`] : [])];
     totalsRow = `<tr class="total"><td>סה"כ</td>${cells.map((c) => `<td class="num">${c}</td>`).join('')}</tr>`;
   }
@@ -572,7 +585,7 @@ function renderStage1Html(d) {
     <thead><tr><th>${d.units.length > 1 ? 'בית ספר' : 'מסגרת'}</th>${headCols.map((h) => `<th class="num">${h}</th>`).join('')}</tr></thead>
     <tbody>${d.units.map(unitRow).join('')}${totalsRow}</tbody>
   </table>
-  <p class="note">שכר — יעד הכרטסת זהה לדוח העלות, בפיצול להדרכה ולריכוז (רכז/ת וסגן/ית) ללקוח שמנהל כרטסות נפרדות, ועמודת הסה"כ ללקוח עם כרטסת שכר משולבת${multiPayer ? '; בנוסף, הפרדה לפי המשלם (כרטסת נפרדת בספרי כל משלם)' : ''}; הדיווח למשרד בדוח הביצוע מחושב בנפרד (${d.hasVat ? 'בתוספת מע"מ ו' : ''}לפי כלל הנמוך-מבין מול ברוטו+40%). ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש שנותרה אחרי בליעת חריגת השכר (בהנחת אופציה א'); אם יוחלט אחרת, ראו סעיף 4. העשרה — כולל ניוד יתרת שכר היכן שקיימת (עד 25% מתקציב סל המקור ניתן לניוד; הסל המקבל אינו מוגבל)${anyShift ? '; בשל חריגת השכר מוצגות שתי אופציות — 75% מהתקציב (מומלץ: 25% מנותבים לכיסוי חריגת השכר) או 100% מהתקציב (החריגה נותרת ללא כיסוי)' : ''}.${anyTrip || anyAi ? ' פעילות חוץ (יום סיור) וסל AI — תקציב הסל הייעודי בקובץ המשרד (תקרת ההכרה להוצאות אלו).' : ''} הכנסות משתתפים — כמות הילדים בדוח הביצוע × תעריף המשרד${d.tariff ? ` (₪${fmt(d.tariff)} לילד)` : ''}.${d.hasVat ? ' <b>כל היעדים בטבלה רשומים נטו, ללא מע"מ</b> — כפי שנרשם בכרטסת; בדוח הביצוע למשרד הסכומים מדווחים בתוספת מע"מ 18%.' : ''}</p>`;
+  <p class="note">שכר — יעד הכרטסת זהה לדוח העלות, בפיצול להדרכה ולריכוז (רכז/ת וסגן/ית) ללקוח שמנהל כרטסות נפרדות, ועמודת הסה"כ ללקוח עם כרטסת שכר משולבת${multiPayer ? '; בנוסף, הפרדה לפי המשלם (כרטסת נפרדת בספרי כל משלם)' : ''}; הדיווח למשרד בדוח הביצוע מחושב בנפרד (${d.hasVat ? 'בתוספת מע"מ ו' : ''}לפי כלל הנמוך-מבין מול ברוטו+40%). ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש שנותרה אחרי בליעת חריגת השכר (בהנחת אופציה א'); אם יוחלט אחרת, ראו סעיף 4. העשרה — ההמלצה לכל מוסד לפי מצבו: במוסד עם תת-ביצוע בשכר — העמסת יתרת השכר על ההעשרה (עד 25% מתקציב סל השכר ניתן לניוד; הסל המקבל אינו מוגבל); במוסד עם חריגת שכר שאינה מכוסה בסל הגמיש — 75% מהתקציב (25% מנותבים לכיסוי החריגה)${anyShift ? ', ולצידה החלופה של 100% מהתקציב (החריגה נותרת ללא כיסוי)' : ''}; בשאר — תקציב הבסיס.${anyTrip || anyAi ? ' פעילות חוץ (יום סיור) וסל AI — תקציב הסל הייעודי בקובץ המשרד (תקרת ההכרה להוצאות אלו).' : ''} הכנסות משתתפים — כמות הילדים בדוח הביצוע × תעריף המשרד${d.tariff ? ` (₪${fmt(d.tariff)} לילד)` : ''}.${d.hasVat ? ' <b>כל היעדים בטבלה רשומים נטו, ללא מע"מ</b> — כפי שנרשם בכרטסת; בדוח הביצוע למשרד הסכומים מדווחים בתוספת מע"מ 18%.' : ''}</p>`;
 
   return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
 <title>מכתב שלב 1 — ${esc(to)} — ${esc(d.label)}</title>
