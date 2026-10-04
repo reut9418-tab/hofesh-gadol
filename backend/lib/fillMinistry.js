@@ -25,7 +25,12 @@ const MINISTRY_OFFSETS = [
   { src: 4, off: 4, kind: 'text' },  // שם משפחה
   { src: 5, off: 5, kind: 'text' },  // הועסק ע"י
   { src: 6, off: 6, kind: 'text' },  // איש צוות
-  { src: 7, off: 7, kind: 'text' },  // תפקיד
+  // תפקיד — בתבנית זו נוסחת משרד שגוזרת את התפקיד רק לסוגי צוות חד-תפקידיים
+  // (מדצ/סייעת/רכזת); לסוגים רב-תפקידיים (גננת/מורה/תוספת כח אדם) היא ריקה,
+  // ובבתי"ס התא אף נעול בהגנת הגיליון. overrideFormula: כשהעמודה בתבנית היא
+  // נוסחה, כותבים ערך רק כשיש תפקיד ושורת הייצוא לא מסמנת [12]=הנוסחה-מכסה
+  // (אחרת הנוסחה נשארת), והתא שנכתב נפתח לעריכה. בלי נוסחה — נכתב כרגיל
+  { src: 7, off: 7, kind: 'text', overrideFormula: true, keepFormulaFlag: 12 },
   { src: 8, off: 8, kind: 'num' },   // שכר ברוטו שעתי
   { src: 9, off: 9, kind: 'num' },   // עלות שכר שעתית
   { src: 10, off: 10, kind: 'num' }, // סך שעות
@@ -82,7 +87,7 @@ function detectStartRow(buf) {
   const head = cells.find((x) => x.v.startsWith('סמל') && x.v.includes('מקום פעילות'));
   if (!head) return { error: 'לא נמצאה שורת הכותרות ("סמל מקום פעילות") בגיליון עלויות כח האדם.' };
   const skipCoord = cells.some((x) => x.r === head.r + 1 && x.v.includes('רכז רשותי'));
-  const colSpecs = MINISTRY_OFFSETS.map(({ src, off, kind }) => ({ src, col: XLSX.utils.encode_col(head.c + off), kind }));
+  const colSpecs = MINISTRY_OFFSETS.map(({ src, off, kind, overrideFormula, keepFormulaFlag }) => ({ src, col: XLSX.utils.encode_col(head.c + off), kind, overrideFormula: !!overrideFormula, keepFormulaFlag }));
   return { sheetName, headerRow: head.r + 1, startRow: head.r + (skipCoord ? 3 : 2), baseCol: head.c, colSpecs }; // 1-based
 }
 
@@ -128,7 +133,36 @@ function resolveSheetPath(wbXml, relsXml, hint) {
 /* ליבת הכתיבה: ממלא rows (מערכי ערכים לפי colSpecs.src) מ-startRow, ואז מרוקן
    תאי קלט בשורות עודפות מתחת (שאריות ממילוי ידני קודם). נוסחאות בעמודות אחרות
    לא נגועות. */
-function applyRowsToSheetXml(xml, colSpecs, startRow, rows, clearBelow = 500) {
+/* פירוק נוסחאות משותפות בעמודה אחת לנוסחאות רגילות פר תא — כך אפשר לדרוס
+   תאים בודדים (גם את תא-האב) בלי לשבור את שאר השורות. רק קבוצות שכולן
+   באותה עמודה; ההפניות היחסיות מוזזות לפי השורה */
+function unshareColumnFormulas(xml, col) {
+  const masters = {};
+  const cellRe = new RegExp(`<c r="${col}(\\d+)"([^>]*)>([\\s\\S]*?)</c>`, 'g');
+  let m;
+  while ((m = cellRe.exec(xml)) !== null) {
+    const f = /<f\b([^>]*)>([\s\S]*?)<\/f>/.exec(m[3]); // תא-אב: <f ...>טקסט</f>
+    if (!f || !/t="shared"/.test(f[1])) continue;
+    const ref = /ref="([A-Z]+)\d+:([A-Z]+)\d+"/.exec(f[1]);
+    const si = (/si="(\d+)"/.exec(f[1]) || [])[1];
+    if (ref && si != null && ref[1] === col && ref[2] === col) masters[si] = { row: parseInt(m[1]), text: f[2] };
+  }
+  if (!Object.keys(masters).length) return xml;
+  return xml.replace(cellRe, (full, row, attrs, inner) => {
+    const f = /<f[^>]*t="shared"[^>]*?(?:\/>|>[\s\S]*?<\/f>)/.exec(inner);
+    if (!f) return full;
+    const si = (/si="(\d+)"/.exec(f[0]) || [])[1];
+    const ms = masters[si];
+    if (!ms) return full;
+    return `<c r="${col}${row}"${attrs}>${inner.replace(f[0], `<f>${shiftRows(ms.text, parseInt(row) - ms.row)}</f>`)}</c>`;
+  });
+}
+
+/* הזזת הפניות שורה יחסיות בנוסחה (A1, לא $A$1) ב-d שורות */
+const shiftRows = (text, d) => text.replace(/(\$?)([A-Z]{1,3})(\$?)(\d+)(?![\d(])/g,
+  (all, a, c, b, r) => (b ? all : `${a}${c}${parseInt(r) + d}`));
+
+function applyRowsToSheetXml(xml, colSpecs, startRow, rows, clearBelow = 500, unlockStyle = null) {
   // סגנונות ייחוס משורת הנתונים הראשונה, כדי שהעיצוב יישמר
   const refStyles = {};
   const formulaCols = new Set();
@@ -138,17 +172,42 @@ function applyRowsToSheetXml(xml, colSpecs, startRow, rows, clearBelow = 500) {
     for (const { col } of colSpecs) {
       const cm = /\bs="(\d+)"/.exec((rc[col] || {}).attrs || '');
       if (cm) refStyles[col] = cm[1];
-      // עמודה שבתבנית היא נוסחה (למשל "תפקיד" בבתי"ס — נוסחה משותפת של
-      // המשרד) — אסור לגעת בה: דריסת תא-האב של נוסחה משותפת משחיתה את הקובץ
+      // עמודה שבתבנית היא נוסחה (למשל "תפקיד" — נוסחה משותפת של המשרד):
+      // דריסת תא-האב של נוסחה משותפת משחיתה את הקובץ
       if (rc[col] && /<f[\s>]/.test(rc[col].full)) formulaCols.add(col);
     }
   }
-  colSpecs = colSpecs.filter(({ col }) => !formulaCols.has(col));
+  // עמודות נוסחה מותרות לדריסה (תפקיד): מפרקים את הנוסחה המשותפת לפר-תא,
+  // ודורסים רק תאים שיש להם ערך; השאר שומרים על נוסחת המשרד
+  const overrideCols = new Set(colSpecs.filter((s) => s.overrideFormula && formulaCols.has(s.col)).map((s) => s.col));
+  const tmplFormula = {}; // col -> { row, text } — לשחזור הנוסחה בתא שנדרס בעבר
+  for (const col of overrideCols) {
+    xml = unshareColumnFormulas(xml, col);
+    const fm = new RegExp(`<c r="${col}(\\d+)"[^>]*>[\\s\\S]*?<f>([\\s\\S]*?)</f>`).exec(xml);
+    if (fm) tmplFormula[col] = { row: parseInt(fm[1]), text: fm[2] };
+  }
+  colSpecs = colSpecs.filter(({ col }) => !formulaCols.has(col) || overrideCols.has(col));
+  // תא בעמודת נוסחה שמכיל ערך סטטי (נכתב בייצוא קודם שהועלה מחדש)
+  const isStaticValue = (cell) => cell && !/<f[\s>]/.test(cell.full) && /<v>|<is>/.test(cell.full);
 
   const renderRow = (cellsMap, rowNum, values) => {
-    for (const { src, col, kind } of colSpecs) {
-      const style = refStyles[col] != null ? refStyles[col] : (/(\bs=")(\d+)/.exec((cellsMap[col] || {}).attrs || '') || [])[2];
-      cellsMap[col] = { colLetter: col, full: buildCell(col, rowNum, style, kind, values ? values[src] : null) };
+    for (const { src, col, kind, keepFormulaFlag } of colSpecs) {
+      let v = values ? values[src] : null;
+      if (overrideCols.has(col) && values && keepFormulaFlag != null && values[keepFormulaFlag]) v = null;
+      if (overrideCols.has(col) && (v == null || v === '')) {
+        // אין תפקיד לכתוב — נוסחת המשרד נשארת; ערך ישן שנכתב בעבר מוחזר לנוסחה
+        if (isStaticValue(cellsMap[col])) {
+          const st = (/\bs="(\d+)"/.exec(cellsMap[col].attrs) || [])[1];
+          const t = tmplFormula[col];
+          cellsMap[col] = { colLetter: col, full: t
+            ? `<c r="${col}${rowNum}"${st != null ? ` s="${st}"` : ''} t="str"><f>${shiftRows(t.text, rowNum - t.row)}</f><v></v></c>`
+            : buildCell(col, rowNum, st, kind, null) };
+        }
+        continue;
+      }
+      let style = refStyles[col] != null ? refStyles[col] : (/(\bs=")(\d+)/.exec((cellsMap[col] || {}).attrs || '') || [])[2];
+      if (overrideCols.has(col) && unlockStyle && style != null) style = unlockStyle(style);
+      cellsMap[col] = { colLetter: col, full: buildCell(col, rowNum, style, kind, v) };
     }
     return Object.values(cellsMap)
       .sort((a, b) => colToNum(a.colLetter) - colToNum(b.colLetter))
@@ -177,7 +236,9 @@ function applyRowsToSheetXml(xml, colSpecs, startRow, rows, clearBelow = 500) {
     const rm = rowRe.exec(xml);
     if (!rm) continue;
     const cells = parseRowCells(rm[2]);
-    const hasValue = colSpecs.some(({ col }) => cells[col] && /<v>|<is>/.test(cells[col].full));
+    const hasValue = colSpecs.some(({ col }) => (overrideCols.has(col)
+      ? isStaticValue(cells[col])
+      : cells[col] && /<v>|<is>/.test(cells[col].full)));
     if (!hasValue) continue;
     xml = xml.replace(rowRe, () => `<row r="${rowNum}"${rm[1]}>${renderRow(cells, rowNum, null)}</row>`); // פונקציה — $2 בנוסחאות משחית
   }
@@ -225,8 +286,28 @@ async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, 
   const sheetPath = resolveSheetPath(wbXml, relsXml, MINISTRY_SHEET_HINT);
   if (!sheetPath) throw new Error(`לא נמצא גיליון "${MINISTRY_SHEET_HINT}" בקובץ — ודאי שזה קובץ דוח הביצוע של המשרד.`);
   let xml = await zip.file(sheetPath).async('string');
-  xml = stripOrphanSharedFormulas(applyRowsToSheetXml(xml, det.colSpecs, det.startRow, rows));
+  // תא תפקיד שנכתב — עותק לא-נעול של הסגנון שלו, כדי שאפשר יהיה לשנות
+  // אותו באקסל גם בגיליון המוגן (בתבנית בתי"ס תאי התפקיד נעולים)
+  let stylesXml = zip.file('xl/styles.xml') ? await zip.file('xl/styles.xml').async('string') : null;
+  const unlocked = {};
+  const unlockStyle = (s) => {
+    if (!stylesXml) return s;
+    if (unlocked[s] != null) return unlocked[s];
+    const cx = /<cellXfs\b([^>]*)>([\s\S]*?)<\/cellXfs>/.exec(stylesXml);
+    if (!cx) return s;
+    const xfs = cx[2].match(/<xf\b[^>]*?(?:\/>|>[\s\S]*?<\/xf>)/g) || [];
+    const xf = xfs[parseInt(s)];
+    if (!xf || /locked="0"/.test(xf)) return (unlocked[s] = s);
+    const body = xf.endsWith('/>') ? xf.replace(/\/>$/, '>') + '</xf>' : xf;
+    let clone = body.replace(/<protection\b[^>]*\/>/, '').replace('</xf>', '<protection locked="0"/></xf>');
+    if (!/applyProtection=/.test(clone)) clone = clone.replace('<xf ', '<xf applyProtection="1" ');
+    const idx = xfs.length;
+    stylesXml = stylesXml.replace(cx[0], `<cellXfs${cx[1].replace(/count="\d+"/, `count="${idx + 1}"`)}>${cx[2]}${clone}</cellXfs>`);
+    return (unlocked[s] = String(idx));
+  };
+  xml = stripOrphanSharedFormulas(applyRowsToSheetXml(xml, det.colSpecs, det.startRow, rows, 500, unlockStyle));
   zip.file(sheetPath, xml);
+  if (stylesXml && Object.keys(unlocked).length) zip.file('xl/styles.xml', stylesXml);
 
   // לשונית רכזות הגנים (§ גנים בלבד): B=מס' סידורי, C=סמל גן, G=היקף משרה. D/E/F/I/J נוסחאות.
   if (coordRows && coordRows.length) {

@@ -94,6 +94,10 @@ async function budgetFileBuf(db, report) {
   return buf;
 }
 
+// סוגי הצוות שנוסחת עמודת התפקיד בקובץ המשרד ממלאת לבד (לפי התבנית)
+const FORMULA_ROLE_GARDENS = new Set(['מדצ', 'סייעת ממשיכה', 'סייעת חדשה', 'סייעת רפואית/אישית', 'רכזת גן']);
+const FORMULA_ROLE_SCHOOLS = new Set(['מדצ', 'סגנית רכזת מעל 150', 'רכזת תכנית בבית הספר']);
+
 const VALID_PROGRAMS = ['base15', 'extension', 'base'];
 const VALID_STATUS = ['draft', 'in_progress', 'blocked', 'ready', 'submitted'];
 
@@ -1379,6 +1383,10 @@ router.get('/:id/export', ah(async (req, res) => {
     if (isSch && !stVal) ({ staffType: stVal, role: roleVal } = defaultSchoolsStaff(hourlyGross || 0));
     if (isSch) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, exSchoolTypes));
     else if (stVal) ({ staffType: stVal, role: roleVal } = mapGardensStaff(stVal, roleVal));
+    // עמודת התפקיד בקובץ היא נוסחת משרד שגוזרת לבד את התפקיד לסוגי הצוות
+    // החד-תפקידיים — שם משאירים אותה; כותבים תפקיד רק לסוגים שהנוסחה לא
+    // מכסה (גננת/מורה/תוספת כח אדם...), אחרת התא נשאר ריק ונעול
+    const roleByFormula = (isSch ? FORMULA_ROLE_SCHOOLS : FORMULA_ROLE_GARDENS).has(String(stVal || '').trim());
     return [
       resolveSymbol(r), null, r.emp_id,
       r.first_name || (r.emp_name || '').split(' ')[0] || '',
@@ -1388,6 +1396,7 @@ router.get('/:id/export', ah(async (req, res) => {
       roleVal || '',
       round2(hourlyGross), round2(hourlyCost), round2(r.hours),
       null,
+      roleByFormula, // [12] — כשעמודת התפקיד בתבנית היא נוסחה: להשאיר אותה בשורה זו
     ];
   });
 
