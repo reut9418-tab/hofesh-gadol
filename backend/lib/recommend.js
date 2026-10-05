@@ -4,7 +4,7 @@
    ומוסד אחר בתת-ביצוע — מציעים להעביר עובדים מהחורג אל הפנוי.
    ההמלצה היא על שורת הדיווח בלבד; ההחלטה המקצועית נשארת בידי המשתמשת. */
 
-const { suggestRole, basketForStaff } = require('./salaryCheck');
+const { suggestRole, basketForStaff, notClubSql } = require('./salaryCheck');
 
 /* הלוגיקה הטהורה — ניתנת לבדיקה בנפרד.
    insts: [{symbol, name, cap}] ; workers: [{rowId, name, cost, symbol}] (רק צוות הדרכה, עם סמל) */
@@ -96,7 +96,7 @@ async function recommendations(db, report, { withEstimate = false } = {}) {
   const { recognizedRowCost } = require('./ingest');
   const { schoolsRoleByHours } = require('./salaryCheck');
   const workers = (await db.prepare(
-    'SELECT id, emp_name, dept, staff_type, symbol_override, cost, gross, hours, gross_bump FROM cost_rows WHERE report_id = ? AND COALESCE(move_declined,0) = 0'
+    `SELECT id, emp_name, dept, staff_type, symbol_override, cost, gross, hours, gross_bump FROM cost_rows WHERE report_id = ? AND COALESCE(move_declined,0) = 0 AND ${notClubSql()}`
   ).all(report.id))
     .filter((r) => {
       const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours) : null;

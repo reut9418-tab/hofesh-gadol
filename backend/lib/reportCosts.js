@@ -3,6 +3,7 @@
 
 const { GROSS_CAP, programType } = require('./domain');
 const { aggregateComponents, runChecks, recognizedRowCost } = require('./ingest');
+const { notClubSql } = require('./salaryCheck'); // מפעילי/ות חוג — מחוץ לחישובי השכר
 
 async function costDataForReport(db, report) {
   // לקוח חייב מע"מ: העלות המוכרת (מול תקציב/דוח ביצוע) = עלות מעביד × 1.18
@@ -10,7 +11,7 @@ async function costDataForReport(db, report) {
   const vatFactor = client && client.has_vat ? 1.18 : 1;
   const raw = await db.prepare(
     `SELECT cr.*, cf.filename, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id
-     WHERE cr.report_id = ?`
+     WHERE cr.report_id = ? AND ${notClubSql('cr.')}`
   ).all(report.id);
 
   const shaped = raw.map((r) => ({

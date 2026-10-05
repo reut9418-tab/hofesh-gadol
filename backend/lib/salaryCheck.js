@@ -81,6 +81,10 @@ function isClubOperator(roleText) {
   const t = String(roleText || '');
   return /מפעיל/.test(t) && /חוג/.test(t);
 }
+/* אותו כלל כתנאי SQL — מוציא מפעילי/ות חוג מכל חישובי השכר (מסך, מכתב,
+   בקרות, המלצות) ולא רק מהייצוא (רעות 5.10). alias: "cr." כשיש JOIN */
+const notClubSql = (alias = '') =>
+  `NOT (COALESCE(${alias}role_text,'') LIKE '%מפעיל%' AND COALESCE(${alias}role_text,'') LIKE '%חוג%')`;
 
 /* תפקיד כפי שמופיע בדוח השכר עצמו (עמודת "תפקיד") → איש צוות + תפקיד לפי רשימות המשרד */
 function staffFromRoleText(text) {
@@ -142,7 +146,7 @@ async function salaryCheck(db, report) {
   // הניצול המוכר מוגבל פר-עובד לתקרת ה-140% מהברוטו — כמו בדיווח בפועל
   const { recognizedRowCost } = require('./ingest');
   const actual = { instruction: 0, coordinator: 0, deputy: 0 };
-  const rows = await db.prepare('SELECT dept, staff_type, cost, gross, hours, gross_bump FROM cost_rows WHERE report_id = ?').all(report.id);
+  const rows = await db.prepare(`SELECT dept, staff_type, cost, gross, hours, gross_bump FROM cost_rows WHERE report_id = ? AND ${notClubSql()}`).all(report.id);
   const hoursRule = report.framework !== 'gardens';
   rows.forEach((r) => {
     const byHours = hoursRule ? schoolsRoleByHours(r.hours) : null;
@@ -196,4 +200,4 @@ async function salaryCheck(db, report) {
   };
 }
 
-module.exports = { isClubOperator, salaryCheck, suggestRole, basketForStaff, staffFromRoleText, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor, isCoordType };
+module.exports = { isClubOperator, notClubSql, salaryCheck, suggestRole, basketForStaff, staffFromRoleText, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor, isCoordType };

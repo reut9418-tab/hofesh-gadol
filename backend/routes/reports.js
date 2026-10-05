@@ -13,7 +13,7 @@ const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff, parseGardenExecKids, norm } = require('../lib/budgetFile');
 const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
   SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer } = require('../lib/fillMinistry');
-const { isClubOperator, salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor } = require('../lib/salaryCheck');
+const { isClubOperator, notClubSql, salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor } = require('../lib/salaryCheck');
 const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = require('../lib/applyAssignments');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
@@ -501,6 +501,7 @@ router.get('/:id/prep', ah(async (req, res) => {
   const vatF = client && client.has_vat ? 1.18 : 1;
   const bumps = rawRows
     .map((r) => {
+      if (isClubOperator(r.role_text)) return null; // לא מדווחים — אין מה ליישר
       if (!(r.gross > 0 && r.hours > 0 && r.cost != null)) return null;
       const hourlyGross = r.gross / r.hours;
       const hourlyCostVat = (r.cost / r.hours) * vatF;
@@ -550,7 +551,7 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
     const vatF = client2 && client2.has_vat ? 1.18 : 1;
     const { recognizedRowCost } = require('../lib/ingest');
 
-    const rows2 = await db.prepare('SELECT * FROM cost_rows WHERE report_id = ?').all(id);
+    const rows2 = await db.prepare(`SELECT * FROM cost_rows WHERE report_id = ? AND ${notClubSql()}`).all(id);
     const nameSym = aaMd.institutions.length
       ? matchDeptsToInstitutions(aaMd.institutions, [...new Set(rows2.map((r) => r.inst_name).filter(Boolean))]) : {};
     // גם לפי שם המחלקה — כמו במסך ההכנה ובייצוא; בלעדיו עובדים עם מחלקה
@@ -621,7 +622,7 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
   let gardens = aaMd.execGardens.length ? aaMd.execGardens : aaMd.institutions.map((i) => i.symbol);
   if (!gardens.length) return res.status(422).json({ error: 'לא נמצאו סמלי גנים בלשונית "גנים - דוח ביצוע" של הקובץ.' });
 
-  const rows = await db.prepare('SELECT * FROM cost_rows WHERE report_id = ?').all(id);
+  const rows = await db.prepare(`SELECT * FROM cost_rows WHERE report_id = ? AND ${notClubSql()}`).all(id);
   const exNameSymbol = aaMd.institutions.length
     ? matchDeptsToInstitutions(aaMd.institutions, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))])
     : {};
@@ -1111,8 +1112,9 @@ router.get('/:id/cost-match-doc', ah(async (req, res) => {
   if (!report) return res.status(404).send('דוח לא נמצא');
   const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(report.client_id);
   const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  // דוח ההתאמה מסביר את מה שדווח בדוח הביצוע — בלי מפעילי/ות חוג (רעות 5.10)
   const rows = await db.prepare(
-    'SELECT * FROM cost_rows WHERE report_id = ? ORDER BY emp_name'
+    `SELECT * FROM cost_rows WHERE report_id = ? AND ${notClubSql()} ORDER BY emp_name`
   ).all(id);
   if (!rows.length) return res.status(422).send('אין שורות שכר מנותבות לדוח זה.');
   const { reportLabel } = require('../lib/domain');
@@ -1194,7 +1196,7 @@ router.get('/:id/cost-match-xlsx', ah(async (req, res) => {
   if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
   const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(report.client_id);
   const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
-  const rows = await db.prepare('SELECT * FROM cost_rows WHERE report_id = ? ORDER BY emp_name').all(id);
+  const rows = await db.prepare(`SELECT * FROM cost_rows WHERE report_id = ? AND ${notClubSql()} ORDER BY emp_name`).all(id);
   if (!rows.length) return res.status(422).json({ error: 'אין שורות שכר מנותבות לדוח זה.' });
   const { reportLabel } = require('../lib/domain');
   const label = reportLabel(report.framework, report.program);

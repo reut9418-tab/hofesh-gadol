@@ -4,7 +4,7 @@
    של החורג לדוח העלות של השני. הביצוע רק באישור הלקוח/המשתמשת. */
 
 const { recognizedRowCost } = require('./ingest');
-const { suggestRole, basketForStaff, schoolsRoleByHours } = require('./salaryCheck');
+const { suggestRole, basketForStaff, schoolsRoleByHours, notClubSql } = require('./salaryCheck');
 const { reportLabel } = require('./domain');
 
 /* תקרת השכר של דוח: סלי השכר + הסל הגמיש (שבולע חריגות שכר) */
@@ -38,7 +38,7 @@ async function crossMoveRecommendations(db, clientId) {
     const cap = await salaryCapOf(db, r.id);
     if (!(cap > 0)) continue;
     const rows = await db.prepare(
-      'SELECT id, emp_name, dept, staff_type, cost, gross, hours, gross_bump, cross_declined FROM cost_rows WHERE report_id = ?'
+      `SELECT id, emp_name, dept, staff_type, cost, gross, hours, gross_bump, cross_declined FROM cost_rows WHERE report_id = ? AND ${notClubSql()}`
     ).all(r.id);
     if (!rows.length) continue;
     const actual = rows.reduce((s, x) => s + recognizedRowCost(x, vatFactor), 0);

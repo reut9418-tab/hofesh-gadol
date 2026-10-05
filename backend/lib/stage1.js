@@ -4,7 +4,7 @@
    בתי"ס פר סמל מוסד, גנים במרוכז. מוגש כדף HTML להדפסה/PDF. */
 
 const { costDataForReport } = require('./reportCosts');
-const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles, coordHoursCapFor, isCoordType } = require('./salaryCheck');
+const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles, coordHoursCapFor, isCoordType, notClubSql } = require('./salaryCheck');
 const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions } = require('./nameMatch');
 const { reportLabel } = require('./domain');
@@ -85,7 +85,7 @@ async function stage1Data(db, report, client, authority) {
 
   // שיוך שורות עלות לסמל (override ← התאמת שם, כמו במסך ההכנה) + המשלם מהקובץ
   const rows = await db.prepare(
-    `SELECT cr.*, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id WHERE cr.report_id = ?`
+    `SELECT cr.*, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id WHERE cr.report_id = ? AND ${notClubSql('cr.')}`
   ).all(report.id);
   // עובדים שעלותם דווחה לפי תקרת ברוטו+40% (הנמוך מבין) — מידע, לא חריגה.
   // על הברוטו האפקטיבי (כולל התאמות ברוטו שאושרו), בדיוק כמו בייצוא ובדוח ההתאמה
