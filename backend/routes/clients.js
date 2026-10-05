@@ -78,10 +78,15 @@ router.get('/tree', ah(async (req, res) => {
    וטבלת הבקרות הפנימית המפורטת (stage2-detail-doc). דפים להדפסה */
 async function clientStage2Page(req, res, detailed) {
   const db = getDB();
-  const { clientStage2Data, renderClientStage2Html, renderClientPaymentLetterHtml } = require('../lib/stage2Report');
-  const d = await clientStage2Data(db, parseInt(req.params.id));
-  if (!d) return res.status(404).json({ error: 'לקוח לא נמצא' });
+  const { clientStage2Status, renderPreparingHtml, renderClientStage2Html, renderClientPaymentLetterHtml } = require('../lib/stage2Report');
+  const clientId = parseInt(req.params.id);
+  const client = await db.prepare('SELECT name FROM clients WHERE id = ?').get(clientId);
+  if (!client) return res.status(404).json({ error: 'לקוח לא נמצא' });
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  // חישוב ראשון רץ ברקע; עד שמוכן — דף "בהכנה" שמתרענן (בלי לחכות לבקשה
+  // ארוכה שנחתכת במגבלת הזמן של Cloudflare)
+  const d = clientStage2Status(db, clientId);
+  if (!d) return res.send(renderPreparingHtml(client.name));
   res.send(detailed ? renderClientStage2Html(d) : renderClientPaymentLetterHtml(d));
 }
 router.get('/:id/stage2-doc', ah((req, res) => clientStage2Page(req, res, false)));

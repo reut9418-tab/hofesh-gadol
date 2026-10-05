@@ -116,15 +116,38 @@ async function stage2Data(db, report, client, authority, { light = false } = {})
 /* מטמון המכתב המרוכז פר לקוח — מתרוקן בכל שינוי (bustClientStage2, נקרא
    ממנגנון ריקון המטמונים של השרת). לקוח גדול (המשכיל, 22 פרויקטים) לקח
    כ-2 דקות ונתקע במגבלת הזמן של Cloudflare */
-const clientStage2Cache = new Map(); // clientId -> Promise<data>
+const clientStage2Cache = new Map(); // clientId -> { promise, data, done, error }
+// פרויקט אחד בכל פעם: חישוב קר טוען את קובץ המשרד (~250MB בזיכרון לפענוח);
+// 5 במקביל הגיעו ל-1.4GB והפילו את השרת בענן (5.10). ההמתנה נפתרת בדף
+// "בהכנה" שמתרענן לבד (clientStage2Status), לא במקביליות
+const CLIENT_LETTER_CONCURRENCY = Number(process.env.CLIENT_LETTER_CONCURRENCY) || 1;
 function bustClientStage2() { clientStage2Cache.clear(); }
 
+// חישוב אחד בלבד בכל השרת בכל רגע (גם כששני לקוחות נפתחים יחד, או כשריקון
+// מטמון באמצע חישוב מתחיל חישוב חדש) — שיא הזיכרון נשאר של פרויקט אחד
+let letterQueue = Promise.resolve();
+function startClientStage2(db, clientId) {
+  let e = clientStage2Cache.get(clientId);
+  if (e) return e;
+  e = { done: false, data: null, error: null };
+  e.promise = letterQueue.then(() => computeClientStage2(db, clientId))
+    .then((data) => { e.data = data; e.done = true; return data; })
+    .catch((err) => { e.error = err; e.done = true; throw err; });
+  letterQueue = e.promise.catch(() => { /* התור ממשיך גם אחרי כישלון */ });
+  clientStage2Cache.set(clientId, e);
+  return e;
+}
+
+/* ממתין לתוצאה (שימוש פנימי/בדיקות) */
 async function clientStage2Data(db, clientId) {
-  const hit = clientStage2Cache.get(clientId);
-  if (hit) return hit;
-  const p = computeClientStage2(db, clientId).catch((e) => { clientStage2Cache.delete(clientId); throw e; });
-  clientStage2Cache.set(clientId, p);
-  return p;
+  return startClientStage2(db, clientId).promise;
+}
+
+/* לדף: מוכן → הנתונים; אחרת מתחיל ברקע ומחזיר null (הדף מציג "בהכנה") */
+function clientStage2Status(db, clientId) {
+  const e = startClientStage2(db, clientId);
+  if (e.error) { clientStage2Cache.delete(clientId); throw e.error; } // הפתיחה הבאה תנסה שוב
+  return e.done ? e.data : null;
 }
 
 async function computeClientStage2(db, clientId) {
@@ -132,7 +155,7 @@ async function computeClientStage2(db, clientId) {
   if (!client) return null;
   const reports = await db.prepare('SELECT * FROM reports WHERE client_id = ? ORDER BY id').all(clientId);
   const authorities = new Map((await db.prepare('SELECT * FROM authorities WHERE client_id = ?').all(clientId)).map((a) => [a.id, a]));
-  // חישוב במקביל (עד 5 פרויקטים בו-זמנית — מגבלת חיבורי המסד), סדר התוצאות נשמר
+  // סדר התוצאות נשמר; מקביליות לפי CLIENT_LETTER_CONCURRENCY (ברירת מחדל 1)
   const results = new Array(reports.length).fill(null);
   let next = 0;
   const worker = async () => {
@@ -144,7 +167,7 @@ async function computeClientStage2(db, clientId) {
       catch { /* פרויקט בלי נתונים — מדלגים */ }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(5, reports.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(CLIENT_LETTER_CONCURRENCY, reports.length) }, worker));
   const projects = [];
   for (const res of results) {
     if (!res) continue;
@@ -482,4 +505,14 @@ function renderClientPaymentLetterHtml(d) {
 </body></html>`;
 }
 
-module.exports = { bustClientStage2, stage2Data, clientStage2Data, renderStage2Html, renderClientStage2Html, renderPaymentLetterHtml, renderClientPaymentLetterHtml };
+/* דף ביניים בזמן החישוב הראשון — מתרענן לבד עד שהמכתב מוכן */
+function renderPreparingHtml(clientName) {
+  return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="6"><title>מכין את המכתב — ${esc(clientName || '')}</title>
+<style>${LETTER_CSS} .wait{text-align:center;margin-top:80px;font-size:16px}</style></head><body>
+<div class="wait">⏳ <b>מכין את מכתב התשלום המרוכז${clientName ? ` של ${esc(clientName)}` : ''}…</b><br>
+<span class="soft">מחשב את כל הפרויקטים — עד כשתי דקות בפתיחה הראשונה. הדף יתעדכן לבד; הפתיחות הבאות מיידיות.</span></div>
+</body></html>`;
+}
+
+module.exports = { bustClientStage2, clientStage2Status, renderPreparingHtml, stage2Data, clientStage2Data, renderStage2Html, renderClientStage2Html, renderPaymentLetterHtml, renderClientPaymentLetterHtml };
