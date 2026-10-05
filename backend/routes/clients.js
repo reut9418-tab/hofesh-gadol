@@ -74,15 +74,18 @@ router.get('/tree', ah(async (req, res) => {
   res.json(await treeInflight);
 }));
 
-/* סיכום שלב 2 מרוכז ללקוח — תשלום צפוי בכל הפרויקטים (דף להדפסה) */
-router.get('/:id/stage2-doc', ah(async (req, res) => {
+/* שלב 2 מרוכז ללקוח: מכתב קצר — סכום צפוי לכל פרויקט, לפי רשות (stage2-doc),
+   וטבלת הבקרות הפנימית המפורטת (stage2-detail-doc). דפים להדפסה */
+async function clientStage2Page(req, res, detailed) {
   const db = getDB();
-  const { clientStage2Data, renderClientStage2Html } = require('../lib/stage2Report');
+  const { clientStage2Data, renderClientStage2Html, renderClientPaymentLetterHtml } = require('../lib/stage2Report');
   const d = await clientStage2Data(db, parseInt(req.params.id));
   if (!d) return res.status(404).json({ error: 'לקוח לא נמצא' });
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(renderClientStage2Html(d));
-}));
+  res.send(detailed ? renderClientStage2Html(d) : renderClientPaymentLetterHtml(d));
+}
+router.get('/:id/stage2-doc', ah((req, res) => clientStage2Page(req, res, false)));
+router.get('/:id/stage2-detail-doc', ah((req, res) => clientStage2Page(req, res, true)));
 
 router.get('/dashboard', ah(async (req, res) => {
   const db = getDB();

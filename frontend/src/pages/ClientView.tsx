@@ -4,7 +4,7 @@ import { btn, card, input } from '../ui';
 import {
   getClient, updateClient, ClientNode, Report, createAuthority, deleteAuthority,
   createReport, deleteReport, getCrossMoves, applyCrossMove, CrossPair,
-  clientStage2DocUrl,
+  clientStage2DocUrl, clientStage2DetailDocUrl,
 } from '../api';
 import CostReportsPanel from './CostReports';
 import ManagePanel from './ManagePanel';
@@ -202,8 +202,11 @@ export default function ClientView({ clientId, go }: { clientId: number; go: (n:
           )}
           {client.cluster_number != null && <span style={{ fontSize: 12, color: T.inkSoft }}>אשכול למ"ס: {client.cluster_number}</span>}
           <button onClick={() => window.open(clientStage2DocUrl(clientId), '_blank')}
-            title="תשלום צפוי מהמשרד — מרוכז לכל הפרויקטים של הלקוח, עם מצב הבקרות"
-            style={{ ...btn('ghost'), marginInlineStart: 'auto' }}>💰 סיכום תשלום צפוי</button>
+            title="מכתב מרוכז ללקוח — הסכום הצפוי מכל רשות בגין כל פרויקט, וסה״כ"
+            style={{ ...btn('primary'), marginInlineStart: 'auto' }}>✉ מכתב תשלום צפוי מרוכז</button>
+          <button onClick={() => window.open(clientStage2DetailDocUrl(clientId), '_blank')}
+            title="טבלת הבקרות הפנימית — תקציב, שכר מוכר, חריגות ופערים לכל פרויקט"
+            style={btn('ghost')}>📋 פירוט פנימי</button>
           {/* הגדרת מע"מ פר-לקוח (§7) — משפיעה על התאמת הביצוע (עלות × 1.18) */}
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, cursor: 'pointer',
             background: client.has_vat ? T.amberBg : T.paper, borderRadius: 6, padding: '4px 10px',

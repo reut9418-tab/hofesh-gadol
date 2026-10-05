@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { T, STATUS_HE, STATUS_COLOR, BUCKET_COLOR } from '../theme';
 import { btn, card, pill } from '../ui';
-import { getReport, updateReport, getReportCosts, getReportBudget, uploadBudgetFile, stage2DocUrl, saveAuthorityEstimate, downloadExport } from '../api';
+import { getReport, updateReport, getReportCosts, getReportBudget, uploadBudgetFile, stage2DocUrl, stage2DetailDocUrl, saveAuthorityEstimate, downloadExport } from '../api';
 import PrepSection from './PrepSection';
 import LedgerSection from './LedgerSection';
 import type { Nav } from '../App';
@@ -434,7 +434,11 @@ export default function ReportView({ reportId, clientId, go }: { reportId: numbe
             <span style={{ fontSize: 11.5, color: T.inkSoft }}>הבקרות שבוצעו והפערים · ניצול מול תקציב בכל סל · התשלום הצפוי מהמשרד פר מוסד ולפרויקט</span>
             <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <button onClick={() => window.open(stage2DocUrl(reportId), '_blank')}
-                style={btn('primary')}>📋 דוח בקרות ותשלום צפוי</button>
+                title="מכתב קצר ללקוח — כמה כסף צפוי להתקבל בפרויקט ומאיזה גורם"
+                style={btn('primary')}>✉ מכתב תשלום צפוי</button>
+              <button onClick={() => window.open(stage2DetailDocUrl(reportId), '_blank')}
+                title="דוח הבקרות המפורט (פנימי): פערים, השוואה פר משלם, ניצול מול תקציב ופירוט ההכרה"
+                style={btn('ghost')}>📋 פירוט בקרות</button>
               <Stage2ExportButton reportId={reportId} />
             </span>
           </div>

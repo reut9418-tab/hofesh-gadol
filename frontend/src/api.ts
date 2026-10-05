@@ -294,6 +294,9 @@ export const costMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${repo
 export const enrichMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/enrich-match-doc`;
 export const stage2DocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/stage2-doc`;
 export const clientStage2DocUrl = (clientId: number) => `${API_BASE}/clients/${clientId}/stage2-doc`;
+// דוחות הבקרות המפורטים (פנימיים) — לצד מכתבי התשלום הקצרים
+export const stage2DetailDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/stage2-detail-doc`;
+export const clientStage2DetailDocUrl = (clientId: number) => `${API_BASE}/clients/${clientId}/stage2-detail-doc`;
 
 /* דוח התאמת ההעשרה כקובץ אקסל — הורדה ישירה */
 export const downloadEnrichMatchXlsx = async (reportId: number) => {

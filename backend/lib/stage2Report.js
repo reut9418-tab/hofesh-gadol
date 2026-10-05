@@ -122,8 +122,13 @@ async function clientStage2Data(db, clientId) {
       projects.push({
         reportId: report.id,
         label: `${authority && authority.name !== client.name ? authority.name + ' — ' : ''}${s2.label}`,
+        authorityName: (authority && authority.name) || client.name,
+        projectLabel: s2.label,
         totals: s2.totals,
         gaps: s2.checks.filter((c) => c.level !== 'ok').length,
+        hasLedger: s2.hasLedger,
+        // הסכום מאומדן המערכת (הקובץ לא חושב) ולא משורת התשלום שבקובץ
+        isEstimate: s2.units.some((u) => !(u.paymentTotal > 0)),
       });
     } catch { /* פרויקט בלי נתונים — מדלגים */ }
   }
@@ -343,4 +348,106 @@ function renderClientStage2Html(d) {
 </body></html>`;
 }
 
-module.exports = { stage2Data, clientStage2Data, renderStage2Html, renderClientStage2Html };
+/* ---------- מכתבי תשלום צפוי ללקוח — קצרים (בקשת רעות 6.10) ----------
+   מכתב פרויקט: כמה כסף צפוי להתקבל ומאיזה גורם. מכתב מרוכז: לקוח עם כמה
+   פרויקטים/רשויות — סכום לכל פרויקט, סיכום לכל רשות וסה"כ. הבקרות המפורטות
+   נשארות בדוח הפנימי (renderStage2Html). */
+const LETTER_CSS = `
+  body{font-family:'Segoe UI',Arial,sans-serif;color:#37322A;max-width:760px;margin:0 auto;padding:36px;line-height:1.8;font-size:14px}
+  .letterhead{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #9A7B2F;padding-bottom:8px;font-size:12.5px;color:#7A7062}
+  .to{margin:18px 0 4px}
+  .re{font-weight:700;margin:6px 0 14px}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0}
+  th{background:#9A7B2F;color:#fff;text-align:right;padding:7px 10px;font-size:12px}
+  th.num,td.num{text-align:center}
+  td{border-bottom:1px solid #EAE1CF;padding:7px 10px}
+  tr.sub td{background:#FBF7EC;font-weight:600}
+  tr.total td{background:#F4ECDA;font-weight:700;border-top:2px solid #9A7B2F;font-size:14px}
+  .amount{background:#FAF6EE;border:1px solid #9A7B2F;border-radius:10px;padding:14px 18px;font-size:16px;margin:14px 0;text-align:center}
+  .soft{color:#7A7062;font-size:11.5px}
+  .note{color:#7A7062;font-size:12px;margin-top:10px}
+  .sign{margin-top:26px}
+  @media print { body{padding:12px} }
+`;
+const sourceOf = (clientName, authorityName) =>
+  (authorityName && authorityName !== clientName ? `מ${authorityName}` : 'ממשרד החינוך');
+
+function renderPaymentLetterHtml(d) {
+  const today = new Date().toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' });
+  const clientName = (d.client && d.client.name) || '';
+  const authorityName = (d.authority && d.authority.name) || '';
+  const who = authorityName && authorityName !== clientName ? `${clientName} — ${authorityName}` : clientName;
+  const t = d.totals;
+  const estimate = d.units.some((u) => !(u.paymentTotal > 0));
+  const gaps = d.checks.filter((c) => c.level !== 'ok').length;
+  const status = !d.hasLedger
+    ? 'הסכום מבוסס על דוח הביצוע ודוח העלות; טרם התקבלו הכרטסות — הוא יאומת סופית לאחר קבלתן.'
+    : gaps > 0
+      ? `בבדיקת הכרטסות נמצאו ${gaps} ${gaps === 1 ? 'פער' : 'פערים'} — נעדכן אתכם בנפרד בפרטים.`
+      : 'הכרטסות נבדקו מול דוח העלות ודוח הביצוע ונמצאו תואמות.';
+  return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
+<title>תשלום צפוי — ${esc(who)} — ${esc(d.label)}</title>
+<style>${LETTER_CSS}</style></head><body>
+<div class="letterhead"><span><b>גוטליב את ביטון, רו"ח</b></span><span>${today}</span></div>
+<div class="to">לכבוד: ${esc(who)}</div>
+<div class="re">הנדון: תוכנית החופש הגדול — ${esc(d.label)} — התשלום הצפוי</div>
+<p>שלום רב,</p>
+<p>לאחר הכנת דוח הביצוע${d.hasLedger ? ' ובדיקת הכרטסות' : ''}, להלן הסכום הצפוי להתקבל ${sourceOf(clientName, authorityName)} בגין הפרויקט:</p>
+${t.expected < 0
+    ? '<div class="amount"><b>הסכום ייקבע לאחר השלמת הנתונים</b><br><span class="soft">לפי הנתונים הקיימים הגבייה מההורים עולה על ההוצאות המוכרות — נבדוק ונעדכן.</span></div>'
+    : `<div class="amount">💰 <b>₪${fmt(t.expected)}</b>${estimate ? ' <span class="soft">(אומדן)</span>' : ''}</div>`}
+${t.paymentAides > 0 ? `<p class="soft">מתוכם תוספת סייעות רפואיות/אישיות: ₪${fmt(t.paymentAides)}.</p>` : ''}
+<p class="note">${status}${estimate ? ' הסכום הוא אומדן שלנו, משום שקובץ דוח הביצוע לא כלל את חישוב התשלום של המשרד.' : ' הסכום נלקח משורת התשלום בדוח הביצוע ("סה"כ לתשלום בתוספת גמישות 25%").'}${d.hasVat ? ' הסכומים כוללים מע"מ.' : ''}</p>
+<div class="sign">בברכה,<br><b>גוטליב את ביטון, רו"ח</b></div>
+</body></html>`;
+}
+
+function renderClientPaymentLetterHtml(d) {
+  const today = new Date().toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' });
+  const clientName = d.client.name;
+  // קיבוץ לפי רשות — הסדר לפי סדר הופעת הרשות
+  const groups = new Map();
+  d.projects.forEach((p) => {
+    if (!groups.has(p.authorityName)) groups.set(p.authorityName, []);
+    groups.get(p.authorityName).push(p);
+  });
+  const multiAuth = groups.size > 1;
+  const anyEstimate = d.projects.some((p) => p.isEstimate);
+  let body = '';
+  for (const [auth, list] of groups) {
+    const src = sourceOf(clientName, auth).replace(/^מ/, '');
+    list.forEach((p) => {
+      const v = p.totals.expected || 0;
+      // אומדן שלילי = הגבייה מהורים עולה על ההוצאות המוכרות — כמעט תמיד נתונים חסרים
+      const amount = v < 0 ? `<span class="soft">לבדיקה **</span>` : `₪${fmt(v)}${p.isEstimate ? ' <span class="soft">*</span>' : ''}`;
+      body += `<tr><td>${esc(src)}</td><td>${esc(p.projectLabel)}</td><td class="num">${amount}</td></tr>`;
+    });
+    if (multiAuth && list.length > 1) {
+      body += `<tr class="sub"><td colspan="2">סה"כ ${esc(src)}</td><td class="num">₪${fmt(list.reduce((s, p) => s + Math.max(0, p.totals.expected || 0), 0))}</td></tr>`;
+    }
+  }
+  // פרויקט "לבדיקה" (אומדן שלילי) אינו נספר בסכומים
+  const total = d.projects.reduce((s, p) => s + Math.max(0, p.totals.expected || 0), 0);
+  const negatives = d.projects.filter((p) => (p.totals.expected || 0) < 0);
+  const noLedger = d.projects.filter((p) => !p.hasLedger).length;
+  const withGaps = d.projects.filter((p) => p.hasLedger && p.gaps > 0).length;
+  return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
+<title>תשלום צפוי מרוכז — ${esc(clientName)}</title>
+<style>${LETTER_CSS}</style></head><body>
+<div class="letterhead"><span><b>גוטליב את ביטון, רו"ח</b></span><span>${today}</span></div>
+<div class="to">לכבוד: ${esc(clientName)}</div>
+<div class="re">הנדון: תוכנית החופש הגדול — סיכום התשלומים הצפויים</div>
+<p>שלום רב,</p>
+<p>להלן הסכומים הצפויים להתקבל בגין כל אחד מפרויקטי החופש הגדול${multiAuth ? ', לפי רשות' : ''}:</p>
+<table>
+  <thead><tr><th>${multiAuth ? 'רשות' : 'גורם משלם'}</th><th>פרויקט</th><th class="num">סכום צפוי</th></tr></thead>
+  <tbody>${body}
+    <tr class="total"><td colspan="2">סה"כ צפוי להתקבל</td><td class="num">₪${fmt(total)}</td></tr>
+  </tbody>
+</table>
+<p class="note">${anyEstimate ? '* אומדן שלנו — קובץ דוח הביצוע לא כלל את חישוב התשלום של המשרד. ' : ''}${negatives.length ? `** ${negatives.map((p) => `${esc(sourceOf(clientName, p.authorityName).replace(/^מ/, ''))} — ${esc(p.projectLabel)}`).join(', ')}: לפי הנתונים הקיימים הגבייה מההורים עולה על ההוצאות המוכרות — הסכום ייקבע לאחר השלמת הנתונים (לא נכלל בסה"כ). ` : ''}${noLedger > 0 ? `ב-${noLedger} ${noLedger === 1 ? 'פרויקט' : 'פרויקטים'} טרם התקבלו כרטסות — הסכום יאומת סופית לאחר קבלתן. ` : ''}${withGaps > 0 ? `ב-${withGaps} ${withGaps === 1 ? 'פרויקט' : 'פרויקטים'} נמצאו פערים בבדיקת הכרטסות — נעדכן בנפרד. ` : ''}${d.client.has_vat ? 'הסכומים כוללים מע"מ.' : ''}</p>
+<div class="sign">בברכה,<br><b>גוטליב את ביטון, רו"ח</b></div>
+</body></html>`;
+}
+
+module.exports = { stage2Data, clientStage2Data, renderStage2Html, renderClientStage2Html, renderPaymentLetterHtml, renderClientPaymentLetterHtml };
