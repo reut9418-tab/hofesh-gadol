@@ -17,12 +17,16 @@ const fmt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
 const r2 = (n) => Math.round((n || 0) * 100) / 100;
 
 /* נתוני שלב 2 לפרויקט אחד */
-async function stage2Data(db, report, client, authority) {
-  const d = await stage1Data(db, report, client, authority);
-  const reconcile = await ledgerReconcile(db, report, client);
-  const payerMatrix = await payerBreakdown(db, report, client);
-  const expenseMatrix = await expenseComparison(db, report, client);
-  const enrich = await enrichMatchData(db, report, client, authority);
+async function stage2Data(db, report, client, authority, { light = false } = {}) {
+  // light (מכתב התשלום המרוכז): בלי ההשוואות פר משלם/הוצאות — לא מוצגות בו,
+  // וההשוואה מול הקובץ היא החלק הכבד בחישוב קר. השאר במקביל
+  const [d, reconcile, payerMatrix, expenseMatrix, enrich] = await Promise.all([
+    stage1Data(db, report, client, authority),
+    ledgerReconcile(db, report, client),
+    light ? null : payerBreakdown(db, report, client),
+    light ? null : expenseComparison(db, report, client),
+    enrichMatchData(db, report, client, authority),
+  ]);
   const vat = d.hasVat ? 1.18 : 1;
 
   // הקצאת העשרה מהכרטסות פר סמל (בתי"ס) / במרוכז (גנים)
@@ -109,15 +113,43 @@ async function stage2Data(db, report, client, authority) {
 }
 
 /* סיכום מרוכז ללקוח — כל הפרויקטים */
+/* מטמון המכתב המרוכז פר לקוח — מתרוקן בכל שינוי (bustClientStage2, נקרא
+   ממנגנון ריקון המטמונים של השרת). לקוח גדול (המשכיל, 22 פרויקטים) לקח
+   כ-2 דקות ונתקע במגבלת הזמן של Cloudflare */
+const clientStage2Cache = new Map(); // clientId -> Promise<data>
+function bustClientStage2() { clientStage2Cache.clear(); }
+
 async function clientStage2Data(db, clientId) {
+  const hit = clientStage2Cache.get(clientId);
+  if (hit) return hit;
+  const p = computeClientStage2(db, clientId).catch((e) => { clientStage2Cache.delete(clientId); throw e; });
+  clientStage2Cache.set(clientId, p);
+  return p;
+}
+
+async function computeClientStage2(db, clientId) {
   const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId);
   if (!client) return null;
   const reports = await db.prepare('SELECT * FROM reports WHERE client_id = ? ORDER BY id').all(clientId);
+  const authorities = new Map((await db.prepare('SELECT * FROM authorities WHERE client_id = ?').all(clientId)).map((a) => [a.id, a]));
+  // חישוב במקביל (עד 5 פרויקטים בו-זמנית — מגבלת חיבורי המסד), סדר התוצאות נשמר
+  const results = new Array(reports.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < reports.length) {
+      const i = next++;
+      const report = reports[i];
+      const authority = report.authority_id ? (authorities.get(report.authority_id) || null) : null;
+      try { results[i] = { report, authority, s2: await stage2Data(db, report, client, authority, { light: true }) }; }
+      catch { /* פרויקט בלי נתונים — מדלגים */ }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(5, reports.length) }, worker));
   const projects = [];
-  for (const report of reports) {
-    const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
-    try {
-      const s2 = await stage2Data(db, report, client, authority);
+  for (const res of results) {
+    if (!res) continue;
+    const { report, authority, s2 } = res;
+    {
       if (!s2.units.length) continue;
       projects.push({
         reportId: report.id,
@@ -130,7 +162,7 @@ async function clientStage2Data(db, clientId) {
         // הסכום מאומדן המערכת (הקובץ לא חושב) ולא משורת התשלום שבקובץ
         isEstimate: s2.units.some((u) => !(u.paymentTotal > 0)),
       });
-    } catch { /* פרויקט בלי נתונים — מדלגים */ }
+    }
   }
   const total = (f) => r2(projects.reduce((s, p) => s + (f(p.totals) || 0), 0));
   return {
@@ -450,4 +482,4 @@ function renderClientPaymentLetterHtml(d) {
 </body></html>`;
 }
 
-module.exports = { stage2Data, clientStage2Data, renderStage2Html, renderClientStage2Html, renderPaymentLetterHtml, renderClientPaymentLetterHtml };
+module.exports = { bustClientStage2, stage2Data, clientStage2Data, renderStage2Html, renderClientStage2Html, renderPaymentLetterHtml, renderClientPaymentLetterHtml };

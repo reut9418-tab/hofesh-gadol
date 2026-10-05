@@ -25,6 +25,8 @@ const treeCache = { at: 0, data: null };
    חישוב מחדש של כל הדוחות בכל טעינת מסך — וזה מה שהאט את המערכת. */
 function bustHealthCache(reportIds) {
   treeCache.at = 0; // העץ ייבנה מחדש ברענון הבא (מוגש ישן עד אז)
+  // גם מכתבי התשלום המרוכזים (כל שינוי בדוח משנה את סכום הלקוח)
+  try { require('./stage2Report').bustClientStage2(); } catch { /* לא נטען */ }
   if (!Array.isArray(reportIds)) { healthCache.clear(); return; }
   for (const id of reportIds) healthCache.delete(Number(id));
 }
