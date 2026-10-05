@@ -228,16 +228,22 @@ export default function PrepSection({ reportId }: { reportId: number }) {
             <span style={{ fontSize: 11.5, color: T.inkSoft }}>
               יחזירו להכרה ₪{fmt(data.recommendations.recovered || 0)} מתוך חריגה של ₪{fmt(data.recommendations.overflowBefore || 0)}
             </span>
-            <button style={{ ...btn('primary'), marginInlineStart: 'auto' }}
+            <button style={{ ...btn('primary'), marginInlineStart: 'auto', opacity: busy ? 0.6 : 1 }} disabled={busy}
               onClick={async () => {
-                setAssign((p) => {
-                  const next = { ...p };
-                  (data.recommendations.moves || []).forEach((m) => { next[m.rowId] = { ...next[m.rowId], symbol: m.to }; });
-                  return next;
-                });
-                setMsg('ההמלצות הוחלו — לחצי "שמירת שיוכים" לרענון הבדיקה.');
+                // מחילים ושומרים מיד (בקשת רעות 5.10) — בלי צעד "שמירת שיוכים" נפרד
+                const moves = data.recommendations.moves || [];
+                const next = { ...assign };
+                moves.forEach((m) => { next[m.rowId] = { ...next[m.rowId], symbol: m.to }; });
+                setAssign(next);
+                setBusy(true); setMsg('מחיל ושומר את ההמלצות…');
+                try {
+                  await saveReportPrep(reportId, next);
+                  await load();
+                  setMsg(`✓ ${moves.length} המלצות הוחלו ונשמרו — הבדיקה עודכנה.`);
+                } catch { setMsg('השמירה נכשלה — ההמלצות סומנו במסך; נסי "שמירת שיוכים".'); }
+                finally { setBusy(false); }
               }}>
-              החלת כל ההמלצות
+              {busy ? 'שומר…' : 'החלת כל ההמלצות'}
             </button>
           </div>
           <div style={{ display: 'grid', gap: 4 }}>
