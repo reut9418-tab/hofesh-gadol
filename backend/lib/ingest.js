@@ -488,7 +488,11 @@ function parseCostFile(buf, learned = {}) {
     // 15 יום והרחבה"); כשהיא סה"כ כללי — ההרחבה מחוסרת ממנה כמו קודם
     const costHeader = s.det.mapping.cost !== undefined ? norm((s.rows[s.det.rowIdx] || [])[s.det.mapping.cost]) : '';
     const periodCost = /עבור|15 יום|15 ימים/.test(costHeader);
-    recs.forEach((r) => { r._periodCost = periodCost; });
+    // עמודת השעות שמופתה היא של תקופת הבסיס בלבד ("שעות 1-21.7 (רגיל)") —
+    // אז הסה"כ = בסיס + הרחבה; אחרת ("שעות עבודה") היא סה"כ שכולל את ההרחבה
+    const hoursHeader = s.det.mapping.hours !== undefined ? norm((s.rows[s.det.rowIdx] || [])[s.det.mapping.hours]) : '';
+    const periodHours = /רגיל|1-21|15 יום|15 ימים/.test(hoursHeader);
+    recs.forEach((r) => { r._periodCost = periodCost; r._periodHours = periodHours; });
     records.push(...recs);
   });
   const aggregated = aggregateComponents(records);
@@ -500,6 +504,18 @@ function parseCostFile(buf, learned = {}) {
   const part = (x, f) => (x == null ? null : Math.round(x * f * 100) / 100);
   for (const r of aggregated) {
     const ext = Number(r.extCost) || 0;
+    // פיצול לפי שעות בלבד (אפרת, כלל רעות 5.10): עלות אחת לעובד + עמודת
+    // "שעות הרחבה" בלי עמודת עלות להרחבה — העלות והברוטו מתחלקים לפי יחס
+    // השעות (אותה עלות לשעה בשתי התקופות)
+    if (!(ext > 0) && Number(r.extHours) > 0) {
+      const extH = Number(r.extHours);
+      const baseH = r._periodHours ? (Number(r.hours) || 0) : Math.max(0, (Number(r.hours) || 0) - extH);
+      const totalH = baseH + extH;
+      const shareH = totalH > 0 ? extH / totalH : 1;
+      if (baseH > 0) split.push({ ...r, cost: part(r.cost, 1 - shareH), gross: part(r.gross, 1 - shareH), hours: part(baseH, 1) });
+      split.push({ ...r, dept: `${r.dept} — הרחבה`, cost: part(r.cost, shareH), gross: part(r.gross, shareH), hours: part(extH, 1) });
+      continue;
+    }
     if (!(ext > 0)) { split.push(r); continue; }
     const baseCost = r._periodCost ? (r.cost || 0) : Math.max(0, (r.cost || 0) - ext);
     const total = baseCost + ext;
