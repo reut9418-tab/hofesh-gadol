@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { T, STATUS_HE, STATUS_COLOR, BUCKET_COLOR } from '../theme';
 import { btn, card, pill } from '../ui';
-import { getReport, updateReport, getReportCosts, getReportBudget, uploadBudgetFile, stage2DocUrl, saveAuthorityEstimate } from '../api';
+import { getReport, updateReport, getReportCosts, getReportBudget, uploadBudgetFile, stage2DocUrl, saveAuthorityEstimate, downloadExport } from '../api';
 import PrepSection from './PrepSection';
 import LedgerSection from './LedgerSection';
 import type { Nav } from '../App';
@@ -285,6 +285,31 @@ function AuthorityEstimateSection({ rep, onChange }: { rep: any; onChange: () =>
   );
 }
 
+/* הורדת דוח הביצוע הממולא גם משלב 2 — אחרי העלאת כרטסות (ההוצאות בפועל
+   מהכרטסות נכתבות לקובץ) בלי לחזור לשלב 1 (בקשת רעות 5.10) */
+function Stage2ExportButton({ reportId }: { reportId: number }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true); setMsg(null);
+    try { await downloadExport(reportId); setMsg('✓ הקובץ ירד לתיקיית ההורדות.'); }
+    catch (e: any) {
+      // שגיאה מהשרת מגיעה כ-blob (responseType) — קוראים את הטקסט
+      let text = 'ההורדה נכשלה — נסי שוב.';
+      try { const t = await e?.response?.data?.text?.(); if (t) text = JSON.parse(t).error || text; } catch { /* נשאר הכללי */ }
+      setMsg(text);
+    } finally { setBusy(false); }
+  };
+  return (
+    <>
+      <button onClick={run} disabled={busy} style={{ ...btn('primary'), opacity: busy ? 0.6 : 1 }}>
+        {busy ? '⏳ מכין את הקובץ…' : '⬇ הורדת דוח ביצוע ממולא'}
+      </button>
+      {msg && <span style={{ fontSize: 12, color: msg.startsWith('✓') ? T.green : T.red, flexBasis: '100%' }}>{msg}</span>}
+    </>
+  );
+}
+
 const STATUSES = ['draft', 'in_progress', 'blocked', 'ready', 'submitted'];
 
 function Flag({ on, label }: { on: boolean; label: string }) {
@@ -407,8 +432,11 @@ export default function ReportView({ reportId, clientId, go }: { reportId: numbe
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, fontSize: 14 }}>הפלט של שלב 2</span>
             <span style={{ fontSize: 11.5, color: T.inkSoft }}>הבקרות שבוצעו והפערים · ניצול מול תקציב בכל סל · התשלום הצפוי מהמשרד פר מוסד ולפרויקט</span>
-            <button onClick={() => window.open(stage2DocUrl(reportId), '_blank')}
-              style={{ ...btn('primary'), marginInlineStart: 'auto' }}>📋 דוח בקרות ותשלום צפוי</button>
+            <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button onClick={() => window.open(stage2DocUrl(reportId), '_blank')}
+                style={btn('primary')}>📋 דוח בקרות ותשלום צפוי</button>
+              <Stage2ExportButton reportId={reportId} />
+            </span>
           </div>
         </section>
       </>}
