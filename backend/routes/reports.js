@@ -13,7 +13,7 @@ const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff, parseGardenExecKids, norm } = require('../lib/budgetFile');
 const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
   SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer } = require('../lib/fillMinistry');
-const { salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor } = require('../lib/salaryCheck');
+const { isClubOperator, salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor } = require('../lib/salaryCheck');
 const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = require('../lib/applyAssignments');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
@@ -403,7 +403,7 @@ router.get('/:id/prep', ah(async (req, res) => {
   const rawRows = await db.prepare(
     `SELECT cr.id, cr.emp_id, cr.emp_name, cr.first_name, cr.last_name, cr.dept,
             cr.inst_symbol, cr.inst_name, cr.symbol_override, cr.staff_type, cr.role,
-            cr.gross, cr.cost, cr.hours, cr.gross_bump, cr.manual_rates, cf.payer
+            cr.gross, cr.cost, cr.hours, cr.gross_bump, cr.manual_rates, cr.role_text, cf.payer
      FROM cost_rows cr LEFT JOIN cost_files cf ON cf.id = cr.cost_file_id
      WHERE cr.report_id = ? ORDER BY cr.dept, cr.emp_name`
   ).all(id);
@@ -473,6 +473,8 @@ router.get('/:id/prep', ah(async (req, res) => {
       staffType: stVal,
       role: roleVal,
       saved: !!(r.symbol_override || r.staff_type || r.role),
+      // מפעיל/ת חוג — מוצג במסך אך לא נכתב לדוח הביצוע (רעות 5.10)
+      clubOperator: isClubOperator(r.role_text),
       gross: r.gross, cost: r.cost, hours: r.hours,
       hourlyGross: r.gross != null && r.hours ? r.gross / r.hours : null,
       hourlyCost: r.cost != null && r.hours ? r.cost / r.hours : null,
@@ -741,11 +743,11 @@ router.post('/:id/split-row', ah(async (req, res) => {
   for (let i = 1; i < parts.length; i++) {
     const ins = await db.prepare(
       `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept,
-         inst_symbol, inst_name, component_names, gross, cost, hours, staff_type, role, symbol_override)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         inst_symbol, inst_name, component_names, gross, cost, hours, staff_type, role, symbol_override, role_text)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(src.cost_file_id, src.client_id, id, src.emp_id, src.emp_name, src.first_name, src.last_name, src.dept,
       src.inst_symbol, src.inst_name, src.component_names || '[]', gross[i], cost[i], hours[i],
-      src.staff_type, src.role, String(parts[i].symbol));
+      src.staff_type, src.role, String(parts[i].symbol), src.role_text || null);
     createdIds.push(ins.lastInsertRowid);
   }
   await db.prepare('UPDATE cost_rows SET symbol_override = ?, gross = ?, cost = ?, hours = ? WHERE id = ?')
@@ -1351,10 +1353,11 @@ router.get('/:id/export', ah(async (req, res) => {
   const authority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
   const employer = (authority && authority.name) || (client && client.name) || '';
 
-  const rows = await db.prepare(
+  // מפעילי/ות חוג (לפי התפקיד בדוח השכר) אינם מדווחים בדוח הביצוע (רעות 5.10)
+  const rows = (await db.prepare(
     `SELECT cr.*, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id
      WHERE cr.report_id = ? ORDER BY COALESCE(cr.symbol_override, cr.inst_symbol, ''), cr.emp_name`
-  ).all(id);
+  ).all(id)).filter((r) => !isClubOperator(r.role_text));
   if (!rows.length) return res.status(422).json({ error: 'אין שורות שכר מנותבות לדוח זה.' });
 
   const { resolveSymbol } = await makeSymbolResolver(db, report, exMd, rows);

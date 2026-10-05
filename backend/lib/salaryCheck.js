@@ -75,6 +75,13 @@ function demoteExtraSchoolRoles(schoolRows, coordCap = COORD_HOURS_PER_DAY * 15)
   return demoted;
 }
 
+/* מפעיל/ת חוג (לפי עמודת התפקיד בדוח השכר) — אינם מדווחים בדוח הביצוע
+   (כלל רעות 5.10: "להוציא מכל הדוחות ביצוע את מי שרשום כמפעילת חוג") */
+function isClubOperator(roleText) {
+  const t = String(roleText || '');
+  return /מפעיל/.test(t) && /חוג/.test(t);
+}
+
 /* תפקיד כפי שמופיע בדוח השכר עצמו (עמודת "תפקיד") → איש צוות + תפקיד לפי רשימות המשרד */
 function staffFromRoleText(text) {
   const t = String(text || '');
@@ -189,4 +196,4 @@ async function salaryCheck(db, report) {
   };
 }
 
-module.exports = { salaryCheck, suggestRole, basketForStaff, staffFromRoleText, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor, isCoordType };
+module.exports = { isClubOperator, salaryCheck, suggestRole, basketForStaff, staffFromRoleText, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor, isCoordType };

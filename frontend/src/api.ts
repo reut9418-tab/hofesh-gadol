@@ -176,6 +176,7 @@ export const getReportBudget = (reportId: number) => api.get(`/reports/${reportI
 export type PrepRow = {
   rowId: number; empId: string; name: string | null; firstName: string | null; lastName: string | null;
   dept: string; symbol: string | null; staffType: string | null; role: string | null; saved: boolean;
+  clubOperator?: boolean; // מפעיל/ת חוג — לא נכתב לדוח הביצוע
   gross: number | null; cost: number | null; hours: number | null; hourlyGross: number | null; hourlyCost: number | null;
   manualRates?: { orig: { gross: number | null; cost: number | null; hours: number | null } } | null;
 };

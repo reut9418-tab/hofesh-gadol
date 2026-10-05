@@ -60,7 +60,8 @@ export default function PrepSection({ reportId }: { reportId: number }) {
   // כלל רעות 24.9: רכזת גן בגנים אינה צריכה שיוך לסמל — שלמה עם תפקיד בלבד
   const rowComplete = (a: Assignment) =>
     !!(a.staffType && a.role && (a.symbol || a.staffType === 'רכזת גן'));
-  const missing = (data?.rows || []).filter((r) => !rowComplete(assign[r.rowId] || { symbol: null, staffType: null, role: null })).length;
+  // מפעילי/ות חוג לא נכתבים לדוח הביצוע — אינם נספרים כחסרי שיוך
+  const missing = (data?.rows || []).filter((r) => !r.clubOperator && !rowComplete(assign[r.rowId] || { symbol: null, staffType: null, role: null })).length;
 
   if (!data || data.rows.length === 0) return null;
 
@@ -438,8 +439,14 @@ export default function PrepSection({ reportId }: { reportId: number }) {
               const complete = rowComplete(a);
               const instName = data.institutions.find((i) => i.symbol === a.symbol)?.name;
               return (
-                <tr key={r.rowId} style={{ borderTop: `1px solid ${T.line}`, background: complete ? T.greenBg + '44' : undefined }}>
-                  <td style={{ padding: '5px 8px', fontWeight: 600, whiteSpace: 'nowrap' }}>{r.name || `${r.firstName || ''} ${r.lastName || ''}`}</td>
+                <tr key={r.rowId} style={{ borderTop: `1px solid ${T.line}`, background: r.clubOperator ? T.paper : complete ? T.greenBg + '44' : undefined, opacity: r.clubOperator ? 0.6 : 1 }}>
+                  <td style={{ padding: '5px 8px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                    {r.name || `${r.firstName || ''} ${r.lastName || ''}`}
+                    {r.clubOperator && (
+                      <span title="לפי עמודת התפקיד בדוח השכר — לא נכתב לדוח הביצוע"
+                        style={{ display: 'block', fontSize: 10.5, fontWeight: 400, color: T.inkSoft }}>מפעיל/ת חוג — לא מדווח</span>
+                    )}
+                  </td>
                   {/* תיקון ת.ז לא תקינה (כלל 23.9): נערך → מעדכן את כל שורות העובד ונלמד ללקוח */}
                   {(() => {
                     const shownId = a.empId !== undefined && a.empId !== null ? a.empId : (r.empId || '');
