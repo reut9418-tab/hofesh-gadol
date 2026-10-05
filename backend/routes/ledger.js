@@ -28,6 +28,14 @@ async function saveAlias(db, clientId, framework, cardKey, basket) {
   ).run(clientId, aliasKey(framework, cardKey), basket == null ? 'none' : basket);
 }
 
+/* המשלמים שהוגדרו בקבצי העלות שנותבו לדוח */
+async function reportCostPayers(db, reportId) {
+  return (await db.prepare(
+    `SELECT DISTINCT cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id
+     WHERE cr.report_id = ? AND cf.payer IS NOT NULL AND cf.payer <> ''`
+  ).all(reportId)).map((r) => r.payer);
+}
+
 async function refreshLedgerFlag(db, reportId) {
   const c = Number((await db.prepare('SELECT COUNT(*) c FROM ledger_cards WHERE report_id = ? AND basket_type IS NOT NULL').get(reportId)).c);
   await db.prepare('UPDATE reports SET has_ledger = ? WHERE id = ?').run(c > 0 ? 1 : 0, reportId);
@@ -54,8 +62,12 @@ router.post('/reports/:id/ledger-file', upload.single('file'), ah(async (req, re
   }
 
   const aliases = await learnedAliases(db, report.client_id);
-  const fileId = (await db.prepare('INSERT INTO ledger_files (report_id, filename, card_count) VALUES (?, ?, ?)')
-    .run(id, originalName, parsed.cards.length)).lastInsertRowid;
+  // משלם ברירת מחדל: כשלדוחות העלות של הדוח משלם מוגדר אחד בלבד — הכרטסת
+  // משויכת אליו אוטומטית (אחרת נוצרת שורת "ללא משלם" בהשוואה; רעות 5.10)
+  const costPayers = await reportCostPayers(db, id);
+  const autoPayer = costPayers.length === 1 ? costPayers[0] : null;
+  const fileId = (await db.prepare('INSERT INTO ledger_files (report_id, filename, card_count, payer) VALUES (?, ?, ?, ?)')
+    .run(id, originalName, parsed.cards.length, autoPayer)).lastInsertRowid;
   for (const c of parsed.cards) {
     // עדיפות: מיפוי נלמד (גם "לא רלוונטי") ← מילות מפתח משם הכרטסת
     const learned = aliases[aliasKey(report.framework, c.key)];
@@ -80,9 +92,15 @@ router.get('/reports/:id/ledger', ah(async (req, res) => {
   const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(report.client_id);
   const files = await db.prepare('SELECT * FROM ledger_files WHERE report_id = ? ORDER BY id DESC').all(id);
   const cards = await db.prepare('SELECT * FROM ledger_cards WHERE report_id = ? ORDER BY net DESC').all(id);
+  // רשימת משלמים לבחירה בכרטסת — אותן מחרוזות כמו בקבצי העלות, כדי שההשוואה
+  // פר משלם תתאים (ההתאמה היא לפי שם מדויק) + שם הרשות והלקוח
+  const costPayers = await reportCostPayers(db, id);
+  const authority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  const knownPayers = [...new Set([...costPayers, authority && authority.name, client && client.name].filter(Boolean))];
   res.json({
     files,
     cards,
+    knownPayers, costPayers,
     basketOptions: basketOptionsFor(report.framework),
     reconcile: await ledgerReconcile(db, report, client),
     payerMatrix: await payerBreakdown(db, report, client),

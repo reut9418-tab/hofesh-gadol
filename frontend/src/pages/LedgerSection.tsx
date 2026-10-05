@@ -205,21 +205,38 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
       {/* קבצי הכרטסות — כולל מחיקה של כרטסת שהועלתה בטעות (מוחקת את כל כרטיסיה) */}
       {(data?.files.length || 0) > 0 && (
         <div style={{ display: 'grid', gap: 6, marginBottom: 12 }}>
-          {data!.files.map((f) => (
-            <div key={f.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, background: T.paper, borderRadius: 8, border: `1px solid ${T.line}`, padding: '7px 12px' }}>
+          {/* רשימת המשלמים לבחירה — אותם שמות כמו בדוחות העלות (ההשוואה לפי שם מדויק) */}
+          <datalist id={`ledger-payers-${reportId}`}>
+            {(data!.knownPayers || []).map((p) => <option key={p} value={p} />)}
+          </datalist>
+          {data!.files.map((f) => {
+            // כרטסת בלי משלם כשבדוחות העלות מוגדר משלם — תופיע כ"ללא משלם" בהשוואה
+            const needsPayer = !f.payer && (data!.costPayers || []).length > 0;
+            return (
+            <div key={f.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, background: needsPayer ? T.amberBg : T.paper, borderRadius: 8, border: `1px solid ${needsPayer ? T.amber : T.line}`, padding: '7px 12px' }}>
               <span style={{ fontWeight: 600 }}>{f.filename}</span>
               <span style={{ color: T.inkSoft, fontSize: 11 }}>{f.card_count} כרטיסים</span>
-              <input defaultValue={f.payer || ''} placeholder='משלם (מתנ"ס/רשות)'
-                title="בספרי מי מתנהלת הכרטסת — מפריד את ההתאמות וההשוואה בין המשלמים"
-                onBlur={async (e) => { const v = e.target.value.trim(); if (v !== (f.payer || '')) { await setLedgerFilePayer(f.id, v || null); await load(); onChange(); } }}
-                style={{ padding: '3px 8px', fontSize: 11, width: 130, borderRadius: 6, fontFamily: 'inherit', border: `1px solid ${f.payer ? T.green : T.line}` }} />
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 600 }}>
+                בספרי:
+                <input key={f.payer || ''} defaultValue={f.payer || ''} list={`ledger-payers-${reportId}`} placeholder='בחירת משלם (מתנ"ס/רשות/לקוח)'
+                  title="בספרי מי מתנהלת הכרטסת — אותו שם כמו המשלם בדוח העלות, כדי שהכרטסת תשויך לשורה הנכונה בהשוואה"
+                  onChange={async (e) => {
+                    // בחירה מהרשימה — נשמרת מיד; הקלדה חופשית — בעזיבת השדה
+                    const v = e.target.value.trim();
+                    if ((data!.knownPayers || []).includes(v) && v !== (f.payer || '')) { await setLedgerFilePayer(f.id, v); await load(); onChange(); }
+                  }}
+                  onBlur={async (e) => { const v = e.target.value.trim(); if (v !== (f.payer || '')) { await setLedgerFilePayer(f.id, v || null); await load(); onChange(); } }}
+                  style={{ padding: '4px 8px', fontSize: 11.5, width: 190, borderRadius: 6, fontFamily: 'inherit', border: `1px solid ${f.payer ? T.green : needsPayer ? T.amber : T.line}` }} />
+              </label>
+              {needsPayer && <span style={{ fontSize: 11, color: T.amber, fontWeight: 600 }}>⚠ לא הוגדר משלם — הכרטסת מוצגת כ"ללא משלם"</span>}
               <button onClick={() => removeFile(f.id, f.filename)}
                 title="מחיקת הכרטסת וכל הכרטיסים שנקלטו ממנה — לכרטסת שהועלתה בטעות או שאינה שייכת לפרויקט"
                 style={{ ...btn('ghost'), marginInlineStart: 'auto', color: T.red, borderColor: T.red, fontSize: 11.5 }}>
                 🗑 מחיקת כרטסת
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

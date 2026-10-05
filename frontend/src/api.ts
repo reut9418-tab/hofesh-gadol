@@ -237,6 +237,8 @@ export type PayerRow = {
 };
 export type LedgerData = {
   files: { id: number; filename: string; card_count: number; payer?: string | null; created_at: string }[];
+  knownPayers?: string[]; // לבחירת משלם לכרטסת — כמו בקבצי העלות
+  costPayers?: string[];  // המשלמים שהוגדרו בדוחות העלות של הדוח
   cards: LedgerCard[];
   basketOptions: { value: string; label: string }[];
   hasVat: boolean;
