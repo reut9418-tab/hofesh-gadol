@@ -391,13 +391,19 @@ function clampSheetRef(ws) {
   if (!ws['!ref']) return ws;
   const range = XLSX.utils.decode_range(ws['!ref']);
   if (range.e.r < 10000) return ws; // טווח סביר — אין מה לכווץ
-  let maxRow = 0, maxCol = 0;
-  for (const k of Object.keys(ws)) {
-    if (k[0] === '!') continue;
-    const { r, c } = XLSX.utils.decode_cell(k);
-    if (r > maxRow) maxRow = r;
-    if (c > maxCol) maxCol = c;
+  // תא בודד רחוק מהנתונים (סכום שנכתב בשורה האחרונה של הגיליון — לביא
+  // 6.10: S1048358) אינו חלק מהטבלה: הטווח נעצר בפער הריק הגדול הראשון,
+  // אחרת sheet_to_json עדיין מייצר מיליון שורות (103 שניות — מעבר למגבלת
+  // הזמן של Cloudflare, וההעלאה נכשלת)
+  const cells = Object.keys(ws).filter((k) => k[0] !== '!').map((k) => XLSX.utils.decode_cell(k));
+  const rowsWithData = [...new Set(cells.map((x) => x.r))].sort((a, b) => a - b);
+  let maxRow = 0;
+  for (const r of rowsWithData) {
+    if (r - maxRow > 2000) break;
+    maxRow = r;
   }
+  let maxCol = 0;
+  for (const { r, c } of cells) if (r <= maxRow && c > maxCol) maxCol = c;
   ws['!ref'] = XLSX.utils.encode_range({ s: { r: range.s.r, c: range.s.c }, e: { r: maxRow, c: Math.max(maxCol, range.e.c > 200 ? maxCol : range.e.c) } });
   return ws;
 }
