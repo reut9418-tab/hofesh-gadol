@@ -21,7 +21,7 @@ const { recommendations } = require('../lib/recommend');
 const { matchDeptsToInstitutions, cardSymbolResolver } = require('../lib/nameMatch');
 const { stage1Data, renderStage1Html, invalidateFileMeta, fileMeta: warmLetterMeta } = require('../lib/stage1');
 const { parseXlsxOffloaded } = require('../lib/xlsxOffload');
-const { loadFileMeta, saveFileMeta, clearFileMeta } = require('../lib/fileMetaStore');
+const { loadFileMeta, saveFileMeta, clearFileMeta, fileMetaFromWorkbook } = require('../lib/fileMetaStore');
 
 /* שם הלקוח (והרשות, כשהיא שונה ממנו) לשמות קבצים שיורדים — ברשות עם כמה
    מפעילים (קריית אונו) שם הרשות לבדו לא מבדיל בין הקבצים */
@@ -225,8 +225,13 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
   if (!req.file) return res.status(400).json({ error: 'לא צורף קובץ' });
 
-  let parsed;
-  try { parsed = parseBudgetFile(req.file.buffer, { program: report.program, extensionDays: report.extension_days }); }
+  // פענוח אחד של הקובץ (2-3MB) משרת את כל הקליטה — קודם הוא פוענח 3-6 פעמים
+  // (תקציב, רכזות גנים, ימי פעילות, תעריף, שיוכי עובדים, סוגי צוות, חימום)
+  let parsed, wb;
+  try {
+    wb = require('xlsx').read(req.file.buffer, { type: 'buffer' });
+    parsed = parseBudgetFile(wb, { program: report.program, extensionDays: report.extension_days });
+  }
   catch { return res.status(422).json({ error: 'לא הצלחתי לקרוא את קובץ דוח הביצוע.' }); }
   if (parsed.error) return res.status(422).json({ error: parsed.error });
   if (!parsed.institutions.length) {
@@ -244,13 +249,12 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
     const inst0 = parsed.institutions[0];
     if (inst0 && inst0.coordRatePerGarden > 0) {
       try {
-        const cg = extractCoordinatorGardens(req.file.buffer);
+        const cg = extractCoordinatorGardens(wb);
         if (cg.length) {
           // בהרחבה גן שעבד 6 מתוך 7 ימים נספר יחסית (6/7) — כמו בקובץ המשרד
           let eligible = cg.length;
           try {
-            const XLSX2 = require('xlsx');
-            const exec = parseGardenExecKids(XLSX2.read(req.file.buffer, { type: 'buffer' }));
+            const exec = parseGardenExecKids(wb);
             if (exec && exec.daysBySymbol) eligible = cg.reduce((s, sym) => s + (exec.daysBySymbol[String(sym)] ?? 1), 0);
           } catch { /* בלי יחס ימים — ספירה מלאה */ }
           const coord = Math.round(eligible * inst0.coordRatePerGarden * 100) / 100;
@@ -282,12 +286,10 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   }
 
   // החלפת המוסדות של הדוח (מוחקים סלים/תנועות ישנים תחילה)
-  const oldInst = (await db.prepare('SELECT id FROM institutions WHERE report_id = ?').all(id)).map((r) => r.id);
-  for (const iid of oldInst) {
-    const bids = (await db.prepare('SELECT id FROM baskets WHERE institution_id = ?').all(iid)).map((b) => b.id);
-    for (const bid of bids) await db.prepare('DELETE FROM transactions WHERE basket_id = ?').run(bid);
-    await db.prepare('DELETE FROM baskets WHERE institution_id = ?').run(iid);
-  }
+  // (שאילתה אחת לכל טבלה — לא סבב מול המסד לכל מוסד ולכל סל)
+  await db.prepare(`DELETE FROM transactions WHERE basket_id IN
+    (SELECT b.id FROM baskets b JOIN institutions i ON i.id = b.institution_id WHERE i.report_id = ?)`).run(id);
+  await db.prepare('DELETE FROM baskets WHERE institution_id IN (SELECT id FROM institutions WHERE report_id = ?)').run(id);
   await db.prepare('DELETE FROM institutions WHERE report_id = ?').run(id);
 
   for (const inst of parsed.institutions) {
@@ -306,9 +308,9 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
       st.coordReported || 0, st.depReported || 0, st.coordBudget || 0, st.depBudget || 0,
       inst.paymentTotal ?? null, inst.paymentAides ?? null, inst.paymentNote ?? null,
       salaryActualOf(inst))).lastInsertRowid;
-    for (const [type, amount] of Object.entries(inst.baskets || {})) {
-      if (amount > 0) await db.prepare('INSERT INTO baskets (institution_id, basket_type, budget_amount) VALUES (?, ?, ?)').run(iid, type, amount);
-    }
+    // סלי המוסד במקביל (סבב אחד מול המסד במקום סבב לכל סל)
+    await Promise.all(Object.entries(inst.baskets || {}).filter(([, amount]) => amount > 0).map(([type, amount]) =>
+      db.prepare('INSERT INTO baskets (institution_id, basket_type, budget_amount) VALUES (?, ?, ?)').run(iid, type, amount)));
   }
 
   // שומרים את קובץ המשרד בדיסק — ממלאים אותו בחזרה בייצוא (§9);
@@ -322,7 +324,7 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
 
   // דוח הביצוע מספק את כמות המשתתפים; התעריף לילד מחולץ ללשונית ההכנסות
-  const tariff = extractTariff(req.file.buffer) || 0;
+  const tariff = extractTariff(wb) || 0;
   await db.prepare('UPDATE reports SET has_participants = 1, budget_file_name = ?, budget_file_path = ?, parent_tariff = ? WHERE id = ?')
     .run(originalName, savedPath, tariff, id);
   // עותק קבוע במסד — שורד את איפוס הדיסק של הענן בכל פריסה
@@ -332,11 +334,17 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   invalidateFileMeta(id); // גם המטמון של מחולל המכתב
   require('../lib/reconcile').invalidateExpenseCmp(id);
   await clearFileMeta(db, id); // וגם השמורות במסד (גם כשהשם זהה — דוח ביצוע סופי)
+  // ונשמרות מחדש מהחוברת שכבר פוענחה — בלי פענוח נוסף בחימום/במכתב
+  try {
+    const meta = fileMetaFromWorkbook(wb, report.framework);
+    await saveFileMeta(db, id, 'ministry', originalName, meta.ministry);
+    await saveFileMeta(db, id, 'letter', originalName, meta.letter);
+  } catch { /* ייבנו בפתיחה הראשונה */ }
 
   // החוק של רעות (16.9): שיוכי סמל/תפקיד שהלקוח מילא בלשונית כח האדם
   // של הקובץ מוחלים מיד על שורות הדוח — בלי עבודה חוזרת ובלי לבקש
   let assignApplied = 0;
-  try { assignApplied = await applyFileAssignments(db, id, req.file.buffer); } catch { /* אין לשונית/שיוכים */ }
+  try { assignApplied = await applyFileAssignments(db, id, wb); } catch { /* אין לשונית/שיוכים */ }
 
   const totalBudget = parsed.institutions.reduce((s, i) => s + (i.total || 0), 0);
   const fallbackInst = parsed.institutions.find((i) => i.ratesFallback);
@@ -368,7 +376,7 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
       const fresh = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
       // בזה אחר זה (לא במקביל — כל פענוח ~250MB): נגזרות מסך ההכנה, ואז
       // של המכתבים — שתיהן נשמרות במסד ושורדות אתחול
-      if (fresh) { await ministryData(db, fresh); await warmLetterMeta(db, fresh); }
+      if (fresh) { await ministryData(db, fresh); await warmLetterMeta(db, fresh); } // מהמסד — בלי פענוח
     } catch { /* חימום בלבד — כישלון לא מפריע לעבודה */ }
   });
 }));

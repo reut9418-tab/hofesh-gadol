@@ -663,8 +663,11 @@ function parseRegistrationCounts(wb) {
 
 /* מפענח קובץ דוח ביצוע → רשימת מוסדות עם תקציב מחושב לכל סל.
    opts.program ('base15'/'extension') משמש את תעריפי הגיבוי של בתי הספר. */
+// buf — Buffer, או חוברת שכבר פוענחה (פענוח אחד משרת את כל הקליטה)
+const asWorkbook = (bufOrWb, opts) => (bufOrWb && bufOrWb.SheetNames ? bufOrWb : XLSX.read(bufOrWb, { type: 'buffer', ...opts }));
+
 function parseBudgetFile(buf, opts = {}) {
-  const wb = XLSX.read(buf, { type: 'buffer' });
+  const wb = asWorkbook(buf);
   const sheetName = findBudgetSheet(wb);
   if (!sheetName) return { error: 'לא נמצא גיליון "תקצוב לפי מוסד" בקובץ — ודאי שזה קובץ דוח הביצוע של המשרד.' };
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: null });
@@ -935,9 +938,9 @@ function parseBudgetFile(buf, opts = {}) {
 
 /* תעריף לילד חלק ההורים — מופיע בכותרות של כמה לשוניות בקובץ המשרד */
 function extractTariff(buf) {
-  const wb = XLSX.read(buf, { type: 'buffer', sheetRows: 12 });
+  const wb = asWorkbook(buf, { sheetRows: 12 });
   for (const n of wb.SheetNames) {
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: null });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: null }).slice(0, 12);
     for (const row of rows) {
       const labels = (row || []).map(norm);
       const k = labels.findIndex((x) => x.includes('תעריף לילד'));

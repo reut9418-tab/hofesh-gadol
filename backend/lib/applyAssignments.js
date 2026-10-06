@@ -11,9 +11,13 @@ const { extractWorkerAssignments, extractSchoolStaffTypes, clampStaffForFramewor
 
 const digits = (v) => String(v || '').replace(/\D/g, '').replace(/^0+/, '');
 
+// buf — Buffer, או חוברת שכבר פוענחה (בקליטת קובץ — בלי פענוח נוסף)
 async function applyFileAssignments(db, reportId, buf) {
   let ws;
-  try { ws = extractWorkerAssignments(XLSX.read(buf, { type: 'buffer' })); } catch { return 0; }
+  try {
+    if (!(buf && buf.SheetNames)) buf = XLSX.read(buf, { type: 'buffer' });
+    ws = extractWorkerAssignments(buf);
+  } catch { return 0; }
   if (!Object.keys(ws).length) return 0;
   // כלל רעות 23.9: תפקיד מלשונית כח האדם של הקובץ מוצמד לרשימת תבנית
   // הפרויקט — תפקיד זר (רכז בתי"ס בגנים) לא נספר בקובץ לסל שלו

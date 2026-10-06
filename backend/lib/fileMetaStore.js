@@ -24,3 +24,34 @@ async function clearFileMeta(db, reportId) {
 }
 
 module.exports = { loadFileMeta, saveFileMeta, clearFileMeta };
+
+/* הנגזרות לשמירה מתוך חוברת שכבר פוענחה — בקליטת קובץ, כדי שמסך ההכנה
+   והמכתבים לא יפענחו את הקובץ שוב (אותם שדות כמו ב-xlsxWorker.js) */
+function fileMetaFromWorkbook(wb, framework) {
+  const {
+    extractInstitutions, extractSchoolStaffTypes,
+    extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments,
+  } = require('./fillMinistry');
+  const { parseGardenExecKids, parseDeputyEntitlement } = require('./budgetFile');
+  const safe = (fn, fallback) => { try { return fn(); } catch { return fallback; } };
+  const gardens = framework === 'gardens';
+  const insts = safe(() => extractInstitutions(wb), []);
+  const workerSyms = safe(() => extractWorkerAssignments(wb), {});
+  return {
+    ministry: {
+      institutions: insts,
+      schoolTypes: !gardens ? safe(() => extractSchoolStaffTypes(wb), null) : null,
+      coordGardens: gardens ? safe(() => extractCoordinatorGardens(wb), []) : [],
+      execGardens: gardens ? safe(() => extractExecGardens(wb), []) : [],
+      workerSyms,
+    },
+    letter: {
+      insts,
+      depEntitled: !gardens ? safe(() => parseDeputyEntitlement(wb), {}) : {},
+      gardensExec: gardens ? safe(() => parseGardenExecKids(wb), null) : null,
+      workerSyms,
+    },
+  };
+}
+
+module.exports.fileMetaFromWorkbook = fileMetaFromWorkbook;
