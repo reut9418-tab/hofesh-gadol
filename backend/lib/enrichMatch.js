@@ -4,7 +4,7 @@
    בי"ס משויכת אליו, וכרטסת כללית מפוצלת יחסית לכמות הילדים (או לתקציב
    כשאין ילדים). לכל כרטסת: מספר ושם בכותרת, טבלת סמל/בי"ס/סכום, וסה"כ
    שחייב להיות שווה לסך הכרטסת. */
-const { matchDeptsToInstitutions } = require('./nameMatch');
+const { cardSymbolResolver } = require('./nameMatch');
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const fmt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
@@ -20,9 +20,8 @@ async function enrichMatchData(db, report, client, authority) {
 
   const totalChildren = insts.reduce((s, i) => s + (i.children_count || 0), 0);
   const totalBudget = insts.reduce((s, i) => s + (Number(i.budget_total) || 0), 0);
-  const nameToSymbol = report.framework !== 'gardens' && insts.length
-    ? matchDeptsToInstitutions(insts, [...new Set(cards.map((c) => c.card_name))])
-    : {};
+  // שיוך ידני (נבחר במסך שלב 2) קודם לשיוך לפי השם
+  const symOf = report.framework !== 'gardens' && insts.length ? cardSymbolResolver(insts, cards) : () => null;
 
   const perCard = cards.map((c) => {
     const gross = r2(c.net * vat);
@@ -33,12 +32,12 @@ async function enrichMatchData(db, report, client, authority) {
         rows: [{ symbol: null, name: 'כל הגנים (במרוכז)', amount: gross }],
       };
     }
-    const sym = nameToSymbol[c.card_name];
+    const sym = symOf(c);
     if (sym) {
       const inst = insts.find((i) => String(i.symbol) === String(sym));
       return {
         cardKey: c.card_key, cardName: c.card_name, net: r2(c.net), gross,
-        method: 'name',
+        method: c.symbol_override ? 'manual' : 'name',
         rows: [{ symbol: sym, name: (inst && inst.name) || '', amount: gross }],
       };
     }

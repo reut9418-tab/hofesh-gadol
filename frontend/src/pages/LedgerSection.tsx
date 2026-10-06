@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { T } from '../theme';
 import { btn, card } from '../ui';
-import { getReportLedger, uploadLedgerFile, setLedgerCardBasket, deleteLedgerFile, setLedgerFilePayer, enrichMatchDocUrl, downloadEnrichMatchXlsx, LedgerData } from '../api';
+import { getReportLedger, uploadLedgerFile, setLedgerCardBasket, setLedgerCardSymbol, deleteLedgerFile, setLedgerFilePayer, enrichMatchDocUrl, downloadEnrichMatchXlsx, LedgerData } from '../api';
 
 const fmt = (n: number | null | undefined, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -240,8 +240,22 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
         </div>
       )}
 
-      {(data?.cards.length || 0) > 0 && (
+      {(data?.cards.length || 0) > 0 && (() => {
+        // בתי"ס: כרטיסי הוצאה (העשרה/ארוחות בוקר/מלגות...) משויכים לבי"ס — לפי
+        // השם, או ידנית כשהשם לא תואם; כרטיס בלי שיוך מתחלק בין כל בתי הספר
+        const insts = data!.institutions || [];
+        const EXPENSE_BASKETS = ['enrichment', 'breakfast', 'scholarships', 'trip', 'ai'];
+        const showSchool = insts.length > 0;
+        const unmatched = showSchool ? data!.cards.filter((c) => EXPENSE_BASKETS.includes(c.basket_type || '') && (c.net || 0) > 0 && !c.symbol) : [];
+        const instName = (s?: string | null) => insts.find((i) => String(i.symbol) === String(s))?.name || s || '';
+        return (
         <div style={{ overflowX: 'auto' }}>
+          {unmatched.length > 0 && (
+            <div style={{ fontSize: 12.5, color: T.amber, background: T.amberBg, borderRadius: 8, padding: '7px 11px', marginBottom: 8 }}>
+              ⚠ {unmatched.length} כרטיסי הוצאה לא שויכו לבית ספר לפי השם — הם מתחלקים בין כל בתי הספר לפי כמות הילדים.
+              אם הכרטיס שייך לבי"ס מסוים, בחרי אותו בעמודה "בית ספר" (הבחירה נלמדת לכרטסות הבאות).
+            </div>
+          )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ textAlign: 'right', color: T.inkSoft, fontSize: 11 }}>
@@ -249,6 +263,7 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
                 <th style={{ padding: '6px 8px', fontWeight: 600 }}>מפתח חשבון</th>
                 <th style={{ padding: '6px 8px', fontWeight: 600 }}>נטו (חובה−זכות)</th>
                 <th style={{ padding: '6px 8px', fontWeight: 600, width: 190 }}>שיוך לסל</th>
+                {showSchool && <th style={{ padding: '6px 8px', fontWeight: 600, width: 210 }}>בית ספר</th>}
               </tr>
             </thead>
             <tbody>
@@ -266,12 +281,29 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
                       {data!.basketOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                   </td>
+                  {showSchool && (
+                    <td style={{ padding: '6px 8px' }}>
+                      {EXPENSE_BASKETS.includes(c.basket_type || '') ? (
+                        <select
+                          value={c.symbol_override === 'general' ? 'general' : c.symbol_override ? String(c.symbol_override) : ''}
+                          onChange={async (e) => { await setLedgerCardSymbol(c.id, e.target.value || null); await load(); onChange(); }}
+                          title={c.symbol ? `משויך ל: ${instName(c.symbol)}` : 'לא משויך — מתחלק בין כל בתי הספר'}
+                          style={{ padding: '4px 6px', fontSize: 11.5, width: '100%', borderRadius: 6, fontFamily: 'inherit',
+                            border: `1px solid ${c.symbol ? T.green : T.amber}`, background: c.symbol ? undefined : T.amberBg }}>
+                          <option value="">{c.autoSymbol ? `לפי השם: ${instName(c.autoSymbol)}` : '— כללי: מתחלק בין כולם —'}</option>
+                          {insts.map((i) => <option key={i.symbol} value={String(i.symbol)}>{i.name} ({i.symbol})</option>)}
+                          <option value="general">כללי — לחלק בין כל בתי הספר</option>
+                        </select>
+                      ) : <span style={{ color: T.inkSoft }}>—</span>}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      )}
+        );
+      })()}
 
     </section>
   );

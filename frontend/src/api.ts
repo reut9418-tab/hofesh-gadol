@@ -237,6 +237,9 @@ export const downloadExport = async (reportId: number) => {
 export type LedgerCard = {
   id: number; ledger_file_id: number; card_key: string; card_name: string;
   debit: number; credit: number; net: number; basket_type: string | null;
+  // בתי"ס: שיוך הכרטיס לבי"ס — symbol_override ידני ('general' = כללי),
+  // autoSymbol לפי השם, symbol = השיוך בפועל (null = מתחלק בין כל בתי הספר)
+  symbol_override?: string | null; autoSymbol?: string | null; symbol?: string | null;
 };
 export type LedgerCheck = { id: string; level: 'ok' | 'warn' | 'err'; text: string; a: number; b: number; diff: number };
 export type PayerRow = {
@@ -248,6 +251,7 @@ export type LedgerData = {
   knownPayers?: string[]; // לבחירת משלם לכרטסת — כמו בקבצי העלות
   costPayers?: string[];  // המשלמים שהוגדרו בדוחות העלות של הדוח
   cards: LedgerCard[];
+  institutions?: { symbol: string; name: string }[]; // בתי"ס — לבחירת שיוך כרטיס
   basketOptions: { value: string; label: string }[];
   hasVat: boolean;
   reconcile: {
@@ -274,6 +278,9 @@ export const getReportLedger = (reportId: number): Promise<LedgerData> =>
 export const setLedgerCardBasket = (cardId: number, basket_type: string | null) =>
   api.put(`/ledger-cards/${cardId}`, { basket_type }).then((r) => r.data);
 export const deleteLedgerFile = (fileId: number) => api.delete(`/ledger-files/${fileId}`).then((r) => r.data);
+// שיוך כרטיס לבי"ס: סמל / 'general' (כללי) / null (חזרה לאוטומטי לפי השם)
+export const setLedgerCardSymbol = (cardId: number, symbol: string | null) =>
+  api.put(`/ledger-cards/${cardId}/symbol`, { symbol }).then((r) => r.data);
 
 /* ---------- מסמך שלב 1 + החלטת לקוח על ניוד ---------- */
 export const stage1DocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/stage1-doc`;

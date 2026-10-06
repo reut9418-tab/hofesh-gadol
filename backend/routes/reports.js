@@ -18,7 +18,7 @@ const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = 
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
 const { recommendations } = require('../lib/recommend');
-const { matchDeptsToInstitutions } = require('../lib/nameMatch');
+const { matchDeptsToInstitutions, cardSymbolResolver } = require('../lib/nameMatch');
 const { stage1Data, renderStage1Html, invalidateFileMeta } = require('../lib/stage1');
 const { parseXlsxOffloaded } = require('../lib/xlsxOffload');
 
@@ -1004,7 +1004,8 @@ async function buildExpenseFill(db, report, client) {
   const insts = await db.prepare('SELECT symbol, name, children_count FROM institutions WHERE report_id = ?').all(report.id);
   if (!insts.length) return null;
   const totalChildren = insts.reduce((s, i) => s + (i.children_count || 0), 0);
-  const nameToSymbol = matchDeptsToInstitutions(insts, [...new Set(cards.map((c) => c.card_name))]);
+  // שיוך ידני של כרטיס לבי"ס (נבחר במסך שלב 2, נלמד ללקוח) קודם לשיוך לפי השם
+  const symOfCard = cardSymbolResolver(insts, cards);
 
   const rows = [];
   // ניהול ותפעול פר בי"ס — לפי תקציב סל הניהול של המוסד (לא לפי כרטסת)
@@ -1015,7 +1016,7 @@ async function buildExpenseFill(db, report, client) {
   cards.forEach((c) => {
     if (c.basket_type === 'management') return; // טופל מהתקציב למעלה
     const label = EXPENSE_HE[c.basket_type];
-    const sym = nameToSymbol[c.card_name];
+    const sym = symOfCard(c);
     if (sym) {
       rows.push([sym, label, r2(c.net), c.card_key, OPERATION_SOURCE]);
     } else if (totalChildren > 0) {

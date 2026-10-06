@@ -11,7 +11,9 @@ const STOP = new Set([
   'חינוך', 'משרד', 'החינוך', 'הרחבה', 'יום', 'חופש', 'גדול', 'אורות', 'חיים',
 ]);
 
-const tokenize = (s) => norm(s).split(/[^א-תa-z0-9"']+/i).map((t) => t.replace(/["']/g, '')).filter((t) => t.length >= 2);
+// סובלנות לכתיב: ט↔ת ("אורתודוקסי" בכרטסת מול "אורטודוקסי" בקובץ המשרד — רמלה 6.10)
+const fold = (t) => t.replace(/ט/g, 'ת');
+const tokenize = (s) => norm(s).split(/[^א-תa-z0-9"']+/i).map((t) => fold(t.replace(/["']/g, ''))).filter((t) => t.length >= 2);
 
 /* טוקנים מזהים של כל מוסד: מילות השם, בלי גנריות ובלי מילים שמופיעות
    בהרבה מוסדות (למשל שם העיר שמופיע בכולם). */
@@ -51,4 +53,16 @@ function matchDeptsToInstitutions(institutions, depts) {
   return out;
 }
 
-module.exports = { matchDeptsToInstitutions, tokenize };
+/* שיוך כרטיסי כרטסת למוסד: שיוך ידני שנבחר במסך (symbol_override, נלמד ללקוח)
+   קודם לשיוך לפי השם. מחזיר card => symbol|null */
+function cardSymbolResolver(institutions, cards) {
+  const byName = matchDeptsToInstitutions(institutions, [...new Set(cards.map((c) => c.card_name))]);
+  const valid = new Set(institutions.map((i) => String(i.symbol)));
+  return (c) => {
+    if (c.symbol_override === 'general') return null; // נבחר במפורש "כללי" — פיצול יחסי
+    if (c.symbol_override && valid.has(String(c.symbol_override))) return String(c.symbol_override);
+    return byName[c.card_name] || null;
+  };
+}
+
+module.exports = { matchDeptsToInstitutions, cardSymbolResolver, tokenize };

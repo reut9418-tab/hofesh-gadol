@@ -6,7 +6,7 @@
 const { costDataForReport } = require('./reportCosts');
 const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles, coordHoursCapFor, isCoordType, notClubSql } = require('./salaryCheck');
 const { recommendations } = require('./recommend');
-const { matchDeptsToInstitutions } = require('./nameMatch');
+const { matchDeptsToInstitutions, cardSymbolResolver } = require('./nameMatch');
 const { reportLabel } = require('./domain');
 const { recognizedRowCost, effectiveGross, COST_MARKUP_LIMIT } = require('./ingest');
 const { authorityEstimate } = require('./authorityEstimate');
@@ -185,11 +185,11 @@ async function stage1Data(db, report, client, authority) {
       "SELECT * FROM ledger_cards WHERE report_id = ? AND basket_type IN ('trip','ai')"
     ).all(report.id)).filter((c) => (c.net || 0) > 0);
     if (extraCards.length) {
-      const cardSyms = matchDeptsToInstitutions(insts, [...new Set(extraCards.map((c) => c.card_name))]);
+      const symOfCard = cardSymbolResolver(insts, extraCards); // ידני קודם לשם
       const totKids = insts.reduce((s, i) => s + (i.children_count || 0), 0);
       for (const c of extraCards) {
         const m = extraAlloc[c.basket_type];
-        const sym = cardSyms[c.card_name];
+        const sym = symOfCard(c);
         if (sym) m[String(sym)] = (m[String(sym)] || 0) + c.net;
         else if (totKids > 0) insts.forEach((i) => {
           m[String(i.symbol)] = (m[String(i.symbol)] || 0) + c.net * ((i.children_count || 0) / totKids);

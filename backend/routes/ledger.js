@@ -20,6 +20,21 @@ async function learnedAliases(db, clientId) {
     .all(clientId)).forEach((r) => { m[r.map_key] = r.map_value; });
   return m;
 }
+/* שיוך נלמד של כרטיס לבי"ס (מפתח חשבון → סמל), פר לקוח ומסגרת */
+async function learnedCardSymbols(db, clientId) {
+  const m = {};
+  (await db.prepare("SELECT map_key, map_value FROM client_mappings WHERE client_id = ? AND mapping_type = 'ledger_card_symbol'")
+    .all(clientId)).forEach((r) => { m[r.map_key] = r.map_value; });
+  return m;
+}
+async function saveCardSymbol(db, clientId, framework, cardKey, symbol) {
+  await db.prepare(
+    `INSERT INTO client_mappings (client_id, mapping_type, map_key, map_value)
+     VALUES (?, 'ledger_card_symbol', ?, ?)
+     ON CONFLICT(client_id, mapping_type, map_key) DO UPDATE SET map_value = excluded.map_value`
+  ).run(clientId, aliasKey(framework, cardKey), symbol == null ? 'none' : String(symbol));
+}
+
 async function saveAlias(db, clientId, framework, cardKey, basket) {
   await db.prepare(
     `INSERT INTO client_mappings (client_id, mapping_type, map_key, map_value)
@@ -62,6 +77,7 @@ router.post('/reports/:id/ledger-file', upload.single('file'), ah(async (req, re
   }
 
   const aliases = await learnedAliases(db, report.client_id);
+  const cardSymbols = await learnedCardSymbols(db, report.client_id);
   // משלם ברירת מחדל: כשלדוחות העלות של הדוח משלם מוגדר אחד בלבד — הכרטסת
   // משויכת אליו אוטומטית (אחרת נוצרת שורת "ללא משלם" בהשוואה; רעות 5.10)
   const costPayers = await reportCostPayers(db, id);
@@ -75,9 +91,12 @@ router.post('/reports/:id/ledger-file', upload.single('file'), ah(async (req, re
     // סל שאינו ברשימת הפרויקט (למשל 'deputy' ממילת המפתח "סגן" במכינות) —
     // נשאר לא-משויך במקום ערך שהמסך לא מציג
     if (basket && !basketOptionsFor(report.framework).some((o) => o.value === basket)) basket = null;
+    // שיוך לבי"ס שנבחר בעבר לאותו כרטיס (נלמד) — 'none' = כללי (פיצול יחסי)
+    const ls = cardSymbols[aliasKey(report.framework, c.key)];
+    const symbolOverride = ls ? (ls === 'none' ? 'general' : ls) : null;
     await db.prepare(
-      'INSERT INTO ledger_cards (ledger_file_id, report_id, card_key, card_name, debit, credit, net, basket_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(fileId, id, c.key, c.name, c.debit, c.credit, c.net, basket);
+      'INSERT INTO ledger_cards (ledger_file_id, report_id, card_key, card_name, debit, credit, net, basket_type, symbol_override) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(fileId, id, c.key, c.name, c.debit, c.credit, c.net, basket, symbolOverride);
   }
   await refreshLedgerFlag(db, id);
   res.status(201).json({ ok: true, fileId, cards: parsed.cards.length });
@@ -97,9 +116,22 @@ router.get('/reports/:id/ledger', ah(async (req, res) => {
   const costPayers = await reportCostPayers(db, id);
   const authority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
   const knownPayers = [...new Set([...costPayers, authority && authority.name, client && client.name].filter(Boolean))];
+  // בתי"ס: לכל כרטיס הוצאה — לאיזה בי"ס הוא משויך (ידני / לפי השם / כללי)
+  let institutions = [];
+  let cardsOut = cards;
+  if (report.framework !== 'gardens') {
+    institutions = await db.prepare('SELECT symbol, name FROM institutions WHERE report_id = ? ORDER BY name').all(id);
+    if (institutions.length) {
+      const { cardSymbolResolver, matchDeptsToInstitutions } = require('../lib/nameMatch');
+      const byName = matchDeptsToInstitutions(institutions, [...new Set(cards.map((c) => c.card_name))]);
+      const resolve = cardSymbolResolver(institutions, cards);
+      cardsOut = cards.map((c) => ({ ...c, autoSymbol: byName[c.card_name] || null, symbol: resolve(c) }));
+    }
+  }
   res.json({
     files,
-    cards,
+    cards: cardsOut,
+    institutions,
     knownPayers, costPayers,
     basketOptions: basketOptionsFor(report.framework),
     reconcile: await ledgerReconcile(db, report, client),
@@ -107,6 +139,27 @@ router.get('/reports/:id/ledger', ah(async (req, res) => {
     expenseMatrix: await expenseComparison(db, report, client),
     hasVat: !!(client && client.has_vat),
   });
+}));
+
+/* ---------- שיוך כרטיס לבי"ס (נלמד להעלאות הבאות) ----------
+   symbol: סמל המוסד; null = חזרה לשיוך האוטומטי לפי השם; 'general' = כללי
+   (פיצול יחסי לכל בתי הספר) */
+const cardSymbolSchema = z.object({ symbol: z.string().nullable() });
+router.put('/ledger-cards/:cardId/symbol', ah(async (req, res) => {
+  const parsed = cardSymbolSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'שיוך לא תקין' });
+  const db = getDB();
+  const card = await db.prepare('SELECT * FROM ledger_cards WHERE id = ?').get(parseInt(req.params.cardId));
+  if (!card) return res.status(404).json({ error: 'כרטיס לא נמצא' });
+  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(card.report_id);
+  const sym = parsed.data.symbol;
+  // 'general' נשמר כסמל שאינו קיים — המפענח מתעלם ממנו, ושם הכרטיס לא ישויך
+  const value = sym === 'general' ? 'general' : (sym || null);
+  await db.prepare('UPDATE ledger_cards SET symbol_override = ? WHERE id = ?').run(value, card.id);
+  if (value) await saveCardSymbol(db, report.client_id, report.framework, card.card_key, value === 'general' ? 'none' : value);
+  else await db.prepare("DELETE FROM client_mappings WHERE client_id = ? AND mapping_type = 'ledger_card_symbol' AND map_key = ?")
+    .run(report.client_id, aliasKey(report.framework, card.card_key));
+  res.json({ ok: true, symbol: value });
 }));
 
 /* ---------- שיוך כרטיס לסל (נלמד להעלאות הבאות) ---------- */
