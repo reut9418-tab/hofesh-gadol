@@ -326,14 +326,24 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
 
   const totalBudget = parsed.institutions.reduce((s, i) => s + (i.total || 0), 0);
   const fallbackInst = parsed.institutions.find((i) => i.ratesFallback);
+  // דוח ביצוע סופי (שלב 2, רעות 6.10): הקובץ שיוצא מהמערכת, נפתח ונשמר באקסל —
+  // ממנו נלקחים סכומי התשלום כפי שהאקסל חישב. מסמנים מתי הועלה, ומזהירים
+  // כשהקובץ לא חושב (שורת התשלום ריקה)
+  const isFinal = req.query.final === '1';
+  const paymentSum = parsed.institutions.reduce((s, i) => s + (Number(i.paymentTotal) || 0) + (Number(i.paymentAides) || 0), 0);
+  if (isFinal) await db.prepare('UPDATE reports SET final_file_at = ? WHERE id = ?').run(new Date().toISOString(), id);
+  const finalWarning = isFinal && !(paymentSum > 0)
+    ? 'שורת "סה"כ לתשלום בתוספת גמישות 25%" בקובץ ריקה — כנראה הקובץ נשמר בלי שהאקסל חישב אותו. יש לפתוח אותו באקסל, לוודא שהסכום מופיע, לשמור (Ctrl+S) ולהעלות שוב.'
+    : undefined;
   res.status(201).json({
     assignmentsApplied: assignApplied,
     authority: parsed.authority,
     institutions: parsed.institutions.length,
     totalBudget,
-    warning: fallbackInst
+    paymentTotal: Math.round(paymentSum * 100) / 100,
+    warning: finalWarning || (fallbackInst
       ? `שימי לב: בקובץ המשרד "בקרת האיוש" איפסה את חישוב התקציב, ולכן המערכת חישבה אותו לבד — ${fallbackInst.eligibleReg?.toLocaleString('he-IL')} ילדים בהרשמה × התעריף לילד שבקובץ. כדאי להשלים את גיליון "איוש משרות" בקובץ ולרענן, אך אפשר להמשיך לעבוד כרגיל.`
-      : undefined,
+      : undefined),
     health: await reportHealth(db, await db.prepare('SELECT * FROM reports WHERE id = ?').get(id)),
   });
 

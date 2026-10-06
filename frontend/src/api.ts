@@ -170,6 +170,14 @@ export const uploadBudgetFile = async (reportId: number, file: File) => {
   fd.append('file', file);
   return api.post(`/reports/${reportId}/budget-file`, fd).then((r) => r.data);
 };
+// דוח הביצוע הסופי (אחרי שלב 2, נשמר באקסל) — מחליף את הקובץ השמור; סכומי
+// התשלום נלקחים ממנו כפי שהאקסל חישב
+export const uploadFinalExecFile = async (reportId: number, file: File) => {
+  await wakeServer();
+  const fd = new FormData();
+  fd.append('file', file);
+  return api.post(`/reports/${reportId}/budget-file?final=1`, fd).then((r) => r.data);
+};
 export const getReportBudget = (reportId: number) => api.get(`/reports/${reportId}/budget`).then((r) => r.data);
 
 /* ---------- הכנת דוח הביצוע וייצוא (צעד 9) ---------- */

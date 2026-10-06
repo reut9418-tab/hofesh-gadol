@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { T, STATUS_HE, STATUS_COLOR, BUCKET_COLOR } from '../theme';
 import { btn, card, pill } from '../ui';
-import { getReport, updateReport, getReportCosts, getReportBudget, uploadBudgetFile, stage2DocUrl, stage2DetailDocUrl, saveAuthorityEstimate, downloadExport } from '../api';
+import { getReport, updateReport, getReportCosts, getReportBudget, uploadBudgetFile, stage2DocUrl, stage2DetailDocUrl, saveAuthorityEstimate, downloadExport, uploadFinalExecFile } from '../api';
 import PrepSection from './PrepSection';
 import LedgerSection from './LedgerSection';
 import type { Nav } from '../App';
@@ -310,6 +310,40 @@ function Stage2ExportButton({ reportId }: { reportId: number }) {
   );
 }
 
+/* העלאת דוח הביצוע הסופי (רעות 6.10): מורידים את הדוח הממולא, פותחים ושומרים
+   באקסל (שם מחושבות נוסחאות המשרד) ומעלים חזרה — סכומי התשלום במכתבים
+   נלקחים ממנו */
+function FinalFileUpload({ rep, onChange }: { rep: any; onChange: () => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const pick = async (files: FileList | null) => {
+    if (!files || !files.length) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await uploadFinalExecFile(rep.id, files[0]);
+      setMsg(r.warning ? { ok: false, text: r.warning }
+        : { ok: true, text: `✓ הדוח הסופי נקלט — סכום לתשלום לפי הקובץ: ₪${fmt(r.paymentTotal || 0)}. המכתבים מעודכנים.` });
+      onChange();
+    } catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error || 'העלאת הדוח נכשלה.' }); }
+    finally { setBusy(false); if (ref.current) ref.current.value = ''; }
+  };
+  const when = rep.final_file_at ? new Date(rep.final_file_at).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${T.line}` }}>
+      <input ref={ref} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={(e) => pick(e.target.files)} />
+      <button onClick={() => ref.current?.click()} disabled={busy} style={{ ...btn(when ? 'ghost' : 'primary'), opacity: busy ? 0.6 : 1 }}
+        title="אחרי הורדת הדוח הממולא: לפתוח באקסל, לשמור (Ctrl+S) ולהעלות כאן — סכומי התשלום יילקחו כפי שהאקסל חישב">
+        {busy ? 'קולט…' : '⬆ העלאת דוח ביצוע סופי'}
+      </button>
+      <span style={{ fontSize: 11.5, color: when ? T.green : T.inkSoft }}>
+        {when ? `✓ דוח סופי הועלה ב-${when} — סכומי התשלום נלקחים ממנו` : 'מורידים את הדוח הממולא ← פותחים ושומרים באקסל ← מעלים כאן. סכומי התשלום במכתבים יילקחו ממנו.'}
+      </span>
+      {msg && <div style={{ flexBasis: '100%', fontSize: 12.5, color: msg.ok ? T.green : T.amber, background: msg.ok ? T.greenBg : T.amberBg, borderRadius: 8, padding: '6px 10px' }}>{msg.text}</div>}
+    </div>
+  );
+}
+
 const STATUSES = ['draft', 'in_progress', 'blocked', 'ready', 'submitted'];
 
 function Flag({ on, label }: { on: boolean; label: string }) {
@@ -442,6 +476,7 @@ export default function ReportView({ reportId, clientId, go }: { reportId: numbe
               <Stage2ExportButton reportId={reportId} />
             </span>
           </div>
+          <FinalFileUpload rep={rep} onChange={load} />
         </section>
       </>}
 
