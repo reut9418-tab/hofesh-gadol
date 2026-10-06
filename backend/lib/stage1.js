@@ -21,6 +21,7 @@ const { extractInstitutions, extractWorkerAssignments } = require('./fillMinistr
 const { parseGardenExecKids, parseDeputyEntitlement } = require('./budgetFile');
 const { parseXlsxOffloaded } = require('./xlsxOffload');
 const XLSX = require('xlsx');
+const { loadFileMeta, saveFileMeta } = require('./fileMetaStore');
 const fileMetaCache = new Map(); // reportId -> { fileName, insts, redirect, depEntitled, gardensExec }
 
 async function fileMeta(db, report) {
@@ -29,12 +30,13 @@ async function fileMeta(db, report) {
   if (cached && cached.fileName === fn) return cached;
   const entry = { fileName: fn, insts: [], redirect: new Map(), depEntitled: {}, gardensExec: null, workerSyms: {} };
   try {
-    const row = await db.prepare('SELECT data FROM report_files WHERE report_id = ?').get(report.id);
+    // נגזרות שמורות במסד — בלי לפענח את הקובץ אחרי אתחול
+    let parsed = await loadFileMeta(db, report.id, 'letter', fn);
+    const row = parsed ? null : await db.prepare('SELECT data FROM report_files WHERE report_id = ?').get(report.id);
     if (row && row.data) {
       const buf = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
       // הפענוח (שניות של CPU) רץ ב-worker thread כדי לא לחסום את השרת;
       // נפילה חזרה לנתיב סינכרוני אם ה-worker לא זמין
-      let parsed = null;
       try { parsed = await parseXlsxOffloaded({ mode: 'letter', framework: report.framework, buf }); } catch { /* סינכרוני */ }
       if (!parsed) {
         const wb = XLSX.read(buf, { type: 'buffer' });
@@ -45,6 +47,9 @@ async function fileMeta(db, report) {
           workerSyms: extractWorkerAssignments(wb),
         };
       }
+      await saveFileMeta(db, report.id, 'letter', fn, parsed);
+    }
+    if (parsed) {
       entry.insts = parsed.insts || [];
       entry.depEntitled = parsed.depEntitled || {};
       entry.gardensExec = parsed.gardensExec || null;
@@ -657,4 +662,4 @@ ${d.unassignedCost > 0 ? `<p class="note">⚠ עלות של ₪${fmt(d.unassigne
 }
 
 const invalidateFileMeta = (reportId) => { fileMetaCache.delete(reportId); };
-module.exports = { stage1Data, renderStage1Html, invalidateFileMeta };
+module.exports = { stage1Data, renderStage1Html, invalidateFileMeta, fileMeta };

@@ -246,6 +246,7 @@ async function cascadeReport(db, reportId) {
   await db.prepare('DELETE FROM ledger_cards WHERE report_id = ?').run(reportId);
   await db.prepare('DELETE FROM ledger_files WHERE report_id = ?').run(reportId);
   await db.prepare('DELETE FROM report_files WHERE report_id = ?').run(reportId);
+  await db.prepare('DELETE FROM report_file_meta WHERE report_id = ?').run(reportId);
   await db.prepare('DELETE FROM reports WHERE id = ?').run(reportId);
 }
 

@@ -5,6 +5,7 @@
 const { costDataForReport } = require('./reportCosts');
 const { SALARY_BASKET_TYPES, BASKET_HE } = require('./ledger');
 const { recognizedRowCost } = require('./ingest');
+const { loadFileMeta, saveFileMeta } = require('./fileMetaStore');
 
 const VAT_RATE = 0.18;
 const fmtN = (n) => Math.round(n).toLocaleString('he-IL');
@@ -230,12 +231,19 @@ async function expenseComparison(db, report, client) {
   const cached = expenseCmpCache.get(report.id);
   if (cached && cached.fileName === (report.budget_file_name || '')) actuals = cached.actuals;
   else {
-    const blob = await db.prepare('SELECT data FROM report_files WHERE report_id = ?').get(report.id);
-    if (blob && blob.data) {
-      try {
-        const { parseExpenseActuals } = require('./fillMinistry');
-        actuals = parseExpenseActuals(Buffer.isBuffer(blob.data) ? blob.data : Buffer.from(blob.data));
-      } catch { actuals = null; }
+    // נגזרות שמורות במסד — בלי לפענח את הקובץ אחרי אתחול
+    const fn = report.budget_file_name || '';
+    const stored = await loadFileMeta(db, report.id, 'expense', fn);
+    if (stored) actuals = stored.actuals;
+    else {
+      const blob = await db.prepare('SELECT data FROM report_files WHERE report_id = ?').get(report.id);
+      if (blob && blob.data) {
+        try {
+          const { parseExpenseActuals } = require('./fillMinistry');
+          actuals = parseExpenseActuals(Buffer.isBuffer(blob.data) ? blob.data : Buffer.from(blob.data));
+        } catch { actuals = null; }
+        await saveFileMeta(db, report.id, 'expense', fn, { actuals });
+      }
     }
     expenseCmpCache.set(report.id, { fileName: report.budget_file_name || '', actuals });
   }
@@ -259,4 +267,5 @@ async function expenseComparison(db, report, client) {
   return { rows, hasVat, hasFile: !!actuals };
 }
 
-module.exports = { ledgerReconcile, payerBreakdown, expenseComparison, VAT_RATE };
+const invalidateExpenseCmp = (reportId) => { expenseCmpCache.delete(reportId); };
+module.exports = { invalidateExpenseCmp, ledgerReconcile, payerBreakdown, expenseComparison, VAT_RATE };

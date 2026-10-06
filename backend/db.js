@@ -215,6 +215,12 @@ async function migrate(db) {
   await db.exec(`CREATE TABLE IF NOT EXISTS report_files (
     report_id INTEGER PRIMARY KEY, data ${pg ? 'BYTEA' : 'BLOB'}
   )`);
+  // נגזרות קובץ המשרד (מוסדות, שיוכי עובדים, הוצאות...) כ-JSON — כדי לא
+  // לפענח מחדש את הקובץ אחרי כל אתחול (lib/fileMetaStore.js)
+  await db.exec(`CREATE TABLE IF NOT EXISTS report_file_meta (
+    report_id INTEGER NOT NULL, mode TEXT NOT NULL, file_name TEXT, data TEXT,
+    PRIMARY KEY (report_id, mode)
+  )`);
   // קובץ דוח העלות המקורי — לשיוך עמודות ידני וקליטה מחדש
   await db.exec(`CREATE TABLE IF NOT EXISTS cost_file_blobs (
     cost_file_id INTEGER PRIMARY KEY, data ${pg ? 'BYTEA' : 'BLOB'}

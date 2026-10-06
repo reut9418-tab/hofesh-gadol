@@ -19,8 +19,9 @@ const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
 const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
 const { recommendations } = require('../lib/recommend');
 const { matchDeptsToInstitutions, cardSymbolResolver } = require('../lib/nameMatch');
-const { stage1Data, renderStage1Html, invalidateFileMeta } = require('../lib/stage1');
+const { stage1Data, renderStage1Html, invalidateFileMeta, fileMeta: warmLetterMeta } = require('../lib/stage1');
 const { parseXlsxOffloaded } = require('../lib/xlsxOffload');
+const { loadFileMeta, saveFileMeta, clearFileMeta } = require('../lib/fileMetaStore');
 
 /* שם הלקוח (והרשות, כשהיא שונה ממנו) לשמות קבצים שיורדים — ברשות עם כמה
    מפעילים (קריית אונו) שם הרשות לבדו לא מבדיל בין הקבצים */
@@ -45,11 +46,13 @@ async function ministryData(db, report) {
   const buf = await budgetFileBuf(db, report);
   const entry = { fileName: report.budget_file_name || '', buf, institutions: [], schoolTypes: null, redirect: new Map(), coordGardens: [], execGardens: [], workerSyms: {} };
   if (buf) {
+    // נגזרות שמורות במסד — בלי לפענח את הקובץ אחרי אתחול
+    let parsed = await loadFileMeta(db, report.id, 'ministry', entry.fileName);
+    const stored = !!parsed;
     // פענוח אחד של הקובץ (2-3MB, שניות של CPU) משרת את כל פונקציות החילוץ,
     // ורץ ב-worker thread כדי לא לחסום את שאר המשתמשים; נפילה חזרה לנתיב
     // סינכרוני אם ה-worker לא זמין
-    let parsed = null;
-    try { parsed = await parseXlsxOffloaded({ mode: 'ministry', framework: report.framework, buf }); } catch { /* סינכרוני */ }
+    if (!parsed) try { parsed = await parseXlsxOffloaded({ mode: 'ministry', framework: report.framework, buf }); } catch { /* סינכרוני */ }
     if (!parsed) {
       let wb = null;
       try { wb = require('xlsx').read(buf, { type: 'buffer' }); } catch { /* קובץ פגום — ננסה פר פונקציה */ }
@@ -64,6 +67,7 @@ async function ministryData(db, report) {
         try { parsed.execGardens = extractExecGardens(src); } catch { /* ריק */ }
       }
     }
+    if (!stored) await saveFileMeta(db, report.id, 'ministry', entry.fileName, parsed);
     entry.institutions = parsed.institutions || [];
     entry.schoolTypes = parsed.schoolTypes || null;
     entry.coordGardens = parsed.coordGardens || [];
@@ -318,6 +322,8 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   await db.prepare('INSERT INTO report_files (report_id, data) VALUES (?, ?)').run(id, req.file.buffer);
   ministryCache.delete(id); // הקובץ התחלף — הנגזרות ייבנו מחדש
   invalidateFileMeta(id); // גם המטמון של מחולל המכתב
+  require('../lib/reconcile').invalidateExpenseCmp(id);
+  await clearFileMeta(db, id); // וגם השמורות במסד (גם כשהשם זהה — דוח ביצוע סופי)
 
   // החוק של רעות (16.9): שיוכי סמל/תפקיד שהלקוח מילא בלשונית כח האדם
   // של הקובץ מוחלים מיד על שורות הדוח — בלי עבודה חוזרת ובלי לבקש
@@ -352,7 +358,9 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   setImmediate(async () => {
     try {
       const fresh = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
-      if (fresh) await ministryData(db, fresh);
+      // בזה אחר זה (לא במקביל — כל פענוח ~250MB): נגזרות מסך ההכנה, ואז
+      // של המכתבים — שתיהן נשמרות במסד ושורדות אתחול
+      if (fresh) { await ministryData(db, fresh); await warmLetterMeta(db, fresh); }
     } catch { /* חימום בלבד — כישלון לא מפריע לעבודה */ }
   });
 }));
