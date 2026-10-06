@@ -25,11 +25,15 @@ function basketForCardName(name) {
   if (/סיור|טיול|פעילות חוץ/.test(n)) return 'trip';
   if (/בינה מלאכותית/.test(n) || /(^|[^a-zA-Z])ai([^a-zA-Z]|$)/i.test(n)) return 'ai';
   if (/העשרה|פעילות/.test(n)) return 'enrichment'; // "פעילות" בשם כרטסת = העשרה
+  // חומרי יצירה והדפסות = העשרה (כלל רעות 6.10)
+  if (/יצירה|הדפס/.test(n)) return 'enrichment';
   if (/אבטחה/.test(n)) return 'security';
   if (/ארוחת/.test(n)) return 'breakfast';
   if (/מלגות/.test(n)) return 'scholarships';
   if (/ניהול|תקורה|תפעול|הנהלה/.test(n)) return 'management';
-  if (/גמיש/.test(n)) return 'flexible';
+  // כרטסת "סל גמיש" משויכת כברירת מחדל לארוחות בוקר (כלל רעות 6.10) — זה
+  // הייעוד שלה בקובץ המשרד; אפשר לשנות ידנית והשינוי נלמד
+  if (/גמיש/.test(n)) return 'breakfast';
   if (/סג[נן]/.test(n)) return 'deputy'; // נו"ן רגילה וסופית — "סגן" וגם "סגני/סגנית"
   // כרטסת משולבת: גם רכז וגם מילת צוות באותו שם ("שכר מורים+רכז", "שכר גננות
   // ורכזות") — "שכר רכזים" לבדו נשאר סל ריכוז
