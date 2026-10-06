@@ -98,6 +98,14 @@ async function budgetFileBuf(db, report) {
   return buf;
 }
 
+/* תקציב סל הריכוז פר סמל מוסד — לתקרת שעות הריכוז (מוסד ד-ו מקבל תוספת) */
+async function coordBudgetBySymbol(db, reportId) {
+  return new Map((await db.prepare(
+    `SELECT i.symbol s, COALESCE(SUM(b.budget_amount),0) a FROM baskets b JOIN institutions i ON i.id = b.institution_id
+     WHERE i.report_id = ? AND b.basket_type = 'coordinator' GROUP BY i.symbol`
+  ).all(reportId)).map((r) => [String(r.s), Number(r.a) || 0]));
+}
+
 /* ביצוע השכר בקובץ המשרד למוסד: הדרכה + רכזים + סגנים (עמודת "ביצוע בפועל").
    null כשהקובץ לא נושא ביצוע לסלים — אז אין מול מה לבדוק */
 function salaryActualOf(inst) {
@@ -461,8 +469,9 @@ router.get('/:id/prep', ah(async (req, res) => {
       if (!bySchool.has(s)) bySchool.set(s, []);
       bySchool.get(s).push(r);
     }
-    const capPrep = coordHoursCapFor(report);
-    for (const g of bySchool.values()) for (const id of demoteExtraSchoolRoles(g, capPrep)) demotedPrep.add(id);
+    // תקרת שעות הריכוז פר מוסד (מוסד ד-ו — 20 ימים)
+    const coordBud = await coordBudgetBySymbol(db, report.id);
+    for (const [s, g] of bySchool) for (const id of demoteExtraSchoolRoles(g, coordHoursCapFor(report, coordBud.get(s)))) demotedPrep.add(id);
   }
   const rows = rawRows.map((r) => {
     const sug = suggestRole(r.dept);
@@ -1398,8 +1407,8 @@ router.get('/:id/export', ah(async (req, res) => {
       if (!bySchool.has(s)) bySchool.set(s, []);
       bySchool.get(s).push(r);
     }
-    const capEx = coordHoursCapFor(report);
-    for (const g of bySchool.values()) for (const rid of demoteExtraSchoolRoles(g, capEx)) demotedEx.add(rid);
+    const coordBudEx = await coordBudgetBySymbol(db, report.id);
+    for (const [s, g] of bySchool) for (const rid of demoteExtraSchoolRoles(g, coordHoursCapFor(report, coordBudEx.get(s)))) demotedEx.add(rid);
   }
   // ללקוח חייב מע"מ — העלות השעתית המדווחת למשרד כוללת מע"מ (הברוטו נשאר כפי שהוא).
   // העלות המדווחת מוגבלת לנמוך מבין עלות×מע"מ לבין ברוטו שעתי×140% (תקרת המשרד);

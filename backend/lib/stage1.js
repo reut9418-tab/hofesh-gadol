@@ -134,7 +134,7 @@ async function stage1Data(db, report, client, authority) {
 
   // פיצול הניצול המוכר של יחידה לסל הדרכה מול סל הריכוז (רכז+סגן) —
   // ההשוואה במכתב היא סל-מול-סל, לא סך שכר מול סך תקציבים
-  const splitRecognized = (unitRows, deputyEntitled = true) => {
+  const splitRecognized = (unitRows, deputyEntitled = true, coordBudget = null) => {
     let instr = 0, coord = 0;
     // בבתי הספר קובץ המשרד מזהה את דיווח הסגן ב-VLOOKUP — נתפסת רק שורת
     // הסגן הראשונה בסדר הכתיבה (סמל ואז שם עובד); סגנים נוספים באותו מוסד
@@ -149,7 +149,8 @@ async function stage1Data(db, report, client, authority) {
     });
     // כלל רעות 23.9 (בתי"ס): רכזים עד תקרת שעות 7.6×ימי הפרויקט, סגן 0 או 1 —
     // מסווגי-שעות עודפים יורדים למורה; שיוך ידני לא נדרס (שעותיו נספרות)
-    const demoted = report.framework !== 'gardens' ? demoteExtraSchoolRoles(ordered, coordHoursCapFor(report)) : new Set();
+    // תקרה פר מוסד — במוסד ד-ו (תוספת שכר רכז) הרכז מתוקצב ל-20 ימים
+    const demoted = report.framework !== 'gardens' ? demoteExtraSchoolRoles(ordered, coordHoursCapFor(report, coordBudget)) : new Set();
     const staffOf = (r) => {
       const byHours = report.framework !== 'gardens' && !demoted.has(r.id) ? schoolsRoleByHours(r.hours) : null;
       // תפקיד שמולא בקובץ שהועלה (ת"ז): בגנים קודם לניחוש (יבנה 16.9);
@@ -270,7 +271,7 @@ async function stage1Data(db, report, client, authority) {
       coordToSalary, salaryToCoord, // ניודים פנימיים בין סלי השכר (רכזות↔שכר)
       // תקרת שעות הריכוז (כלל רעות 23.9): 7.6 ש' × ימי הפרויקט; בגנים לא רלוונטי
       coordHours: split.coordHours || 0,
-      coordHoursCap: report.framework !== 'gardens' ? coordHoursCapFor(report) : null,
+      coordHoursCap: report.framework !== 'gardens' ? coordHoursCapFor(report, baskets.coordinator) : null,
       management: baskets.management || 0,
       // מכינות: פעילות חוץ (יום סיור) ו-AI — ההכרה עד תקרת הסל
       tripBudget, tripAllocated, tripRecognized: Math.min(tripAllocated, tripBudget),
@@ -346,7 +347,7 @@ async function stage1Data(db, report, client, authority) {
       const bkts = await basketsOf(i.id);
       // זכאות לסגן — עמודת "זכאות לסגן/נית" בלשונית האיוש; גיבוי: תקציב סגן קיים
       const ent = meta.depEntitled[String(i.symbol)];
-      let split = splitRecognized(unitRows, ent != null ? ent : (bkts.deputy || 0) > 0);
+      let split = splitRecognized(unitRows, ent != null ? ent : (bkts.deputy || 0) > 0, bkts.coordinator);
       // דוח הביצוע מפצל את הניצול לפי לשונית איוש המשרות: "שכר רכזים/סגנים" =
       // התקציב המוכר מהלשונית, ו"שכר צוות חינוכי" = כלל העלות בניכוי הדיווח —
       // לא לפי סיווג התפקידים בדוח העלות. כשקיימים דיווחי איוש, מיישרים אליהם

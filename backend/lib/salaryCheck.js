@@ -35,10 +35,20 @@ function schoolsRoleByHours(hours) {
    יורדים למורה לפי שעות (הנמוכים קודם); שיוך שמור (ידני/קובץ) לעולם אינו
    נדרס, אך שעותיו נספרות לתקרה. מחזיר Set של row.id שהורדו למורה. */
 const COORD_HOURS_PER_DAY = 7.6;
-function coordHoursCapFor(report) {
+/* coordBudget (אופציונלי, בתי"ס): תקציב סל הריכוז של המוסד. מוסד "קיץ פלוס ד-ו"
+   מקבל "תוספת שכר רכז ד-ו" (טבלת המשרד: 155.4 ₪ ליום, "15 ימים (20 ימים
+   תוספת שכר רכז ד-ו)") — הרכז מתוקצב ל-20 ימים, ולכן תקרת השעות 7.6×20=152
+   ולא 114 (ממלכתי ג מעלה אדומים: 11,810.4+2,331=14,141.4; רעות 6.10).
+   זיהוי: תקציב ריכוז מעל ~870 ₪ ליום (רגיל ≈ 787 ₪ ליום) */
+const DV_SUPPLEMENT_THRESHOLD_PER_DAY = 870;
+function coordHoursCapFor(report, coordBudget = null) {
   const days = report.framework === 'prep' ? 8
     : report.program === 'extension' ? (report.extension_days || 6) : 15;
-  return Math.round(COORD_HOURS_PER_DAY * days * 100) / 100;
+  let capDays = days;
+  if (report.framework === 'schools' && Number(coordBudget) > DV_SUPPLEMENT_THRESHOLD_PER_DAY * days) {
+    capDays = days * (20 / 15); // 15 יום → 20; הרחבה — אותו יחס
+  }
+  return Math.round(COORD_HOURS_PER_DAY * capDays * 100) / 100;
 }
 const isCoordType = (st) => /רכז/.test(st) && !/סג[נן]/.test(st) && !/רכזת גן/.test(st);
 function demoteExtraSchoolRoles(schoolRows, coordCap = COORD_HOURS_PER_DAY * 15) {
