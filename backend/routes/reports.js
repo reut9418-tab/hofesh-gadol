@@ -22,6 +22,7 @@ const { matchDeptsToInstitutions, cardSymbolResolver } = require('../lib/nameMat
 const { stage1Data, renderStage1Html, invalidateFileMeta, fileMeta: warmLetterMeta } = require('../lib/stage1');
 const { parseXlsxOffloaded } = require('../lib/xlsxOffload');
 const { loadFileMeta, saveFileMeta, clearFileMeta, fileMetaFromWorkbook } = require('../lib/fileMetaStore');
+const { cardSplits } = require('../lib/ledgerSplit');
 
 /* שם הלקוח (והרשות, כשהיא שונה ממנו) לשמות קבצים שיורדים — ברשות עם כמה
    מפעילים (קריית אונו) שם הרשות לבדו לא מבדיל בין הקבצים */
@@ -1045,6 +1046,8 @@ async function buildExpenseFill(db, report, client) {
   const totalChildren = insts.reduce((s, i) => s + (i.children_count || 0), 0);
   // שיוך ידני של כרטיס לבי"ס (נבחר במסך שלב 2, נלמד ללקוח) קודם לשיוך לפי השם
   const symOfCard = cardSymbolResolver(insts, cards);
+  // כרטיס מאוחד עם סמל באסמכתא של כל תנועה — מתפצל לפי התנועות (רעות 7.10)
+  const splits = await cardSplits(db, cards, insts);
 
   const rows = [];
   // ניהול ותפעול פר בי"ס — לפי תקציב סל הניהול של המוסד (לא לפי כרטסת)
@@ -1055,6 +1058,12 @@ async function buildExpenseFill(db, report, client) {
   cards.forEach((c) => {
     if (c.basket_type === 'management') return; // טופל מהתקציב למעלה
     const label = EXPENSE_HE[c.basket_type];
+    const sp = splits.get(c.id);
+    if (sp && sp.isSplit) {
+      // לפי התנועות; תנועות בלי סמל ממתינות לשיוך ידני ואינן נכתבות
+      for (const [sym, net] of Object.entries(sp.bySymbol)) if (net > 0) rows.push([sym, label, r2(net), c.card_key, OPERATION_SOURCE]);
+      return;
+    }
     const sym = symOfCard(c);
     if (sym) {
       rows.push([sym, label, r2(c.net), c.card_key, OPERATION_SOURCE]);

@@ -86,19 +86,29 @@ function basketOptionsFor(framework) {
   return SCHOOLS_GARDENS_KEYS.map((k) => ({ value: k, label: BASKET_HE[k] }));
 }
 
-/* מפענח קובץ כרטסת → [{key, name, debit, credit, net, txCount}] */
+/* מספרים שיכולים להיות סמל מוסד (5–7 ספרות) בתוך תא — "112102", "סמל 484402" */
+const symbolCandidates = (v) => (String(v ?? '').match(/(?<!\d)\d{5,7}(?!\d)/g) || []);
+
+/* מפענח קובץ כרטסת → [{key, name, debit, credit, net, txCount, tx}]
+   tx — התנועות של הכרטיס: { refs: מועמדי סמל מעמודות אסמ'/אסמ'2/פרטים,
+   details, debit, credit } — לכרטיס מאוחד שבו סמל בית הספר כתוב באסמכתא
+   של כל תנועה (ביתר 7.10: "העשרה - רישמי" עם 5 בתי ספר) */
 function parseLedgerFile(buf) {
   const wb = XLSX.read(buf, { type: 'buffer' });
   const cards = [];
   for (const sheetName of wb.SheetNames) {
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: null });
-    // עמודות חובה/זכות משורת הכותרות
+    // עמודות חובה/זכות (+אסמכתאות/פרטים) משורת הכותרות
     let debitCol = -1, creditCol = -1;
+    const refCols = [];
+    let detailsCol = -1;
     for (let i = 0; i < Math.min(rows.length, 15) && debitCol < 0; i++) {
       (rows[i] || []).forEach((c, j) => {
         const n = norm(c);
         if (/חובה/.test(n) && !/זכות$/.test(n) && debitCol < 0 && n.includes('חובה')) debitCol = j;
         if (n.endsWith('זכות') && creditCol < 0) creditCol = j;
+        if (/^אסמ/.test(n)) refCols.push(j); // "אסמ'", "אסמ'2", "אסמכתא" — לא "ת.אסמכ"
+        if (n === 'פרטים' && detailsCol < 0) detailsCol = j;
       });
     }
     if (debitCol < 0 || creditCol < 0) continue; // לא לשונית כרטסת
@@ -113,7 +123,7 @@ function parseLedgerFile(buf) {
       // תחילת כרטיס: [0] שם, [1] מפתח חשבון מספרי
       if (c0 && /^\d{3,12}$/.test(c1) && !c0.includes('סהכ')) {
         pushCur();
-        cur = { key: c1, name: c0, debit: 0, credit: 0, net: 0, txCount: 0 };
+        cur = { key: c1, name: c0, debit: 0, credit: 0, net: 0, txCount: 0, tx: [] };
         continue;
       }
       if (!cur) continue;
@@ -122,10 +132,13 @@ function parseLedgerFile(buf) {
       cur.debit += d || 0;
       cur.credit += c || 0;
       cur.txCount++;
+      const details = detailsCol >= 0 ? norm(row[detailsCol]) : '';
+      const refs = [...new Set([...refCols.flatMap((j) => symbolCandidates(row[j])), ...symbolCandidates(details)])];
+      cur.tx.push({ refs, details, debit: d || 0, credit: c || 0 });
     }
     pushCur();
   }
   return { cards };
 }
 
-module.exports = { parseLedgerFile, basketForCardName, BASKET_HE, SALARY_BASKET_TYPES, basketOptionsFor };
+module.exports = { symbolCandidates, parseLedgerFile, basketForCardName, BASKET_HE, SALARY_BASKET_TYPES, basketOptionsFor };

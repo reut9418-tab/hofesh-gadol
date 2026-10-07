@@ -260,6 +260,7 @@ async function cascadeReport(db, reportId) {
   await db.prepare('DELETE FROM institutions WHERE report_id = ?').run(reportId);
   // שורות עלות שנותבו לדוח זה חוזרות למצב "לא משויך" (הן שייכות לקובץ של הלקוח)
   await db.prepare('UPDATE cost_rows SET report_id = NULL WHERE report_id = ?').run(reportId);
+  await db.prepare('DELETE FROM ledger_card_tx WHERE card_id IN (SELECT id FROM ledger_cards WHERE report_id = ?)').run(reportId);
   await db.prepare('DELETE FROM ledger_cards WHERE report_id = ?').run(reportId);
   await db.prepare('DELETE FROM ledger_files WHERE report_id = ?').run(reportId);
   await db.prepare('DELETE FROM report_files WHERE report_id = ?').run(reportId);

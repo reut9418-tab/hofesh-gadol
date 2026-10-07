@@ -70,6 +70,26 @@ async function ledgerReconcile(db, report, client) {
      WHERE lc.report_id = ?`
   ).all(report.id);
   if (!cards.length) return { hasLedger: false };
+  // כרטיס מאוחד (סמל באסמכתא): תנועות בלי סמל ממתינות לשיוך ידני — התראה
+  const splitChecks = [];
+  if (report.framework !== 'gardens') {
+    const insts = await db.prepare('SELECT symbol FROM institutions WHERE report_id = ?').all(report.id);
+    if (insts.length) {
+      const { cardSplits } = require('./ledgerSplit');
+      const splits = await cardSplits(db, cards, insts);
+      for (const c of cards) {
+        const sp = splits.get(c.id);
+        if (!sp || !sp.isSplit || !sp.unassignedCount) continue;
+        splitChecks.push({
+          id: `split_unassigned:${c.id}`,
+          title: 'כרטיס מאוחד — תנועות ללא סמל מוסד',
+          level: 'warn',
+          text: `כרטיס "${c.card_name}" (${c.card_key}) מפוצל לפי סמל באסמכתא, אך ${sp.unassignedCount} ${sp.unassignedCount === 1 ? 'תנועה' : 'תנועות'} בסך ₪${fmtN(sp.unassignedNet)} ללא סמל — אינן נזקפות לאף בית ספר עד שיוך ידני בלשונית הכרטסות.`,
+          a: sp.unassignedNet, b: 0, diff: sp.unassignedNet,
+        });
+      }
+    }
+  }
 
   // סכומי הכרטסת לפי סל
   const byBasket = {};
@@ -91,7 +111,7 @@ async function ledgerReconcile(db, report, client) {
   // אחרי גבייה מהורים וכולל ניהול/העשרה (קריית אונו: 120,562 מול שכר 370,470)
   const execActual = Number((await db.prepare('SELECT COALESCE(SUM(salary_actual),0) a FROM institutions WHERE report_id = ?').get(report.id)).a);
 
-  const checks = [];
+  const checks = [...splitChecks];
   // בסיס אפס עם הפרש ממשי = אי-התאמה מלאה (לא "תקין")
   const pct = (diff, base) => (base > 0 ? Math.abs(diff) / base : (Math.abs(diff) > 200 ? 1 : 0));
   const level = (p, amt) => (p <= 0.01 || Math.abs(amt) <= 200 ? 'ok' : p <= 0.05 ? 'warn' : 'err');

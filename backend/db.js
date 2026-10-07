@@ -215,6 +215,14 @@ async function migrate(db) {
   await db.exec(`CREATE TABLE IF NOT EXISTS report_files (
     report_id INTEGER PRIMARY KEY, data ${pg ? 'BYTEA' : 'BLOB'}
   )`);
+  // תנועות הכרטיס (רעות 7.10): כרטיס מאוחד שבו סמל בית הספר כתוב באסמכתא של
+  // כל תנועה מתפצל בין בתי הספר לפי התנועות. refs = מועמדי סמל (JSON),
+  // symbol_override = שיוך ידני של תנועה בלי סמל
+  await db.exec(`CREATE TABLE IF NOT EXISTS ledger_card_tx (
+    ${pg ? 'id SERIAL PRIMARY KEY' : 'id INTEGER PRIMARY KEY AUTOINCREMENT'}, card_id INTEGER NOT NULL,
+    refs TEXT, details TEXT, debit REAL DEFAULT 0, credit REAL DEFAULT 0, symbol_override TEXT
+  )`);
+  await db.exec('CREATE INDEX IF NOT EXISTS ledger_card_tx_card ON ledger_card_tx (card_id)');
   // נגזרות קובץ המשרד (מוסדות, שיוכי עובדים, הוצאות...) כ-JSON — כדי לא
   // לפענח מחדש את הקובץ אחרי כל אתחול (lib/fileMetaStore.js)
   await db.exec(`CREATE TABLE IF NOT EXISTS report_file_meta (

@@ -5,6 +5,7 @@
    כשאין ילדים). לכל כרטסת: מספר ושם בכותרת, טבלת סמל/בי"ס/סכום, וסה"כ
    שחייב להיות שווה לסך הכרטסת. */
 const { cardSymbolResolver } = require('./nameMatch');
+const { cardSplits } = require('./ledgerSplit');
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const fmt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
@@ -22,9 +23,25 @@ async function enrichMatchData(db, report, client, authority) {
   const totalBudget = insts.reduce((s, i) => s + (Number(i.budget_total) || 0), 0);
   // שיוך ידני (נבחר במסך שלב 2) קודם לשיוך לפי השם
   const symOf = report.framework !== 'gardens' && insts.length ? cardSymbolResolver(insts, cards) : () => null;
+  // כרטיס מאוחד עם סמל באסמכתא של כל תנועה — מתפצל לפי התנועות (רעות 7.10)
+  const splits = report.framework !== 'gardens' && insts.length ? await cardSplits(db, cards, insts) : new Map();
 
   const perCard = cards.map((c) => {
     const gross = r2(c.net * vat);
+    const sp = splits.get(c.id);
+    if (sp && sp.isSplit) {
+      const rows = Object.entries(sp.bySymbol).map(([symbol, net]) => {
+        const inst = insts.find((i) => String(i.symbol) === String(symbol));
+        return { symbol, name: (inst && inst.name) || '', amount: r2(net * vat) };
+      });
+      return {
+        cardKey: c.card_key, cardName: c.card_name, net: r2(c.net), gross,
+        method: 'ref',
+        rows,
+        // תנועות בלי סמל — לא נזקפות עד שיוך ידני
+        unassigned: sp.unassignedCount ? { count: sp.unassignedCount, amount: r2(sp.unassignedNet * vat) } : null,
+      };
+    }
     if (report.framework === 'gardens') {
       return {
         cardKey: c.card_key, cardName: c.card_name, net: r2(c.net), gross,
@@ -96,9 +113,11 @@ function renderEnrichMatchHtml(d) {
           <tr class="total"><td colspan="${c.method === 'children' ? 3 : 2}">סה"כ</td><td class="num">₪${fmt(total)}</td></tr>
         </tbody>
       </table>
-      <div class="check">${Math.abs(total - c.gross) < 1
-        ? `✓ הסה"כ תואם לסך הכרטסת${d.hasVat ? ' (בתוספת מע"מ)' : ''}.`
-        : `⚠ הסה"כ (₪${fmt(total)}) שונה מסך הכרטסת (₪${fmt(c.gross)}).`}</div>
+      <div class="check">${c.unassigned
+        ? `⚠ ${c.unassigned.count} ${c.unassigned.count === 1 ? 'תנועה' : 'תנועות'} בסך ₪${fmt(c.unassigned.amount)} ללא סמל מוסד באסמכתא — אינן נזקפות לאף בית ספר עד שיוך ידני בלשונית הכרטסות.`
+        : Math.abs(total - c.gross) < 1
+          ? `✓ הסה"כ תואם לסך הכרטסת${d.hasVat ? ' (בתוספת מע"מ)' : ''}.`
+          : `⚠ הסה"כ (₪${fmt(total)}) שונה מסך הכרטסת (₪${fmt(c.gross)}).`}</div>
     </section>`;
   }).join('');
 
@@ -160,7 +179,7 @@ function buildEnrichMatchXlsx(d) {
     ok: { font: { bold: true, sz: 10, color: { rgb: '4C7A45' } }, alignment: { horizontal: 'right' } },
   };
   const cell = (v, s) => ({ v: v == null ? '' : v, t: typeof v === 'number' ? 'n' : 's', s });
-  const methodHe = { aggregate: 'כל הגנים במרוכז', name: 'שיוך לפי שם הכרטסת', children: 'פיצול יחסי לפי כמות הילדים', budget: 'פיצול יחסי לפי התקציב' };
+  const methodHe = { aggregate: 'כל הגנים במרוכז', name: 'שיוך לפי שם הכרטסת', manual: 'שיוך ידני', ref: 'לפי סמל המוסד באסמכתא של כל תנועה', children: 'פיצול יחסי לפי כמות הילדים', budget: 'פיצול יחסי לפי התקציב' };
 
   const isGardens = d.report.framework === 'gardens';
   const aoa = [

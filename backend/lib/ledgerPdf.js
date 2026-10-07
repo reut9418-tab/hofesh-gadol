@@ -34,7 +34,12 @@ async function pdfLines(buf) {
         row.items.push({ x, s: it.str.trim() });
       }
       rows.sort((a, b) => b.y - a.y);
-      for (const r of rows) lines.push(r.items.sort((a, b) => b.x - a.x).map((i) => i.s));
+      for (const r of rows) {
+        const items = r.items.sort((a, b) => b.x - a.x);
+        const line = items.map((i) => i.s);
+        line.items = items; // מיקומי X — למיפוי עמודות האסמכתא/פרטים לפי הכותרת
+        lines.push(line);
+      }
     }
   } finally { await doc.destroy(); }
   return lines;
@@ -44,10 +49,28 @@ async function pdfLines(buf) {
    בפריסת ה-PDF שורת "חובה <סה"כ>" מופיעה לפני שורת "סה"כ מפתח חשבון"
    ו"זכות" אחריה — לכן הסכומים נלכדים בכל שלב, והכרטיס נסגר ב"הפרש"/כותרת
    כרטיס חדש/סוף הקובץ. כרטיס שנמשך לעמוד הבא (הכותרת חוזרת) — ממוזג. */
+/* עמודות התנועה לפי שורת הכותרות של ה-PDF ("אסמ'", "אסמ'2", "פרטים"): לכל
+   כותרת נשמר מיקום ה-X שלה, ותא בשורת תנועה משויך לכותרת הקרובה אליו */
+function headerColumns(items) {
+  // כל הכותרות נשמרות (גם "תנועה"/"מנה"/"ח-ן נגדי"), כדי שתא ישויך לכותרת
+  // הקרובה ביותר ולא ייתפס בטעות כאסמכתא של העמודה השכנה
+  const cols = [];
+  for (const it of items) {
+    const n = norm(it.s);
+    if (!n) continue;
+    const kind = /^אסמ/.test(n) ? 'ref' : n === 'פרטים' ? 'details' : (n.includes('חובה') && n.includes('זכות')) ? 'amount' : 'other';
+    cols.push({ kind, x: it.x });
+  }
+  return cols.some((c) => c.kind === 'ref' || c.kind === 'details') ? cols : [];
+}
+const nearestCol = (cols, x) => cols.reduce((best, c) => (!best || Math.abs(c.x - x) < Math.abs(best.x - x) ? c : best), null);
+const { symbolCandidates } = require('./ledger');
+
 async function parseLedgerPdf(buf) {
   const lines = await pdfLines(buf);
   const cards = [];
   let cur = null;
+  let cols = []; // עמודות אסמכתא/פרטים מהכותרת האחרונה שנראתה
   const pushCur = () => {
     if (cur && cur.txCount > 0) { cur.net = cur.debit - cur.credit; cards.push(cur); }
     cur = null;
@@ -60,9 +83,10 @@ async function parseLedgerPdf(buf) {
       // המשך אותו כרטיס אחרי מעבר עמוד — הכותרת חוזרת, לא כרטיס חדש
       if (cur && cur.key === c1) continue;
       pushCur();
-      cur = { key: c1, name: c0, debit: 0, credit: 0, net: 0, txCount: 0 };
+      cur = { key: c1, name: c0, debit: 0, credit: 0, net: 0, txCount: 0, tx: [] };
       continue;
     }
+    if (c0.includes('כותרת') || cells.some((c) => /^אסמ/.test(norm(c)))) { const hc = headerColumns(cells.items || []); if (hc.length) cols = hc; }
     if (!cur) continue;
     // שורות הסיכום של הכרטיס: "חובה <סכום>" / "זכות <סכום>"
     const amt = money(norm(cells[1] ?? '')) ?? money(norm(cells[2] ?? ''));
@@ -70,8 +94,26 @@ async function parseLedgerPdf(buf) {
     if (c0 === 'זכות') { if (amt != null) cur.credit = amt; continue; }
     if (c0.includes('הפרש')) { pushCur(); continue; }
     if (c0.includes('סהכ מפתח חשבון') || c0.includes('יתרת פתיחה') || c0.includes('כותרת')) continue;
-    // שורת תנועה: מכילה סכום כספי
-    if (cells.some((c) => money(norm(c)) !== null)) cur.txCount++;
+    // שורת תנועה: מכילה סכום כספי. הסכום הראשון (מימין) הוא חובה/זכות — חיובי
+    // = חובה, שלילי = זכות; היתרה המצטברת אחריו אינה נספרת
+    const amounts = cells.map((c) => money(norm(c))).filter((v) => v !== null);
+    if (amounts.length) {
+      cur.txCount++;
+      // הסכום: התא שבעמודת "חובה / זכות" לפי הכותרת; בלי כותרת — הסכום
+      // הראשון שנראה כסכום כספי (עם אגורות/פסיקים, לא מספר תנועה)
+      let amt = null;
+      const refs = new Set(), det = [];
+      for (const it of (cells.items || [])) {
+        const near = cols.length ? nearestCol(cols, it.x) : null;
+        const m = money(norm(it.s));
+        if (near && near.kind === 'amount') { if (m !== null && amt === null) amt = m; continue; }
+        if (!near || near.kind === 'other') continue;
+        if (near.kind === 'details') det.push(it.s);
+        symbolCandidates(it.s).forEach((r) => refs.add(r));
+      }
+      if (amt === null) amt = cells.map((c) => norm(c)).filter((c) => /[,.]\d/.test(c)).map((c) => money(c)).find((v) => v !== null) ?? amounts[0];
+      cur.tx.push({ refs: [...refs], details: det.join(' '), debit: amt > 0 ? amt : 0, credit: amt < 0 ? -amt : 0 });
+    }
   }
   pushCur();
   // מיזוג כרטיסים כפולים (כרטיס שנפרס על כמה עמודים ונסגר בתווך)
@@ -80,6 +122,7 @@ async function parseLedgerPdf(buf) {
     const prev = byKey.get(c.key);
     if (!prev) { byKey.set(c.key, { ...c }); continue; }
     prev.txCount += c.txCount;
+    prev.tx = [...(prev.tx || []), ...(c.tx || [])];
     if (c.debit || c.credit) { prev.debit = c.debit; prev.credit = c.credit; }
     prev.net = prev.debit - prev.credit;
   }

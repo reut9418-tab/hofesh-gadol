@@ -94,9 +94,18 @@ router.post('/reports/:id/ledger-file', upload.single('file'), ah(async (req, re
     // שיוך לבי"ס שנבחר בעבר לאותו כרטיס (נלמד) — 'none' = כללי (פיצול יחסי)
     const ls = cardSymbols[aliasKey(report.framework, c.key)];
     const symbolOverride = ls ? (ls === 'none' ? 'general' : ls) : null;
-    await db.prepare(
+    const cardId = (await db.prepare(
       'INSERT INTO ledger_cards (ledger_file_id, report_id, card_key, card_name, debit, credit, net, basket_type, symbol_override) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(fileId, id, c.key, c.name, c.debit, c.credit, c.net, basket, symbolOverride);
+    ).run(fileId, id, c.key, c.name, c.debit, c.credit, c.net, basket, symbolOverride)).lastInsertRowid;
+    // התנועות — לפיצול כרטיס מאוחד לפי סמל באסמכתא (lib/ledgerSplit.js);
+    // בקבוצות כדי לא לרוץ שורה-שורה מול המסד בענן
+    const tx = c.tx || [];
+    for (let i = 0; i < tx.length; i += 50) {
+      const chunk = tx.slice(i, i + 50);
+      await db.prepare(
+        `INSERT INTO ledger_card_tx (card_id, refs, details, debit, credit) VALUES ${chunk.map(() => '(?, ?, ?, ?, ?)').join(',')}`
+      ).run(...chunk.flatMap((t) => [cardId, JSON.stringify(t.refs || []), (t.details || '').slice(0, 200), t.debit || 0, t.credit || 0]));
+    }
   }
   await refreshLedgerFlag(db, id);
   res.status(201).json({ ok: true, fileId, cards: parsed.cards.length });
@@ -125,7 +134,19 @@ router.get('/reports/:id/ledger', ah(async (req, res) => {
       const { cardSymbolResolver, matchDeptsToInstitutions } = require('../lib/nameMatch');
       const byName = matchDeptsToInstitutions(institutions, [...new Set(cards.map((c) => c.card_name))]);
       const resolve = cardSymbolResolver(institutions, cards);
-      cardsOut = cards.map((c) => ({ ...c, autoSymbol: byName[c.card_name] || null, symbol: resolve(c) }));
+      // כרטיס מאוחד (סמל באסמכתא של כל תנועה) — פירוט הפיצול ותנועות בלי סמל
+      const { cardSplits } = require('../lib/ledgerSplit');
+      const splits = await cardSplits(db, cards, institutions);
+      cardsOut = cards.map((c) => {
+        const sp = splits.get(c.id);
+        return {
+          ...c, autoSymbol: byName[c.card_name] || null, symbol: resolve(c),
+          split: sp && sp.isSplit ? {
+            bySymbol: sp.bySymbol, unassignedNet: sp.unassignedNet, unassignedCount: sp.unassignedCount,
+            tx: sp.tx.map((t) => ({ id: t.id, details: t.details, net: t.net, symbol: t.symbol, method: t.method, ambiguous: t.ambiguous })),
+          } : null,
+        };
+      });
     }
   }
   res.json({
@@ -162,6 +183,22 @@ router.put('/ledger-cards/:cardId/symbol', ah(async (req, res) => {
   res.json({ ok: true, symbol: value });
 }));
 
+/* ---------- שיוך ידני של תנועה בודדת בכרטיס מאוחד לבי"ס (רעות 7.10) ----------
+   symbol: סמל; null = ביטול השיוך הידני (חזרה לאסמכתא / "ללא סמל") */
+router.put('/ledger-tx/:txId/symbol', ah(async (req, res) => {
+  const parsed = cardSymbolSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'שיוך לא תקין' });
+  const db = getDB();
+  const tx = await db.prepare('SELECT t.id, c.report_id FROM ledger_card_tx t JOIN ledger_cards c ON c.id = t.card_id WHERE t.id = ?').get(parseInt(req.params.txId));
+  if (!tx) return res.status(404).json({ error: 'תנועה לא נמצאה' });
+  const sym = parsed.data.symbol || null;
+  if (sym && !(await db.prepare('SELECT id FROM institutions WHERE report_id = ? AND symbol = ?').get(tx.report_id, sym))) {
+    return res.status(400).json({ error: 'סמל המוסד אינו בדוח' });
+  }
+  await db.prepare('UPDATE ledger_card_tx SET symbol_override = ? WHERE id = ?').run(sym, tx.id);
+  res.json({ ok: true, symbol: sym });
+}));
+
 /* ---------- שיוך כרטיס לסל (נלמד להעלאות הבאות) ---------- */
 const cardSchema = z.object({ basket_type: z.string().nullable() });
 router.put('/ledger-cards/:cardId', ah(async (req, res) => {
@@ -195,6 +232,7 @@ router.delete('/ledger-files/:fileId', ah(async (req, res) => {
   const fileId = parseInt(req.params.fileId);
   const file = await db.prepare('SELECT * FROM ledger_files WHERE id = ?').get(fileId);
   if (!file) return res.status(404).json({ error: 'קובץ לא נמצא' });
+  await db.prepare('DELETE FROM ledger_card_tx WHERE card_id IN (SELECT id FROM ledger_cards WHERE ledger_file_id = ?)').run(fileId);
   await db.prepare('DELETE FROM ledger_cards WHERE ledger_file_id = ?').run(fileId);
   await db.prepare('DELETE FROM ledger_files WHERE id = ?').run(fileId);
   await refreshLedgerFlag(db, file.report_id);

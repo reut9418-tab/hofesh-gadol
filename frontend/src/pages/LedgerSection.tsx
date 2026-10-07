@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { T } from '../theme';
 import { btn, card } from '../ui';
-import { getReportLedger, uploadLedgerFile, setLedgerCardBasket, setLedgerCardSymbol, deleteLedgerFile, setLedgerFilePayer, enrichMatchDocUrl, downloadEnrichMatchXlsx, LedgerData } from '../api';
+import { getReportLedger, uploadLedgerFile, setLedgerCardBasket, setLedgerCardSymbol, setLedgerTxSymbol, deleteLedgerFile, setLedgerFilePayer, enrichMatchDocUrl, downloadEnrichMatchXlsx, LedgerData } from '../api';
 
 const fmt = (n: number | null | undefined, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -12,6 +12,7 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
   const [data, setData] = useState<LedgerData | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [openSplit, setOpenSplit] = useState<Set<number>>(new Set()); // כרטיסים מאוחדים שפירוט התנועות שלהם פתוח
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = () => getReportLedger(reportId).then(setData).catch(() => setData(null));
@@ -246,14 +247,23 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
         const insts = data!.institutions || [];
         const EXPENSE_BASKETS = ['enrichment', 'breakfast', 'scholarships', 'trip', 'ai'];
         const showSchool = insts.length > 0;
-        const unmatched = showSchool ? data!.cards.filter((c) => EXPENSE_BASKETS.includes(c.basket_type || '') && (c.net || 0) > 0 && !c.symbol) : [];
+        const unmatched = showSchool ? data!.cards.filter((c) => EXPENSE_BASKETS.includes(c.basket_type || '') && (c.net || 0) > 0 && !c.symbol && !c.split) : [];
         const instName = (s?: string | null) => insts.find((i) => String(i.symbol) === String(s))?.name || s || '';
+        const splitUnassigned = data!.cards.filter((c) => c.split && c.split.unassignedCount > 0);
+        const toggleSplit = (id: number) => setOpenSplit((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
         return (
         <div style={{ overflowX: 'auto' }}>
           {unmatched.length > 0 && (
             <div style={{ fontSize: 12.5, color: T.amber, background: T.amberBg, borderRadius: 8, padding: '7px 11px', marginBottom: 8 }}>
               ⚠ {unmatched.length} כרטיסי הוצאה לא שויכו לבית ספר לפי השם — הם מתחלקים בין כל בתי הספר לפי כמות הילדים.
               אם הכרטיס שייך לבי"ס מסוים, בחרי אותו בעמודה "בית ספר" (הבחירה נלמדת לכרטסות הבאות).
+            </div>
+          )}
+          {splitUnassigned.length > 0 && (
+            <div style={{ fontSize: 12.5, color: T.amber, background: T.amberBg, borderRadius: 8, padding: '7px 11px', marginBottom: 8 }}>
+              ⚠ ב-{splitUnassigned.length} {splitUnassigned.length === 1 ? 'כרטיס מאוחד' : 'כרטיסים מאוחדים'} יש תנועות בלי סמל מוסד באסמכתא
+              ({splitUnassigned.map((c) => `${c.card_name}: ${c.split!.unassignedCount} תנועות, ₪${fmt(c.split!.unassignedNet)}`).join(' · ')}).
+              הן לא נזקפות לאף בית ספר עד שתשייכי אותן — לחצי על "פירוט התנועות" בשורת הכרטיס.
             </div>
           )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -267,7 +277,7 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
               </tr>
             </thead>
             <tbody>
-              {data!.cards.map((c) => (
+              {data!.cards.map((c) => (<>
                 <tr key={c.id} style={{ borderTop: `1px solid ${T.line}` }}>
                   <td style={{ padding: '6px 8px', fontWeight: 600 }}>{c.card_name}</td>
                   <td style={{ padding: '6px 8px', color: T.inkSoft, direction: 'ltr', textAlign: 'right' }}>{c.card_key}</td>
@@ -283,7 +293,20 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
                   </td>
                   {showSchool && (
                     <td style={{ padding: '6px 8px' }}>
-                      {EXPENSE_BASKETS.includes(c.basket_type || '') ? (
+                      {c.split && EXPENSE_BASKETS.includes(c.basket_type || '') ? (
+                        // כרטיס מאוחד: סמל בית הספר באסמכתא של כל תנועה — מתפצל לפי התנועות
+                        <div style={{ fontSize: 11.5 }}>
+                          <span style={{ color: c.split.unassignedCount ? T.amber : T.green, fontWeight: 600 }}
+                            title="בכרטיס זה סמל בית הספר כתוב באסמכתא של כל תנועה — הסכום מתחלק לפי התנועות">
+                            מפוצל לפי אסמכתא — {Object.keys(c.split.bySymbol).length} בתי ספר
+                          </span>
+                          {c.split.unassignedCount > 0 && <span style={{ color: T.amber }}> · {c.split.unassignedCount} ללא סמל</span>}
+                          <button onClick={() => toggleSplit(c.id)}
+                            style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 11.5, color: T.inkSoft, padding: '0 6px', textDecoration: 'underline', fontFamily: 'inherit' }}>
+                            {openSplit.has(c.id) ? 'הסתרה' : 'פירוט התנועות'}
+                          </button>
+                        </div>
+                      ) : EXPENSE_BASKETS.includes(c.basket_type || '') ? (
                         <select
                           value={c.symbol_override === 'general' ? 'general' : c.symbol_override ? String(c.symbol_override) : ''}
                           onChange={async (e) => { await setLedgerCardSymbol(c.id, e.target.value || null); await load(); onChange(); }}
@@ -298,7 +321,49 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
                     </td>
                   )}
                 </tr>
-              ))}
+                {c.split && openSplit.has(c.id) && (
+                  <tr key={`${c.id}-tx`}>
+                    <td colSpan={showSchool ? 5 : 4} style={{ padding: '4px 8px 10px 28px', background: T.paper }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+                        <thead><tr style={{ color: T.inkSoft, textAlign: 'right' }}>
+                          <th style={{ padding: '3px 6px', fontWeight: 600 }}>פרטים</th>
+                          <th style={{ padding: '3px 6px', fontWeight: 600, width: 100 }}>סכום</th>
+                          <th style={{ padding: '3px 6px', fontWeight: 600, width: 260 }}>בית ספר</th>
+                        </tr></thead>
+                        <tbody>
+                          {c.split.tx.map((t) => (
+                            <tr key={t.id} style={{ borderTop: `1px solid ${T.line}`, background: t.symbol ? undefined : T.amberBg }}>
+                              <td style={{ padding: '3px 6px' }}>{t.details || <span style={{ color: T.inkSoft }}>—</span>}</td>
+                              <td style={{ padding: '3px 6px', color: t.net < 0 ? T.red : T.ink }}>₪{fmt(t.net)}</td>
+                              <td style={{ padding: '3px 6px' }}>
+                                {t.method === 'ref' ? (
+                                  <span title="סמל המוסד מהאסמכתא">{instName(t.symbol)} ({t.symbol})</span>
+                                ) : (
+                                  <select value={t.symbol || ''}
+                                    onChange={async (e) => { await setLedgerTxSymbol(t.id, e.target.value || null); await load(); onChange(); }}
+                                    title={t.ambiguous ? `באסמכתא כמה סמלים אפשריים: ${t.ambiguous.join(', ')}` : 'תנועה ללא סמל מוסד — בחרי בית ספר'}
+                                    style={{ padding: '3px 6px', fontSize: 11.5, width: '100%', borderRadius: 6, fontFamily: 'inherit',
+                                      border: `1px solid ${t.symbol ? T.green : T.amber}` }}>
+                                    <option value="">— ללא סמל: לא נזקף —</option>
+                                    {insts.map((i) => <option key={i.symbol} value={String(i.symbol)}>{i.name} ({i.symbol})</option>)}
+                                  </select>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                          {Object.entries(c.split.bySymbol).map(([s, v]) => (
+                            <tr key={`sum-${s}`} style={{ borderTop: `1px solid ${T.line}`, fontWeight: 600 }}>
+                              <td style={{ padding: '3px 6px', color: T.inkSoft }}>סה"כ {instName(s)}</td>
+                              <td style={{ padding: '3px 6px' }}>₪{fmt(v)}</td>
+                              <td style={{ padding: '3px 6px', color: T.inkSoft }}>{s}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                )}
+              </>))}
             </tbody>
           </table>
         </div>

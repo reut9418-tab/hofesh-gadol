@@ -7,6 +7,7 @@ const { costDataForReport } = require('./reportCosts');
 const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles, coordHoursCapFor, isCoordType, notClubSql } = require('./salaryCheck');
 const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions, cardSymbolResolver } = require('./nameMatch');
+const { cardSplits } = require('./ledgerSplit');
 const { reportLabel } = require('./domain');
 const { recognizedRowCost, effectiveGross, COST_MARKUP_LIMIT } = require('./ingest');
 const { authorityEstimate } = require('./authorityEstimate');
@@ -192,9 +193,12 @@ async function stage1Data(db, report, client, authority) {
     ).all(report.id)).filter((c) => (c.net || 0) > 0);
     if (extraCards.length) {
       const symOfCard = cardSymbolResolver(insts, extraCards); // ידני קודם לשם
+      const splits = await cardSplits(db, extraCards, insts); // כרטיס מאוחד — לפי סמל באסמכתא
       const totKids = insts.reduce((s, i) => s + (i.children_count || 0), 0);
       for (const c of extraCards) {
         const m = extraAlloc[c.basket_type];
+        const sp = splits.get(c.id);
+        if (sp && sp.isSplit) { for (const [s, net] of Object.entries(sp.bySymbol)) m[s] = (m[s] || 0) + net; continue; }
         const sym = symOfCard(c);
         if (sym) m[String(sym)] = (m[String(sym)] || 0) + c.net;
         else if (totKids > 0) insts.forEach((i) => {

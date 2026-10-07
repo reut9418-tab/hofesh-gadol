@@ -241,7 +241,14 @@ export type LedgerCard = {
   // בתי"ס: שיוך הכרטיס לבי"ס — symbol_override ידני ('general' = כללי),
   // autoSymbol לפי השם, symbol = השיוך בפועל (null = מתחלק בין כל בתי הספר)
   symbol_override?: string | null; autoSymbol?: string | null; symbol?: string | null;
+  // כרטיס מאוחד: סמל בית הספר באסמכתא של כל תנועה — פיצול לפי התנועות
+  split?: {
+    bySymbol: Record<string, number>; unassignedNet: number; unassignedCount: number;
+    tx: { id: number; details: string; net: number; symbol: string | null; method: 'ref' | 'manual' | null; ambiguous: string[] | null }[];
+  } | null;
 };
+export const setLedgerTxSymbol = (txId: number, symbol: string | null) =>
+  api.put(`/ledger-tx/${txId}/symbol`, { symbol }).then((r) => r.data);
 export type LedgerCheck = { id: string; level: 'ok' | 'warn' | 'err'; text: string; a: number; b: number; diff: number };
 export type PayerRow = {
   payer: string; rows: number; hours: number; costNet: number; reported: number;
