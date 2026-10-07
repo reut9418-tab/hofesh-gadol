@@ -105,6 +105,7 @@ function BudgetSection({ reportId, onChange }: { reportId: number; onChange: () 
 function CostSection({ reportId }: { reportId: number }) {
   const [data, setData] = useState<any>(null);
   const [showAll, setShowAll] = useState(false);
+  const [open, setOpen] = useState(false); // טבלת העובדים מקופלת כברירת מחדל (רעות 7.10) — תופסת מקום
   useEffect(() => { getReportCosts(reportId).then(setData).catch(() => setData(null)); }, [reportId]);
 
   if (!data) return null;
@@ -127,6 +128,9 @@ function CostSection({ reportId }: { reportId: number }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
         <span style={{ fontWeight: 700, fontSize: 14 }}>דוח עלות שכר (מנותב)</span>
         <span style={{ fontSize: 11.5, color: T.inkSoft }}>מחלקות: {summary.departments.join(' · ')}</span>
+        <button onClick={() => setOpen((o) => !o)} style={{ ...btn('ghost'), marginInlineStart: 'auto', padding: '4px 10px', fontSize: 12 }}>
+          {open ? 'הסתרת הפירוט' : `פירוט העובדים (${rows.length})`}
+        </button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: 10, marginBottom: 14 }}>
         {[
@@ -144,7 +148,7 @@ function CostSection({ reportId }: { reportId: number }) {
           </div>
         ))}
       </div>
-      <div style={{ overflowX: 'auto' }}>
+      {open && <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ textAlign: 'right', color: T.inkSoft, fontSize: 11 }}>
@@ -175,8 +179,8 @@ function CostSection({ reportId }: { reportId: number }) {
             ))}
           </tbody>
         </table>
-      </div>
-      {rows.length > 12 && (
+      </div>}
+      {open && rows.length > 12 && (
         <button onClick={() => setShowAll((s) => !s)} style={{ ...btn('ghost'), marginTop: 10 }}>
           {showAll ? 'הצג פחות' : `הצג את כל ${rows.length} השורות`}
         </button>
