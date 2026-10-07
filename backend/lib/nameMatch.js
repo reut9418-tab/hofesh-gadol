@@ -36,8 +36,13 @@ function institutionTokens(institutions) {
    אלעד 16.9. תיקו מלא (מוסדות כפולים) נשאר דו-משמעי → ידני. */
 function matchDeptsToInstitutions(institutions, depts) {
   const indexed = institutionTokens(institutions);
+  const validSymbols = new Set(institutions.map((i) => String(i.symbol)));
   const out = {};
   for (const dept of depts) {
+    // סמל מוסד כתוב בשם עצמו ("730010 - בית יעקב רמה ג - שכר", בית שמש 7.10)
+    // — מזהה ודאי, קודם להשוואת המילים (שם כמו "בית יעקב" משותף לכמה מוסדות)
+    const inName = [...new Set((String(dept || '').match(/\d{5,7}/g) || []).filter((s) => validSymbols.has(s)))];
+    if (inName.length === 1) { out[dept] = inName[0]; continue; }
     const deptToks = new Set(tokenize(dept));
     let best = null, bestKey = null, ambiguous = false;
     for (const { inst, toks } of indexed) {
