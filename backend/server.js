@@ -8,7 +8,7 @@ const { initDatabase } = require('./db');
 
 const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5273', exposedHeaders: ['Content-Disposition'] }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // שמירת שיוכים ל-2,000+ עובדים חורגת מברירת המחדל (100KB) — רעות 7.10
 // כל בקשת שינוי מרוקנת את מטמון בריאות-הדוחות — אבל רק לדוחות הלקוח שנגעו
 // בו (ניודים בין דוחות נשארים בתוך אותו לקוח). כשהנתיב לא מזוהה — ריקון מלא.
 app.use('/api', async (req, _res, next) => {
