@@ -454,12 +454,10 @@ function renderPaymentLetterHtml(d) {
   const who = authorityName && authorityName !== clientName ? `${clientName} — ${authorityName}` : clientName;
   const t = d.totals;
   const estimate = d.units.some((u) => !(u.paymentTotal > 0));
-  const gaps = d.checks.filter((c) => c.level !== 'ok').length;
+  // פערי הבקרות אינם מוזכרים במכתב ללקוח (רעות 7.10) — הם בפירוט הפנימי
   const status = !d.hasLedger
     ? 'הסכום מבוסס על דוח הביצוע ודוח העלות; טרם התקבלו הכרטסות — הוא יאומת סופית לאחר קבלתן.'
-    : gaps > 0
-      ? `בבדיקת הכרטסות נמצאו ${gaps} ${gaps === 1 ? 'פער' : 'פערים'} — נעדכן אתכם בנפרד בפרטים.`
-      : 'הכרטסות נבדקו מול דוח העלות ודוח הביצוע ונמצאו תואמות.';
+    : 'הכרטסות נבדקו מול דוח העלות ודוח הביצוע.';
   return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
 <title>תשלום צפוי — ${esc(who)} — ${esc(d.label)}</title>
 <style>${LETTER_CSS}</style></head><body>
@@ -473,6 +471,11 @@ ${t.expected < 0
     ? '<div class="amount"><b>הסכום ייקבע לאחר השלמת הנתונים</b><br><span class="soft">לפי הנתונים הקיימים הגבייה מההורים עולה על ההוצאות המוכרות — נבדוק ונעדכן.</span></div>'
     : `<div class="amount">💰 <b>₪${fmt(t.expected)}</b>${estimate ? ' <span class="soft">(אומדן)</span>' : ''}</div>`}
 ${t.paymentAides > 0 ? `<p class="soft">מתוכם תוספת סייעות רפואיות/אישיות: ₪${fmt(t.paymentAides)}.</p>` : ''}
+${t.expected >= 0 ? `<table>
+  <thead><tr><th class="num">סכום צפוי</th><th class="num">מתוכו תקורה</th><th class="num">סייעות רשות</th><th class="num">לתשלום ללקוח</th></tr></thead>
+  <tbody><tr class="total"><td class="num">₪${fmt(t.expected)}</td><td class="num">₪${fmt(t.mgmtRecognized)}</td><td class="num">${t.authorityAides > 0 ? '₪' + fmt(t.authorityAides) : '—'}</td><td class="num">₪${fmt(t.netToClient)}</td></tr></tbody>
+</table>
+<p class="soft">"מתוכו תקורה" — תקורת הניהול והתפעול הכלולה בסכום הצפוי.${t.authorityAides > 0 ? ' "סייעות רשות" — עלות העובדים שהרשות משלמת ישירות; הרשות מעבירה את כספי המשרד בניכוי הוצאות אלו, ולכן הן מופחתות ב"לתשלום ללקוח".' : ''}</p>` : ''}
 <p class="note">${status}${estimate ? ' הסכום הוא אומדן שלנו, משום שקובץ דוח הביצוע לא כלל את חישוב התשלום של המשרד.' : ' הסכום נלקח משורת התשלום בדוח הביצוע ("סה"כ לתשלום בתוספת גמישות 25%").'}${d.hasVat ? ' הסכומים כוללים מע"מ.' : ''}</p>
 <div class="sign">בברכה,<br><b>גוטליב את ביטון, רו"ח</b></div>
 </body></html>`;
