@@ -215,34 +215,40 @@ function applyRowsToSheetXml(xml, colSpecs, startRow, rows, clearBelow = 500, un
       .join('');
   };
 
+  // מעבר אחד על ה-XML (רעות 7.10, לביא: 2,102 עובדים לקחו 25 שניות) — קודם כל
+  // שורה חיפשה והחליפה בביטוי רגולרי על כל הגיליון (O(שורות × גודל ה-XML)).
+  // כאן שורות ה-<sheetData> מפורקות פעם אחת למפה, משתנות בזיכרון, ונבנות מחדש
+  const sdOpen = xml.indexOf('<sheetData>');
+  const sdClose = xml.indexOf('</sheetData>');
+  if (sdOpen < 0 || sdClose < 0) return xml;
+  const bodyStart = sdOpen + '<sheetData>'.length;
+  const body = xml.slice(bodyStart, sdClose);
+  const byNum = new Map(); // rowNum -> { attrs, inner }
+  const rowRe = /<row r="(\d+)"([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/g;
+  let m;
+  while ((m = rowRe.exec(body)) !== null) byNum.set(parseInt(m[1]), { attrs: m[2], inner: m[3] || '', selfClosing: m[3] == null });
+
   rows.forEach((row, i) => {
     const rowNum = startRow + i;
-    const rowRe = new RegExp(`<row r="${rowNum}"([^>]*)>([\\s\\S]*?)</row>`);
-    const rm = rowRe.exec(xml);
-    if (rm) {
-      xml = xml.replace(rowRe, () => `<row r="${rowNum}"${rm[1]}>${renderRow(parseRowCells(rm[2]), rowNum, row)}</row>`); // פונקציה — $2 בנוסחאות משחית
-    } else {
-      const newRow = `<row r="${rowNum}" spans="1:28">${renderRow({}, rowNum, row)}</row>`;
-      const re = /<row r="(\d+)"/g;
-      let insertAt = -1, mm;
-      while ((mm = re.exec(xml)) !== null) { if (parseInt(mm[1]) > rowNum) { insertAt = mm.index; break; } }
-      xml = insertAt >= 0 ? xml.slice(0, insertAt) + newRow + xml.slice(insertAt) : xml.replace('</sheetData>', () => newRow + '</sheetData>');
-    }
+    const ex = byNum.get(rowNum);
+    if (ex) ex.inner = renderRow(parseRowCells(ex.inner), rowNum, row);
+    else byNum.set(rowNum, { attrs: ' spans="1:28"', inner: renderRow({}, rowNum, row) });
   });
 
   // ריקון שאריות: שורות קיימות מתחת לאזור שמולא שעדיין מכילות ערכי קלט
   for (let rowNum = startRow + rows.length; rowNum < startRow + rows.length + clearBelow; rowNum++) {
-    const rowRe = new RegExp(`<row r="${rowNum}"([^>]*)>([\\s\\S]*?)</row>`);
-    const rm = rowRe.exec(xml);
-    if (!rm) continue;
-    const cells = parseRowCells(rm[2]);
+    const ex = byNum.get(rowNum);
+    if (!ex) continue;
+    const cells = parseRowCells(ex.inner);
     const hasValue = colSpecs.some(({ col }) => (overrideCols.has(col)
       ? isStaticValue(cells[col])
       : cells[col] && /<v>|<is>/.test(cells[col].full)));
     if (!hasValue) continue;
-    xml = xml.replace(rowRe, () => `<row r="${rowNum}"${rm[1]}>${renderRow(cells, rowNum, null)}</row>`); // פונקציה — $2 בנוסחאות משחית
+    ex.inner = renderRow(cells, rowNum, null);
   }
-  return xml;
+  const rebuilt = [...byNum.entries()].sort((a, b) => a[0] - b[0])
+    .map(([n, r]) => (r.selfClosing && !r.inner ? `<row r="${n}"${r.attrs}/>` : `<row r="${n}"${r.attrs}>${r.inner}</row>`)).join('');
+  return xml.slice(0, bodyStart) + rebuilt + xml.slice(sdClose);
 }
 
 /* ניקוי נוסחאות משותפות יתומות: כשהמילוי/הריקון דורס תא-מאסטר (מחזיק את
