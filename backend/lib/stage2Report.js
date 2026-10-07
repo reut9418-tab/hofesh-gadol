@@ -11,6 +11,8 @@ const { stage1Data } = require('./stage1');
 const { ledgerReconcile, payerBreakdown, expenseComparison } = require('./reconcile');
 const { enrichMatchData } = require('./enrichMatch');
 const { reportLabel } = require('./domain');
+const { costDataForReport } = require('./reportCosts');
+const { aideTypeForPayer } = require('./fillMinistry');
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const fmt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
@@ -88,8 +90,18 @@ async function stage2Data(db, report, client, authority, { light = false } = {})
     };
   });
 
+  // הוצאות הרשות (רעות 7.10): עובדים שדוח העלות שלהם משויך למשלם רשות/עירייה/
+  // מועצה (סייעות ממשיכות וכד'). הרשות מעבירה ללקוח את כספי המשרד בניכוי
+  // ההוצאות שלה — ולכן במכתב המרוכז הן מופחתות מהסכום הצפוי. העלות בספרי
+  // הרשות (עלות מעביד, בלי מע"מ — לרשות אין חשבונית)
+  const costRows = (await costDataForReport(db, report)).rows;
+  const authorityAides = r2(costRows
+    .filter((r) => r.payer && aideTypeForPayer(r.payer, authority && authority.name) === 'סייעת ממשיכה')
+    .reduce((s, r) => s + (r.cost || 0), 0));
+
   const total = (f) => r2(units.reduce((s, u) => s + (f(u) || 0), 0));
   const totals = {
+    authorityAides,
     salaryBudget: total((u) => u.salaryBudget), salaryActual: total((u) => u.salaryActual),
     salaryRecognized: total((u) => u.salaryRecognized), uncovered: total((u) => u.uncovered),
     enrichBudget: total((u) => u.enrichBudget), enrichRecognized: total((u) => u.enrichRecognized),
@@ -101,6 +113,8 @@ async function stage2Data(db, report, client, authority, { light = false } = {})
     paymentTotal: units.some((u) => u.paymentTotal != null) ? total((u) => u.paymentTotal) : null,
     paymentAides: total((u) => u.paymentAides),
   };
+  // מה שמגיע ללקוח בפועל: הצפוי מהמשרד פחות הוצאות הרשות
+  totals.netToClient = r2(totals.expected - authorityAides);
 
   return {
     report, client, authority, label: reportLabel(report.framework, report.program),
@@ -196,6 +210,7 @@ async function computeClientStage2(db, clientId) {
       enrichRecognized: total((t) => t.enrichRecognized), bfsRecognized: total((t) => t.bfsRecognized),
       mgmtRecognized: total((t) => t.mgmtRecognized), income: total((t) => t.income),
       expected: total((t) => t.expected),
+      authorityAides: total((t) => t.authorityAides),
     },
   };
 }
@@ -422,8 +437,13 @@ const LETTER_CSS = `
   .soft{color:#7A7062;font-size:11.5px}
   .note{color:#7A7062;font-size:12px;margin-top:10px}
   .sign{margin-top:26px}
-  @media print { body{padding:12px} }
+  .toolbar{display:flex;gap:8px;justify-content:flex-start;margin-bottom:14px}
+  .toolbar button,.toolbar a{font:inherit;font-size:12.5px;color:#37322A;background:#FAF6EE;border:1px solid #9A7B2F;border-radius:8px;padding:5px 12px;cursor:pointer;text-decoration:none}
+  @media print { body{padding:12px} .toolbar{display:none} }
 `;
+/* כפתורי הורדה בראש המכתב: PDF דרך חלון ההדפסה של הדפדפן ("שמירה כ-PDF"),
+   ואקסל מנתיב ייעודי (רעות 7.10). לא מודפסים */
+const toolbar = (xlsxUrl) => `<div class="toolbar"><button onclick="window.print()">🖨 הורדה כ-PDF</button>${xlsxUrl ? `<a href="${xlsxUrl}">⬇ הורדה כאקסל</a>` : ''}</div>`;
 const sourceOf = (clientName, authorityName) =>
   (authorityName && authorityName !== clientName ? `מ${authorityName}` : 'ממשרד החינוך');
 
@@ -443,6 +463,7 @@ function renderPaymentLetterHtml(d) {
   return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
 <title>תשלום צפוי — ${esc(who)} — ${esc(d.label)}</title>
 <style>${LETTER_CSS}</style></head><body>
+${toolbar()}
 <div class="letterhead"><span><b>גוטליב את ביטון, רו"ח</b></span><span>${today}</span></div>
 <div class="to">לכבוד: ${esc(who)}</div>
 <div class="re">הנדון: תוכנית החופש הגדול — ${esc(d.label)} — התשלום הצפוי</div>
@@ -475,32 +496,39 @@ function renderClientPaymentLetterHtml(d) {
       const v = p.totals.expected || 0;
       // אומדן שלילי = הגבייה מהורים עולה על ההוצאות המוכרות — כמעט תמיד נתונים חסרים
       const amount = v < 0 ? `<span class="soft">לבדיקה **</span>` : `₪${fmt(v)}${p.isEstimate ? ' <span class="soft">*</span>' : ''}`;
-      body += `<tr><td>${esc(src)}</td><td>${esc(p.projectLabel)}</td><td class="num">${amount}</td></tr>`;
+      const aides = p.totals.authorityAides || 0;
+      // לתשלום ללקוח = הצפוי מהמשרד פחות הוצאות הרשות (סייעות רשות)
+      const net = v < 0 ? `<span class="soft">לבדיקה **</span>` : `₪${fmt(v - aides)}`;
+      body += `<tr><td>${esc(src)}</td><td>${esc(p.projectLabel)}</td><td class="num">${amount}</td><td class="num">₪${fmt(p.totals.mgmtRecognized || 0)}</td><td class="num">${aides > 0 ? '₪' + fmt(aides) : '—'}</td><td class="num"><b>${net}</b></td></tr>`;
     });
     if (multiAuth && list.length > 1) {
-      body += `<tr class="sub"><td colspan="2">סה"כ ${esc(src)}</td><td class="num">₪${fmt(list.reduce((s, p) => s + Math.max(0, p.totals.expected || 0), 0))}</td></tr>`;
+      const sum = (f) => list.reduce((s, p) => s + ((p.totals.expected || 0) < 0 ? 0 : f(p.totals)), 0);
+      body += `<tr class="sub"><td colspan="2">סה"כ ${esc(src)}</td><td class="num">₪${fmt(sum((t) => t.expected || 0))}</td><td class="num">₪${fmt(sum((t) => t.mgmtRecognized || 0))}</td><td class="num">₪${fmt(sum((t) => t.authorityAides || 0))}</td><td class="num">₪${fmt(sum((t) => (t.expected || 0) - (t.authorityAides || 0)))}</td></tr>`;
     }
   }
   // פרויקט "לבדיקה" (אומדן שלילי) אינו נספר בסכומים
-  const total = d.projects.reduce((s, p) => s + Math.max(0, p.totals.expected || 0), 0);
+  const counted = d.projects.filter((p) => (p.totals.expected || 0) >= 0);
+  const total = counted.reduce((s, p) => s + (p.totals.expected || 0), 0);
+  const totalMgmt = counted.reduce((s, p) => s + (p.totals.mgmtRecognized || 0), 0);
+  const totalAides = counted.reduce((s, p) => s + (p.totals.authorityAides || 0), 0);
   const negatives = d.projects.filter((p) => (p.totals.expected || 0) < 0);
   const noLedger = d.projects.filter((p) => !p.hasLedger).length;
-  const withGaps = d.projects.filter((p) => p.hasLedger && p.gaps > 0).length;
   return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
 <title>תשלום צפוי מרוכז — ${esc(clientName)}</title>
-<style>${LETTER_CSS}</style></head><body>
+<style>${LETTER_CSS} th,td{padding:7px 6px}</style></head><body>
+${toolbar(`/api/clients/${d.client.id}/stage2-xlsx`)}
 <div class="letterhead"><span><b>גוטליב את ביטון, רו"ח</b></span><span>${today}</span></div>
 <div class="to">לכבוד: ${esc(clientName)}</div>
 <div class="re">הנדון: תוכנית החופש הגדול — סיכום התשלומים הצפויים</div>
 <p>שלום רב,</p>
 <p>להלן הסכומים הצפויים להתקבל בגין כל אחד מפרויקטי החופש הגדול${multiAuth ? ', לפי רשות' : ''}:</p>
 <table>
-  <thead><tr><th>${multiAuth ? 'רשות' : 'גורם משלם'}</th><th>פרויקט</th><th class="num">סכום צפוי</th></tr></thead>
+  <thead><tr><th>${multiAuth ? 'רשות' : 'גורם משלם'}</th><th>פרויקט</th><th class="num">סכום צפוי</th><th class="num">מתוכו תקורה</th><th class="num">סייעות רשות</th><th class="num">לתשלום ללקוח</th></tr></thead>
   <tbody>${body}
-    <tr class="total"><td colspan="2">סה"כ צפוי להתקבל</td><td class="num">₪${fmt(total)}</td></tr>
+    <tr class="total"><td colspan="2">סה"כ</td><td class="num">₪${fmt(total)}</td><td class="num">₪${fmt(totalMgmt)}</td><td class="num">${totalAides > 0 ? '₪' + fmt(totalAides) : '—'}</td><td class="num">₪${fmt(total - totalAides)}</td></tr>
   </tbody>
 </table>
-<p class="note">${anyEstimate ? '* אומדן שלנו — קובץ דוח הביצוע לא כלל את חישוב התשלום של המשרד. ' : ''}${negatives.length ? `** ${negatives.map((p) => `${esc(sourceOf(clientName, p.authorityName).replace(/^מ/, ''))} — ${esc(p.projectLabel)}`).join(', ')}: לפי הנתונים הקיימים הגבייה מההורים עולה על ההוצאות המוכרות — הסכום ייקבע לאחר השלמת הנתונים (לא נכלל בסה"כ). ` : ''}${noLedger > 0 ? `ב-${noLedger} ${noLedger === 1 ? 'פרויקט' : 'פרויקטים'} טרם התקבלו כרטסות — הסכום יאומת סופית לאחר קבלתן. ` : ''}${withGaps > 0 ? `ב-${withGaps} ${withGaps === 1 ? 'פרויקט' : 'פרויקטים'} נמצאו פערים בבדיקת הכרטסות — נעדכן בנפרד. ` : ''}${d.client.has_vat ? 'הסכומים כוללים מע"מ.' : ''}</p>
+<p class="note">${anyEstimate ? '* אומדן שלנו — קובץ דוח הביצוע לא כלל את חישוב התשלום של המשרד. ' : ''}${negatives.length ? `** ${negatives.map((p) => `${esc(sourceOf(clientName, p.authorityName).replace(/^מ/, ''))} — ${esc(p.projectLabel)}`).join(', ')}: לפי הנתונים הקיימים הגבייה מההורים עולה על ההוצאות המוכרות — הסכום ייקבע לאחר השלמת הנתונים (לא נכלל בסה"כ). ` : ''}${noLedger > 0 ? `ב-${noLedger} ${noLedger === 1 ? 'פרויקט' : 'פרויקטים'} טרם התקבלו כרטסות — הסכום יאומת סופית לאחר קבלתן. ` : ''}"מתוכו תקורה" — תקורת הניהול והתפעול הכלולה בסכום הצפוי. ${totalAides > 0 ? '"סייעות רשות" — עלות העובדים שהרשות משלמת ישירות; הרשות מעבירה את כספי המשרד בניכוי הוצאות אלו, ולכן הן מופחתות ב"לתשלום ללקוח". ' : ''}${d.client.has_vat ? 'הסכומים כוללים מע"מ.' : ''}</p>
 <div class="sign">בברכה,<br><b>גוטליב את ביטון, רו"ח</b></div>
 </body></html>`;
 }

@@ -90,6 +90,23 @@ async function clientStage2Page(req, res, detailed) {
   res.send(detailed ? renderClientStage2Html(d) : renderClientPaymentLetterHtml(d));
 }
 router.get('/:id/stage2-doc', ah((req, res) => clientStage2Page(req, res, false)));
+/* המכתב המרוכז כאקסל — מהנתונים שכבר חושבו למכתב (הכפתור נמצא במכתב עצמו,
+   כך שהחישוב כבר במטמון); אם עדיין לא — דף "בהכנה" */
+router.get('/:id/stage2-xlsx', ah(async (req, res) => {
+  const db = getDB();
+  const { clientStage2Status, renderPreparingHtml } = require('../lib/stage2Report');
+  const clientId = parseInt(req.params.id);
+  const client = await db.prepare('SELECT name FROM clients WHERE id = ?').get(clientId);
+  if (!client) return res.status(404).json({ error: 'לקוח לא נמצא' });
+  const d = clientStage2Status(db, clientId);
+  if (!d) { res.setHeader('Content-Type', 'text/html; charset=utf-8'); return res.send(renderPreparingHtml(client.name)); }
+  const { buildClientLetterXlsx } = require('../lib/clientLetterXlsx');
+  const buf = buildClientLetterXlsx(d);
+  const outName = `תשלומים צפויים - ${client.name}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="client_${clientId}_letter.xlsx"; filename*=UTF-8''${encodeURIComponent(outName)}`);
+  res.send(buf);
+}));
 router.get('/:id/stage2-detail-doc', ah((req, res) => clientStage2Page(req, res, true)));
 
 router.get('/dashboard', ah(async (req, res) => {
