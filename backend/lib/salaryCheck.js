@@ -93,8 +93,9 @@ function isClubOperator(roleText) {
 }
 /* אותו כלל כתנאי SQL — מוציא מפעילי/ות חוג מכל חישובי השכר (מסך, מכתב,
    בקרות, המלצות) ולא רק מהייצוא (רעות 5.10). alias: "cr." כשיש JOIN */
+/* וגם עובד/ת בעלות מעביד 0 (או חסרה) — לא נכנס/ת לדוח הביצוע ולחישובים (רעות 7.10) */
 const notClubSql = (alias = '') =>
-  `NOT (COALESCE(${alias}role_text,'') LIKE '%מפעיל%' AND COALESCE(${alias}role_text,'') LIKE '%חוג%')`;
+  `NOT (COALESCE(${alias}role_text,'') LIKE '%מפעיל%' AND COALESCE(${alias}role_text,'') LIKE '%חוג%') AND COALESCE(${alias}cost,0) <> 0`;
 
 /* תפקיד כפי שמופיע בדוח השכר עצמו (עמודת "תפקיד") → איש צוות + תפקיד לפי רשימות המשרד */
 function staffFromRoleText(text) {

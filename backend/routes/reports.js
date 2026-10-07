@@ -510,6 +510,8 @@ router.get('/:id/prep', ah(async (req, res) => {
       saved: !!(r.symbol_override || r.staff_type || r.role),
       // מפעיל/ת חוג — מוצג במסך אך לא נכתב לדוח הביצוע (רעות 5.10)
       clubOperator: isClubOperator(r.role_text),
+      // עלות מעביד 0 — מוצג במסך אך לא נכתב לדוח הביצוע (רעות 7.10)
+      zeroCost: !(Number(r.cost) !== 0 && r.cost != null),
       gross: r.gross, cost: r.cost, hours: r.hours,
       hourlyGross: r.gross != null && r.hours ? r.gross / r.hours : null,
       hourlyCost: r.cost != null && r.hours ? r.cost / r.hours : null,
@@ -847,6 +849,18 @@ router.delete('/:id/cost-rows/:rowId', ah(async (req, res) => {
   if (!row) return res.status(404).json({ error: 'שורה לא נמצאה בדוח' });
   await db.prepare('DELETE FROM cost_rows WHERE id = ?').run(rowId);
   res.json({ ok: true, deleted: row.emp_name || rowId });
+}));
+
+/* מחיקת כמה שורות עובדים יחד (רעות 7.10) — רק שורות של הדוח הזה */
+router.post('/:id/cost-rows/delete-many', ah(async (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const rowIds = Array.isArray(req.body && req.body.rowIds) ? req.body.rowIds.map(Number).filter(Number.isInteger) : [];
+  if (!rowIds.length) return res.status(400).json({ error: 'לא נבחרו שורות' });
+  const ph = rowIds.map(() => '?').join(',');
+  const rows = await db.prepare(`SELECT id FROM cost_rows WHERE report_id = ? AND id IN (${ph})`).all(id, ...rowIds);
+  if (rows.length) await db.prepare(`DELETE FROM cost_rows WHERE report_id = ? AND id IN (${rows.map(() => '?').join(',')})`).run(id, ...rows.map((r) => r.id));
+  res.json({ ok: true, deleted: rows.length });
 }));
 
 /* אישור התאמות ברוטו: מגדיל את הברוטו השעתי בדיוק כדי לעמוד בתקרת ה-140%

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { T } from '../theme';
 import { btn, card, input } from '../ui';
-import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, downloadCostAssignedXlsx, downloadTargetsXlsx, applyMove, applyBumps, autoAssign, deleteCostRow, addWorker, NewWorker, PrepData, Assignment } from '../api';
+import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, downloadCostAssignedXlsx, downloadTargetsXlsx, applyMove, applyBumps, autoAssign, deleteCostRow, deleteCostRows, addWorker, NewWorker, PrepData, Assignment } from '../api';
 
 const fmt = (n: number | null, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -31,6 +31,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set()); // שורות מסומנות למחיקה קבוצתית
   // הוספת עובד/ת ידנית (למשל עובד/ת בחשבונית) — כלל רעות 24.9
   const [addOpen, setAddOpen] = useState(false);
   const emptyWorker: NewWorker = { name: '', empId: '', symbol: null, staffType: null, role: null };
@@ -61,7 +62,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
   const rowComplete = (a: Assignment) =>
     !!(a.staffType && a.role && (a.symbol || a.staffType === 'רכזת גן'));
   // מפעילי/ות חוג לא נכתבים לדוח הביצוע — אינם נספרים כחסרי שיוך
-  const missing = (data?.rows || []).filter((r) => !r.clubOperator && !rowComplete(assign[r.rowId] || { symbol: null, staffType: null, role: null })).length;
+  const missing = (data?.rows || []).filter((r) => !r.clubOperator && !r.zeroCost && !rowComplete(assign[r.rowId] || { symbol: null, staffType: null, role: null })).length;
 
   if (!data || data.rows.length === 0) return null;
 
@@ -82,6 +83,28 @@ export default function PrepSection({ reportId }: { reportId: number }) {
       });
       return next;
     });
+  };
+
+  const toggleRow = (rowId: number) =>
+    setSelected((p) => { const n = new Set(p); if (n.has(rowId)) n.delete(rowId); else n.add(rowId); return n; });
+  const shownSelected = shown.filter((r) => selected.has(r.rowId)).length;
+  const toggleAllShown = () =>
+    setSelected((p) => {
+      const n = new Set(p);
+      if (shownSelected === shown.length) shown.forEach((r) => n.delete(r.rowId));
+      else shown.forEach((r) => n.add(r.rowId));
+      return n;
+    });
+  const deleteSelected = async () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    const names = (data?.rows || []).filter((r) => selected.has(r.rowId)).map((r) => r.name || `${r.firstName || ''} ${r.lastName || ''}`);
+    const preview = names.slice(0, 8).join(', ') + (names.length > 8 ? ` ועוד ${names.length - 8}` : '');
+    if (!window.confirm(`למחוק ${ids.length} שורות מהדוח?\n${preview}\n\nהמחיקה מסירה את העובדים מהחישובים והייצוא; קליטה מחדש של קובץ העלות תחזיר את השורות.`)) return;
+    setBusy(true);
+    try { const r = await deleteCostRows(reportId, ids); setSelected(new Set()); await load(); setMsg(`${r.deleted} שורות נמחקו.`); }
+    catch (e: any) { setMsg(e?.response?.data?.error || 'המחיקה נכשלה.'); }
+    finally { setBusy(false); }
   };
 
   const save = async () => {
@@ -363,6 +386,15 @@ export default function PrepSection({ reportId }: { reportId: number }) {
           {rolesFor(bulk.staffType).map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
         <button onClick={applyBulk} style={btn('dark')}>החלה על {shown.length} המוצגים</button>
+        {selected.size > 0 && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginInlineStart: 'auto' }}>
+            <span style={{ fontSize: 11.5, color: T.inkSoft }}>{selected.size} מסומנים</span>
+            <button onClick={deleteSelected} disabled={busy} style={{ ...btn('ghost'), color: T.red, borderColor: T.red }}
+              title="מחיקת כל השורות המסומנות מהדוח (קליטה מחדש של הקובץ תחזיר אותן)">🗑 מחיקת {selected.size} המסומנים</button>
+            <button onClick={() => setSelected(new Set())} title="ביטול הסימון"
+              style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, padding: '0 4px' }}>✕</button>
+          </span>
+        )}
       </div>
 
       <datalist id={`inst-${reportId}`}>
@@ -421,6 +453,11 @@ export default function PrepSection({ reportId }: { reportId: number }) {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ position: 'sticky', top: 0, background: T.tealSoft, textAlign: 'right', color: T.ink, fontSize: 11, zIndex: 1 }}>
+              <th style={{ padding: '6px 4px', width: 22, textAlign: 'center' }} title="סימון כל המוצגים למחיקה קבוצתית">
+                <input type="checkbox" checked={shown.length > 0 && shownSelected === shown.length}
+                  ref={(el) => { if (el) el.indeterminate = shownSelected > 0 && shownSelected < shown.length; }}
+                  onChange={toggleAllShown} style={{ cursor: 'pointer' }} />
+              </th>
               <th style={{ padding: '6px 8px', fontWeight: 600 }}>עובד</th>
               <th style={{ padding: '6px 8px', fontWeight: 600, width: 96 }} title="ת.ז אדומה = ספרת ביקורת שגויה; עריכה מתקנת את כל שורות העובד ונלמדת ללקוח">ת.ז</th>
               <th style={{ padding: '6px 8px', fontWeight: 600 }}>מחלקה</th>
@@ -439,12 +476,19 @@ export default function PrepSection({ reportId }: { reportId: number }) {
               const complete = rowComplete(a);
               const instName = data.institutions.find((i) => i.symbol === a.symbol)?.name;
               return (
-                <tr key={r.rowId} style={{ borderTop: `1px solid ${T.line}`, background: r.clubOperator ? T.paper : complete ? T.greenBg + '44' : undefined, opacity: r.clubOperator ? 0.6 : 1 }}>
+                <tr key={r.rowId} style={{ borderTop: `1px solid ${T.line}`, background: selected.has(r.rowId) ? '#FBECEA' : (r.clubOperator || r.zeroCost) ? T.paper : complete ? T.greenBg + '44' : undefined, opacity: (r.clubOperator || r.zeroCost) ? 0.6 : 1 }}>
+                  <td style={{ padding: '5px 4px', textAlign: 'center' }}>
+                    <input type="checkbox" checked={selected.has(r.rowId)} onChange={() => toggleRow(r.rowId)} style={{ cursor: 'pointer' }} />
+                  </td>
                   <td style={{ padding: '5px 8px', fontWeight: 600, whiteSpace: 'nowrap' }}>
                     {r.name || `${r.firstName || ''} ${r.lastName || ''}`}
                     {r.clubOperator && (
                       <span title="לפי עמודת התפקיד בדוח השכר — לא נכתב לדוח הביצוע"
                         style={{ display: 'block', fontSize: 10.5, fontWeight: 400, color: T.inkSoft }}>מפעיל/ת חוג — לא מדווח</span>
+                    )}
+                    {!r.clubOperator && r.zeroCost && (
+                      <span title="עלות המעביד בדוח העלות היא 0 — לא נכתב לדוח הביצוע ולא נספר בחישובים"
+                        style={{ display: 'block', fontSize: 10.5, fontWeight: 400, color: T.inkSoft }}>עלות מעביד 0 — לא מדווח</span>
                     )}
                   </td>
                   {/* תיקון ת.ז לא תקינה (כלל 23.9): נערך → מעדכן את כל שורות העובד ונלמד ללקוח */}

@@ -185,6 +185,7 @@ export type PrepRow = {
   rowId: number; empId: string; name: string | null; firstName: string | null; lastName: string | null;
   dept: string; symbol: string | null; staffType: string | null; role: string | null; saved: boolean;
   clubOperator?: boolean; // מפעיל/ת חוג — לא נכתב לדוח הביצוע
+  zeroCost?: boolean; // עלות מעביד 0 — לא נכתב לדוח הביצוע
   gross: number | null; cost: number | null; hours: number | null; hourlyGross: number | null; hourlyCost: number | null;
   manualRates?: { orig: { gross: number | null; cost: number | null; hours: number | null } } | null;
 };
@@ -299,6 +300,8 @@ export const autoAssign = (reportId: number) =>
   api.post(`/reports/${reportId}/auto-assign`).then((r) => r.data);
 export const deleteCostRow = (reportId: number, rowId: number) =>
   api.delete(`/reports/${reportId}/cost-rows/${rowId}`).then((r) => r.data);
+export const deleteCostRows = (reportId: number, rowIds: number[]): Promise<{ ok: boolean; deleted: number }> =>
+  api.post(`/reports/${reportId}/cost-rows/delete-many`, { rowIds }).then((r) => r.data);
 export type NewWorker = {
   name: string; empId?: string; dept?: string; symbol?: string | null;
   staffType?: string | null; role?: string | null; hours?: number; gross?: number; cost?: number;
