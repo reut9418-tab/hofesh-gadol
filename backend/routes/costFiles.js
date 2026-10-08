@@ -48,6 +48,7 @@ async function clientReports(db, clientId) {
     id: r.id,
     label: reportLabel(r.framework, r.program),
     authorityName: r.authority_id ? (auths[r.authority_id] || null) : null,
+    framework: r.framework, program: r.program, authority_id: r.authority_id || null, // לאיתור דוח ההרחבה המקביל
   }));
 }
 
@@ -128,13 +129,31 @@ router.post('/clients/:clientId/cost-files', upload.single('file'), ah(async (re
   const reports = await clientReports(db, clientId);
   const validIds = new Set(reports.map((r) => r.id));
   const soleReport = reports.length === 1 ? reports[0].id : null;
+  const proposeFor = (dept) => {
+    const lv = learned[norm(dept)];
+    if (lv === 'none') return { proposed: null, learned: true };
+    if (lv !== undefined && validIds.has(parseInt(lv))) return { proposed: parseInt(lv), learned: true };
+    if (lv === undefined && soleReport) return { proposed: soleReport, learned: false };
+    return { proposed: null, learned: false };
+  };
+  // דוח ההרחבה המקביל לדוח (אותה מסגרת ורשות) — למחלקת "<מחלקה> — הרחבה"
+  // שנוצרה בפיצול תקופה-כפולה (רעות 8.10, לביא: שעות ההרחבה של רכזי ד-ו
+  // נותבו ל-15 יום): כשהמחלקה הבסיסית מנותבת לדוח 15 יום, חלק ההרחבה מוצע לדוח ההרחבה
+  const extensionSibling = (reportId) => {
+    const base = reports.find((r) => r.id === reportId);
+    if (!base || base.program === 'extension') return null;
+    const sib = reports.find((r) => r.id !== base.id && r.framework === base.framework && (r.authority_id || null) === (base.authority_id || null) && r.program === 'extension');
+    return sib ? sib.id : null;
+  };
   const departments = (await departmentsForFile(db, fileId)).map((d) => {
-    let proposed = null;
-    const lv = learned[norm(d.dept)];
-    if (lv === 'none') proposed = null;
-    else if (lv !== undefined && validIds.has(parseInt(lv))) proposed = parseInt(lv);
-    else if (lv === undefined && soleReport) proposed = soleReport;
-    return { ...d, proposedReportId: proposed, learned: lv !== undefined };
+    let { proposed, learned: isLearned } = proposeFor(d.dept);
+    const extM = /^(.*) — הרחבה$/.exec(String(d.dept || ''));
+    if (extM && !isLearned) {
+      const baseProp = proposeFor(extM[1]).proposed;
+      const sib = baseProp != null ? extensionSibling(baseProp) : null;
+      if (sib) proposed = sib;
+    }
+    return { ...d, proposedReportId: proposed, learned: isLearned };
   });
 
   res.status(201).json({
