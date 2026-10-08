@@ -768,7 +768,52 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
         .run(g, u.st, role, u.r.id);
     }));
   }
-  res.json({ ok: true, assigned, gardens: gardens.length, coordinators: coordDesignated, coordPositions });
+
+  // כלל רעות (8.10, אור יהודה): בכל גן גננת אחת — בעלת השעות הרבות ביותר
+  // (תקן: 6 שעות × ימי הפרויקט) — וכל השאר סייעות. חל רק על עובדות שתפקידן
+  // לא נקבע במקור מוסמך (עמודת תפקיד בדוח העלות / שיוך בקובץ המשרד);
+  // רכזות גן לא נספרות. הסייעת ממשיכה/חדשה לפי המשלם של קובץ העלות.
+  const aaClient = await db.prepare('SELECT name FROM clients WHERE id = ?').get(report.client_id);
+  const aaAuth = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  const aaEmployer = (aaAuth && aaAuth.name) || (aaClient && aaClient.name) || '';
+  const fresh = await db.prepare(`SELECT cr.*, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id WHERE cr.report_id = ? AND ${notClubSql('cr.')}`).all(id);
+  const byGarden = new Map();
+  for (const r of fresh) {
+    const sym = symbolOf(r);
+    if (!sym || !staffed.has(sym)) continue;
+    if (/רכזת גן/.test(String(r.staff_type || ''))) continue;
+    const fa = fileAssignOf(r);
+    if (r.role_text || (fa && fa.staffType)) continue; // מקור מוסמך — לא נוגעים
+    if (!byGarden.has(sym)) byGarden.set(sym, []);
+    byGarden.get(sym).push(r);
+  }
+  const roleUpdates = [];
+  let leads = 0, aides = 0;
+  const capHours = 6 * (report.program === 'extension' ? (report.extension_days || 6) : 15);
+  let overCap = 0;
+  for (const [, list] of byGarden) {
+    list.sort((a, b) => (b.hours || 0) - (a.hours || 0) || (b.gross || 0) - (a.gross || 0));
+    list.forEach((r, i) => {
+      const want = i === 0
+        ? { staffType: 'גננת', role: 'גננת של הגן' }
+        : { staffType: aideTypeForPayer(r.payer || aaEmployer, aaAuth && aaAuth.name), role: 'סייעת' };
+      if (i === 0 && (r.hours || 0) > capHours + 0.01) overCap++;
+      if (r.staff_type === want.staffType && r.role === want.role) return;
+      roleUpdates.push({ r, ...want });
+      if (i === 0) leads++; else aides++;
+    });
+  }
+  for (let i = 0; i < roleUpdates.length; i += CHUNK) {
+    await Promise.all(roleUpdates.slice(i, i + CHUNK).map((u) =>
+      db.prepare('UPDATE cost_rows SET staff_type = ?, role = ? WHERE id = ?').run(u.staffType, u.role, u.r.id)));
+  }
+  // הזיכרון הידני (worker_assign) מתעדכן בהתאם — אחרת החלפת קובץ תחזיר את הישן
+  if (roleUpdates.length) {
+    try {
+      await saveManualAssignments(db, id, roleUpdates.map((u) => ({ empId: u.r.emp_id, dept: u.r.dept, symbol: symbolOf(u.r), staffType: u.staffType, role: u.role })));
+    } catch { /* זיכרון בלבד */ }
+  }
+  res.json({ ok: true, assigned, gardens: gardens.length, coordinators: coordDesignated, coordPositions, leads, aides, overCap, capHours });
 }));
 
 /* ---------- פיצול שורת עובד/ת בין מוסדות (כלל רעות 17.9: "פיצול שורות
