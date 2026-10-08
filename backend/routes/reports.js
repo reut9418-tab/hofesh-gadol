@@ -240,30 +240,10 @@ router.get('/:id/costs', ah(async (req, res) => {
   res.json(await costDataForReport(db, report));
 }));
 
-/* ---------- העלאת דוח הביצוע של המשרד → בניית התקציב אוטומטית (§9) ---------- */
-router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
-  const db = getDB();
-  const id = parseInt(req.params.id);
-  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
-  if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
-  if (!req.file) return res.status(400).json({ error: 'לא צורף קובץ' });
-
-  // פענוח אחד של הקובץ (2-3MB) משרת את כל הקליטה — קודם הוא פוענח 3-6 פעמים
-  // (תקציב, רכזות גנים, ימי פעילות, תעריף, שיוכי עובדים, סוגי צוות, חימום)
-  let parsed, wb;
-  try {
-    wb = require('xlsx').read(req.file.buffer, { type: 'buffer' });
-    parsed = parseBudgetFile(wb, { program: report.program, extensionDays: report.extension_days });
-  }
-  catch { return res.status(422).json({ error: 'לא הצלחתי לקרוא את קובץ דוח הביצוע.' }); }
-  if (parsed.error) return res.status(422).json({ error: parsed.error });
-  if (!parsed.institutions.length) {
-    if (parsed.schoolsNotComputed) {
-      return res.status(422).json({ error: 'לשונית "תקצוב לפי מוסד" בקובץ לא חושבה (אין סמלי מוסדות — הנוסחאות קפואות). יש לפתוח את הקובץ ב-Excel, לוודא שנבחרה הרשות בגיליון "נתונים כלליים", להקיש Ctrl+Alt+F9 לשמור — ולהעלות שוב.' });
-    }
-    return res.status(422).json({ error: 'לא נמצאו מוסדות עם תקציב מחושב בקובץ. ודאי שכמות הילדים מולאה ב"מצבת והרשמה" ושהקובץ נשמר ב-Excel.' });
-  }
-
+/* תקציב מקובץ המשרד שפוענח → המסד: תקציב הריכוז בגנים (מס' הגנים הזכאים ×
+   עלות הרכזת לגן), ואז החלפת המוסדות והסלים של הדוח. משותף להעלאת קובץ
+   ולעדכון "איוש עובר" אחרי ייצוא (רעות 8.10) */
+async function storeParsedBudget(db, id, report, parsed, wb) {
   // גנים: תקציב הריכוז = מס' הגנים הזכאים (המובילה אינה גננת) × עלות הרכזת
   // לגן. מחושב אצלנו תמיד — גם כשהקובץ חישב ערך: נוסחת המשרד (ריכוז נתונים
   // AC14) מכפילה את סה"כ המשרות (0.2 לגן) בעלות לגן — באג באקסל של משרד
@@ -287,25 +267,6 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
         }
       } catch { /* בלי הלשונית — נשאר כפי שחישב המשרד */ }
     }
-  }
-
-  // כל המוסדות עם תקציב 0 — הקובץ נקרא, אבל האקסל של המשרד חישב זכאות אפס.
-  const allZero = parsed.institutions.every((i) => !(i.total > 0));
-  if (allZero) {
-    const reasons = [];
-    if (parsed.institutions.some((i) => i.staffingInvalid))
-      reasons.push('גיליון "איוש משרות" לא מולא — המשרד מסמן "לא תקין" ומאפס את הזכאות');
-    // רק כשבקובץ רשום במפורש 0 ימים (null = בתבנית הזו אין שדה כזה — לא מציפים סתם)
-    if (parsed.institutions.some((i) => i.days === 0))
-      reasons.push('ימי הפעילות לא מולאו (0 ימים)');
-    if (parsed.institutions.some((i) => i.afterControlZero))
-      reasons.push(`כמות הילדים דווחה (${parsed.institutions.find((i) => i.afterControlZero)?.reported ?? '?'}) אך "תלמידים לתקצוב לאחר בקרת איוש" = 0 — כנראה גיליון "איוש משרות" לא הושלם בקובץ`);
-    else if (parsed.institutions.some((i) => i.reported > 0 && !(i.eligibleReg > 0 || i.eligibleSpec > 0)))
-      reasons.push('כמות הילדים דווחה אך הזכאים לאחר בקרה = 0');
-    if (!reasons.length) reasons.push('ייתכן שהקובץ לא חושב מחדש — לפתוח ב-Excel, ללחוץ Ctrl+Alt+F9 ולשמור');
-    return res.status(422).json({
-      error: `הקובץ נקרא (${parsed.institutions.length} מוסדות, ${parsed.authority || 'רשות לא זוהתה'}), אבל המשרד חישב בו תקציב 0 לכל המוסדות. סיבות בקובץ: ${reasons.join(' · ')}. יש להשלים את הנתונים בקובץ המשרד ולהעלות שוב.`,
-    });
   }
 
   // החלפת המוסדות של הדוח (מוחקים סלים/תנועות ישנים תחילה)
@@ -335,6 +296,103 @@ router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
     await Promise.all(Object.entries(inst.baskets || {}).filter(([, amount]) => amount > 0).map(([type, amount]) =>
       db.prepare('INSERT INTO baskets (institution_id, basket_type, budget_amount) VALUES (?, ?, ?)').run(iid, type, amount)));
   }
+
+}
+
+/* "איוש עובר" (רעות 8.10, קרית ים הרחבה): קובץ מהפורטל שהועלה לפני שמולאו
+   עובדים נושא "תלמידים לתקצוב לאחר בקרת איוש" מופחת (179 מתוך 934), והמכתב
+   הראה "חריגה" של ₪150K שאינה קיימת בקובץ שירד ונפתח באקסל. אחרי כל ייצוא,
+   התקציב במסד מחושב מחדש כמו שאקסל יחשב עם האיוש שנכתב: גנים — ילדי הגנים
+   שבהם גננת+סייעת; בתי ספר — מוסדות שבהם רכז/ת. מתעדכן רק כשהזכאות גדלה
+   (קובץ סופי שחושב באקסל אינו נדרס). "דוח ביצוע סופי" נשאר לסכומי התשלום. */
+async function syncBudgetToStaffing(db, id, report, buf, execRows) {
+  if (report.framework === 'prep') return null;
+  const wb = require('xlsx').read(buf, { type: 'buffer' });
+  const opts = { program: report.program, extensionDays: report.extension_days };
+  const typeOf = (r) => String(r[6] || '');
+  if (report.framework === 'gardens') {
+    const exec = parseGardenExecKids(wb);
+    if (!exec || !exec.kidsBySymbol) return null;
+    const staffed = new Map();
+    for (const r of execRows) {
+      const sym = String(r[0] || '');
+      if (!sym) continue;
+      const e = staffed.get(sym) || { gan: false, say: false };
+      if (/גננת|מוביל/.test(typeOf(r))) e.gan = true;
+      if (/סייע/.test(typeOf(r))) e.say = true;
+      staffed.set(sym, e);
+    }
+    let kids = 0;
+    for (const [sym, e] of staffed) if (e.gan && e.say) kids += exec.kidsBySymbol[sym] || 0;
+    if (!(kids > 0)) return null;
+    opts.staffingKids = Math.round(kids * 100) / 100;
+  } else {
+    const pass = new Set();
+    for (const r of execRows) if (r[0] && /רכז/.test(typeOf(r)) && !/סג[נן]|רשותי/.test(typeOf(r))) pass.add(String(r[0]));
+    if (!pass.size) return null;
+    opts.staffingPass = pass;
+  }
+  const parsed = parseBudgetFile(wb, opts);
+  if (parsed.error || !parsed.institutions.length) return null;
+  // מעדכנים רק כשהזכאות שחושבה גדולה מהשמורה — קובץ שכבר חושב באקסל נשאר
+  const stored = new Map((await db.prepare('SELECT symbol, children_count, budget_total FROM institutions WHERE report_id = ?').all(id)).map((i) => [String(i.symbol), i]));
+  const grew = parsed.institutions.some((i) => {
+    const s = stored.get(String(i.symbol));
+    return !s || Math.round(i.eligibleReg || 0) + Math.round(i.eligibleSpec || 0) > (Number(s.children_count) || 0) + 0.5;
+  });
+  if (!grew) return null;
+  const before = [...stored.values()].reduce((s, i) => s + (Number(i.budget_total) || 0), 0);
+  await storeParsedBudget(db, id, report, parsed, wb);
+  const after = Number((await db.prepare('SELECT COALESCE(SUM(budget_total),0) s FROM institutions WHERE report_id = ?').get(id)).s);
+  require('../lib/status').bustHealthCache([id]);
+  console.log(`[export ${id}] איוש עובר: תקציב ${Math.round(before)} → ${Math.round(after)}`);
+  return { before, after };
+}
+
+/* ---------- העלאת דוח הביצוע של המשרד → בניית התקציב אוטומטית (§9) ---------- */
+router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+  if (!report) return res.status(404).json({ error: 'דוח לא נמצא' });
+  if (!req.file) return res.status(400).json({ error: 'לא צורף קובץ' });
+
+  // פענוח אחד של הקובץ (2-3MB) משרת את כל הקליטה — קודם הוא פוענח 3-6 פעמים
+  // (תקציב, רכזות גנים, ימי פעילות, תעריף, שיוכי עובדים, סוגי צוות, חימום)
+  let parsed, wb;
+  try {
+    wb = require('xlsx').read(req.file.buffer, { type: 'buffer' });
+    parsed = parseBudgetFile(wb, { program: report.program, extensionDays: report.extension_days });
+  }
+  catch { return res.status(422).json({ error: 'לא הצלחתי לקרוא את קובץ דוח הביצוע.' }); }
+  if (parsed.error) return res.status(422).json({ error: parsed.error });
+  if (!parsed.institutions.length) {
+    if (parsed.schoolsNotComputed) {
+      return res.status(422).json({ error: 'לשונית "תקצוב לפי מוסד" בקובץ לא חושבה (אין סמלי מוסדות — הנוסחאות קפואות). יש לפתוח את הקובץ ב-Excel, לוודא שנבחרה הרשות בגיליון "נתונים כלליים", להקיש Ctrl+Alt+F9 לשמור — ולהעלות שוב.' });
+    }
+    return res.status(422).json({ error: 'לא נמצאו מוסדות עם תקציב מחושב בקובץ. ודאי שכמות הילדים מולאה ב"מצבת והרשמה" ושהקובץ נשמר ב-Excel.' });
+  }
+
+  // כל המוסדות עם תקציב 0 — הקובץ נקרא, אבל האקסל של המשרד חישב זכאות אפס.
+  const allZero = parsed.institutions.every((i) => !(i.total > 0));
+  if (allZero) {
+    const reasons = [];
+    if (parsed.institutions.some((i) => i.staffingInvalid))
+      reasons.push('גיליון "איוש משרות" לא מולא — המשרד מסמן "לא תקין" ומאפס את הזכאות');
+    // רק כשבקובץ רשום במפורש 0 ימים (null = בתבנית הזו אין שדה כזה — לא מציפים סתם)
+    if (parsed.institutions.some((i) => i.days === 0))
+      reasons.push('ימי הפעילות לא מולאו (0 ימים)');
+    if (parsed.institutions.some((i) => i.afterControlZero))
+      reasons.push(`כמות הילדים דווחה (${parsed.institutions.find((i) => i.afterControlZero)?.reported ?? '?'}) אך "תלמידים לתקצוב לאחר בקרת איוש" = 0 — כנראה גיליון "איוש משרות" לא הושלם בקובץ`);
+    else if (parsed.institutions.some((i) => i.reported > 0 && !(i.eligibleReg > 0 || i.eligibleSpec > 0)))
+      reasons.push('כמות הילדים דווחה אך הזכאים לאחר בקרה = 0');
+    if (!reasons.length) reasons.push('ייתכן שהקובץ לא חושב מחדש — לפתוח ב-Excel, ללחוץ Ctrl+Alt+F9 ולשמור');
+    return res.status(422).json({
+      error: `הקובץ נקרא (${parsed.institutions.length} מוסדות, ${parsed.authority || 'רשות לא זוהתה'}), אבל המשרד חישב בו תקציב 0 לכל המוסדות. סיבות בקובץ: ${reasons.join(' · ')}. יש להשלים את הנתונים בקובץ המשרד ולהעלות שוב.`,
+    });
+  }
+
+  await storeParsedBudget(db, id, report, parsed, wb);
 
   // שומרים את קובץ המשרד בדיסק — ממלאים אותו בחזרה בייצוא (§9);
   // ב-Cloudflare Workers אין דיסק — העותק במסד (report_files) הוא המקור
@@ -1590,6 +1648,10 @@ router.get('/:id/export', ah(async (req, res) => {
   const authorityCoordRows = execRows.filter((r) => isAuthorityCoord(r[6]));
   const schoolRows = execRows.filter((r) => !isAuthorityCoord(r[6]));
   const filled = await fillMinistryReport(srcBuf, schoolRows, coordRows, expenses, income, authorityCoordRows);
+  // "איוש עובר": התקציב במערכת מתעדכן לפי האיוש שנכתב — כמו שאקסל יחשב כשהקובץ
+  // ייפתח — כדי שהמכתב ושלב 2 יתאימו לקובץ שירד (רעות 8.10). כישלון לא עוצר את הייצוא
+  try { await syncBudgetToStaffing(db, id, report, srcBuf, execRows); }
+  catch (e) { console.error(`[export ${id}] איוש עובר נכשל:`, e.message); }
   const exAuthority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
   // כשהקובץ שהועלה הוא בעצמו ייצוא קודם שלנו — לא לשרשר "דוח ביצוע ממולא" פעמיים
   const exBase = (report.budget_file_name || 'report.xlsx').replace(/\.xlsx?$/i, '').replace(/^(דוח ביצוע ממולא - )+/, '');

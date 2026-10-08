@@ -201,6 +201,16 @@ function parseAggregateSheet(rows, sheetName, wb = null, opts = {}) {
   let kids = (afterControl > 0 ? afterControl : null)
     ?? (execOk ? execInfo.total : null)
     ?? (effOk ? effectiveTotal : null) ?? reg;
+  // "איוש עובר" (רעות 8.10, קרית ים): אחרי שהמערכת מילאה גננת+סייעת בגנים,
+  // בקרת האיוש של המשרד תעבור ברגע שהקובץ ייפתח באקסל — התקציב מחושב כבר
+  // עכשיו על ילדי הגנים המאוישים (opts.staffingKids) במקום על מה שהקובץ
+  // הקפוא "לאחר בקרת איוש" (179 מתוך 934). הסלים נבנים מחדש מתעריפי הקובץ
+  if (opts.staffingKids > 0 && opts.staffingKids > (kids || 0) + 0.5) {
+    kids = opts.staffingKids;
+    budget = 0;
+    totalNet = null;
+    for (const k of Object.keys(baskets)) baskets[k] = 0;
+  }
   // בקרת האיוש של המשרד איפסה את כל החישוב אך ההרשמה מולאה — בונים את
   // התקציב בעצמנו: ילדים × תעריף המשרד לילד, והסלים לפי תעריפי-הסל לילד
   let ratesFallback = false;
@@ -867,7 +877,16 @@ function parseBudgetFile(buf, opts = {}) {
 
   // חישוב המשרד אופס (איוש משרות לא מולא) אך דווחו ילדים — בונים תקציב
   // מטבלת התעריפים הרשמית שבקובץ: לתלמיד × ילדים + קבוע למוסד (רכז/סגן/ניהול)
-  if (institutions.length && institutions.every((i) => !(i.total > 0))) {
+  // "איוש עובר" (רעות 8.10): בתי ספר שהמערכת שיבצה בהם רכז/ת (opts.staffingPass)
+  // ושהקובץ הקפוא הפחית בהם ילדים בבקרת האיוש — מחושבים מחדש על הדיווח
+  const passSet = opts.staffingPass instanceof Set ? opts.staffingPass : null;
+  const allZero = institutions.length > 0 && institutions.every((i) => !(i.total > 0));
+  const needsRecalc = allZero ? institutions : institutions.filter((i) =>
+    passSet && passSet.has(String(i.symbol)) && (i.reported || 0) > (i.eligibleReg || 0) + 0.5);
+  for (const inst of needsRecalc) {
+    if (inst.total > 0) { inst.eligibleReg = null; inst.eligibleSpec = null; inst.baskets = {}; inst.totalNet = null; inst.total = 0; }
+  }
+  if (needsRecalc.length) {
     const rates = parseSchoolRates(wb, opts.program);
     const regCounts = parseRegistrationCounts(wb);
     const coordSup = parseCoordSupplements(wb);
@@ -884,7 +903,7 @@ function parseBudgetFile(buf, opts = {}) {
       // (ריכוז/ניהול) הוא תעריף-ליום × ימים (ערכי המבנה הם ל-7 ימים).
       const isExt = opts.program === 'extension';
       const daysBySym = isExt ? parseSchoolDays(wb) : {};
-      for (const inst of institutions) {
+      for (const inst of needsRecalc) {
         const regInfo = regCounts[String(inst.symbol)] || null;
         const days = isExt ? (daysBySym[String(inst.symbol)] || inst.days || opts.extensionDays || 7) : 7;
         const df = isExt ? Math.min(days, 7) / 7 : 1;
