@@ -50,7 +50,7 @@ function coordHoursCapFor(report, coordBudget = null) {
   }
   return Math.round(COORD_HOURS_PER_DAY * capDays * 100) / 100;
 }
-const isCoordType = (st) => /רכז/.test(st) && !/סג[נן]/.test(st) && !/רכזת גן/.test(st);
+const isCoordType = (st) => /רכז/.test(st) && !/סג[נן]/.test(st) && !/רכזת גן/.test(st) && !/רשותי/.test(st); // רכז רשותי — לא בתקרת בי"ס
 function demoteExtraSchoolRoles(schoolRows, coordCap = COORD_HOURS_PER_DAY * 15) {
   const demoted = new Set();
   // רכזים — תקרת שעות: הידניים נספרים תחילה, ואז מסווגי-שעות לפי שעות יורד
@@ -131,7 +131,8 @@ function defaultSchoolsStaff(hourlyGross) {
 function basketForStaff(staffType) {
   const st = String(staffType || '');
   if (/סגנית|סגן/.test(st)) return 'deputy';
-  if (/רכז/.test(st)) return 'coordinator'; // רכזת גן / רכזת תכנית בבית הספר / רכז רשותי
+  if (/רשותי/.test(st)) return 'authority'; // רכז רשותי — שורת הרשות בקובץ, לא בסלי המוסדות (רעות 8.10)
+  if (/רכז/.test(st)) return 'coordinator'; // רכזת גן / רכזת תכנית בבית הספר
   return 'instruction'; // גננת / סייעת / מדצ / מורה / תוספת כח אדם
 }
 
@@ -162,7 +163,8 @@ async function salaryCheck(db, report) {
   rows.forEach((r) => {
     const byHours = hoursRule ? schoolsRoleByHours(r.hours) : null;
     const st = r.staff_type || (byHours && byHours.staffType) || suggestRole(r.dept).staffType;
-    actual[basketForStaff(st)] += recognizedRowCost(r, vatFactor);
+    const b = basketForStaff(st);
+    if (b in actual) actual[b] += recognizedRowCost(r, vatFactor); // 'authority' — מחוץ לסלים
   });
 
   const labels = BASKET_LABELS[report.framework] || BASKET_LABELS.schools;

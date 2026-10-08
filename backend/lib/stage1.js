@@ -174,6 +174,7 @@ async function stage1Data(db, report, client, authority) {
       const v = recognizedRowCost(r, vatFactor);
       const st = staffOf(r);
       const basket = basketForStaff(st);
+      if (basket === 'authority') continue; // רכז רשותי — שורת הרשות, לא בסלי המוסד
       if (basket === 'coordinator' || basket === 'deputy') netCoord += r.cost || 0;
       else netInstr += r.cost || 0;
       if (basket === 'coordinator') { coord += v; if (isCoordType(String(st || ''))) coordHours += r.hours || 0; }

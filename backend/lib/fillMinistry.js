@@ -88,8 +88,17 @@ function detectStartRow(buf) {
   if (!head) return { error: 'לא נמצאה שורת הכותרות ("סמל מקום פעילות") בגיליון עלויות כח האדם.' };
   const skipCoord = cells.some((x) => x.r === head.r + 1 && x.v.includes('רכז רשותי'));
   const colSpecs = MINISTRY_OFFSETS.map(({ src, off, kind, overrideFormula, keepFormulaFlag }) => ({ src, col: XLSX.utils.encode_col(head.c + off), kind, overrideFormula: !!overrideFormula, keepFormulaFlag }));
-  return { sheetName, headerRow: head.r + 1, startRow: head.r + (skipCoord ? 3 : 2), baseCol: head.c, colSpecs }; // 1-based
+  // שורת "רכז רשותי" (מיד אחרי הכותרת, כשקיימת בתבנית): איש צוות/תפקיד
+  // ממולאים מראש; כותבים בה רק ת.ז/שמות/מעסיק/תעריפים/שעות — לא סמל
+  const coordRow = skipCoord ? head.r + 2 : null;
+  const coordColSpecs = colSpecs.filter((s) => ![0, 6, 7].includes(s.src));
+  return { sheetName, headerRow: head.r + 1, startRow: head.r + (skipCoord ? 3 : 2), baseCol: head.c, colSpecs, coordRow, coordColSpecs }; // 1-based
 }
+
+/* "רכז רשותי" (רעות 8.10, בנימינה): איש צוות ברמת הרשות, לא של בית ספר —
+   נכתב לשורה הייעודית שבראש לשונית כח האדם ואינו נזקף לסלי המוסדות */
+const AUTHORITY_COORD = 'רכז רשותי';
+const isAuthorityCoord = (st) => /רשותי/.test(String(st || ''));
 
 /* שיוכי עובד→סמל שכבר מולאו בלשונית כח האדם של הקובץ שהועלה (ע"י הלקוח,
    הרשות או ייצוא קודם שלנו): ת"ז → { סמל, איש צוות, תפקיד }. נשמרים בעדכון
@@ -111,7 +120,8 @@ function extractWorkerAssignments(bufOrWb) {
     const id = get(2).replace(/\D/g, ''); // ת"ז (היסט 2 מעמודת הסמל)
     if (!id) continue;
     const symbol = get(0).replace(/\D/g, '');
-    if (!symbol || out[id]) continue; // השורה הראשונה של העובד קובעת
+    // רכז רשותי — בלי סמל מוסד (שורת הרשות); שאר השורות דורשות סמל
+    if ((!symbol && !isAuthorityCoord(get(6))) || out[id]) continue; // השורה הראשונה של העובד קובעת
     const a = { symbol, staffType: get(6) || null, role: get(7) || null };
     out[id] = a;
     // קבצי שכר מסוימים (עיריית יבנה) נותנים ת"ז בלי ספרת ביקורת — מפתח
@@ -281,7 +291,7 @@ function stripOrphanSharedFormulas(xml) {
    expenses (אופציונלי): { aggregate: {basketKey: {amount, cards, source}} } לגנים,
    או { perSchool: [[סמל, מהות, סכום, כרטיס, מקור], ...] } לבתי"ס — ללשונית הוצאות בפועל.
    מחזיר Buffer של ה-xlsx הממולא. */
-async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, income = null) {
+async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, income = null, authorityCoord = null) {
   const det = detectStartRow(buf);
   if (det.error) throw new Error(det.error);
 
@@ -311,7 +321,15 @@ async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, 
     stylesXml = stylesXml.replace(cx[0], `<cellXfs${cx[1].replace(/count="\d+"/, `count="${idx + 1}"`)}>${cx[2]}${clone}</cellXfs>`);
     return (unlocked[s] = String(idx));
   };
-  xml = stripOrphanSharedFormulas(applyRowsToSheetXml(xml, det.colSpecs, det.startRow, rows, 500, unlockStyle));
+  // רכז רשותי: לשורה הייעודית כשיש כזו בתבנית; אחרת — כשורה רגילה (לא לאבד)
+  let mainRows = rows;
+  if (authorityCoord && authorityCoord.length) {
+    if (det.coordRow) {
+      xml = applyRowsToSheetXml(xml, det.coordColSpecs, det.coordRow, [authorityCoord[0]], 0, unlockStyle);
+      if (authorityCoord.length > 1) mainRows = [...rows, ...authorityCoord.slice(1)];
+    } else mainRows = [...rows, ...authorityCoord];
+  }
+  xml = stripOrphanSharedFormulas(applyRowsToSheetXml(xml, det.colSpecs, det.startRow, mainRows, 500, unlockStyle));
   zip.file(sheetPath, xml);
   if (stylesXml && Object.keys(unlocked).length) zip.file('xl/styles.xml', stylesXml);
 
@@ -702,6 +720,7 @@ function aideTypeForPayer(payer, authorityName) {
 
 function mapGardensStaff(staffType, role, aideType = 'סייעת ממשיכה') {
   const st = String(staffType || '').trim();
+  if (isAuthorityCoord(st)) return { staffType: AUTHORITY_COORD, role: AUTHORITY_COORD };
   const entry = STAFF_TYPES.find((x) => x.type === st);
   if (entry) {
     const exact = role && entry.roles.find((r) => r.trim() === String(role).trim());
@@ -718,6 +737,7 @@ function mapGardensStaff(staffType, role, aideType = 'סייעת ממשיכה') 
 }
 
 function mapSchoolsStaff(staffType, role, schoolTypes) {
+  if (isAuthorityCoord(staffType)) return { staffType: AUTHORITY_COORD, role: AUTHORITY_COORD };
   let st = staffType, rl = role;
   const m = st && SCHOOL_TYPE_MAP[String(st).trim()];
   if (m) { st = m.staffType; rl = m.role; }
@@ -815,7 +835,7 @@ function extractInstitutions(buf) {
 
 module.exports = {
   fillMinistryReport, detectStartRow, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, parseExpenseActuals,
-  SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
+  SCHOOL_STAFF_TYPES, extractSchoolStaffTypes, AUTHORITY_COORD, isAuthorityCoord,
   SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer,
   detectExpenseSheet, EXPENSE_LABEL_HE,
   STAFF_TYPES, MINISTRY_SHEET_HINT, COORD_SHEET_HINT,

@@ -60,7 +60,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
   });
   // כלל רעות 24.9: רכזת גן בגנים אינה צריכה שיוך לסמל — שלמה עם תפקיד בלבד
   const rowComplete = (a: Assignment) =>
-    !!(a.staffType && a.role && (a.symbol || a.staffType === 'רכזת גן'));
+    !!(a.staffType && a.role && (a.symbol || a.staffType === 'רכזת גן' || a.staffType === 'רכז רשותי')); // רכז רשותי — בלי סמל מוסד
   // מפעילי/ות חוג לא נכתבים לדוח הביצוע — אינם נספרים כחסרי שיוך
   const missing = (data?.rows || []).filter((r) => !r.clubOperator && !r.zeroCost && !rowComplete(assign[r.rowId] || { symbol: null, staffType: null, role: null })).length;
 

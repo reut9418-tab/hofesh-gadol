@@ -12,7 +12,7 @@ const { costDataForReport } = require('../lib/reportCosts');
 const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff, parseGardenExecKids, norm } = require('../lib/budgetFile');
 const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
-  SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer } = require('../lib/fillMinistry');
+  SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer, AUTHORITY_COORD, isAuthorityCoord } = require('../lib/fillMinistry');
 const { isClubOperator, notClubSql, salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor } = require('../lib/salaryCheck');
 const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = require('../lib/applyAssignments');
 const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
@@ -557,7 +557,8 @@ router.get('/:id/prep', ah(async (req, res) => {
 
   res.json({
     rows, institutions,
-    staffTypes: isSchools ? (schoolTypes || SCHOOL_STAFF_TYPES) : STAFF_TYPES,
+    // + "רכז רשותי" (רעות 8.10, בנימינה) — נכתב לשורה הייעודית בראש לשונית כח האדם
+    staffTypes: [...(isSchools ? (schoolTypes || SCHOOL_STAFF_TYPES) : STAFF_TYPES), { type: AUTHORITY_COORD, roles: [AUTHORITY_COORD] }],
     employer: (authority && authority.name) || (client && client.name) || '',
     hasBudgetFile: !!prepBuf,
     budgetFileName: report.budget_file_name || null,
@@ -1493,7 +1494,10 @@ router.get('/:id/export', ah(async (req, res) => {
 
   const expenses = await buildExpenseFill(db, report, client);
   const income = await buildIncomeFill(db, report);
-  const filled = await fillMinistryReport(srcBuf, execRows, coordRows, expenses, income);
+  // רכז רשותי — לשורה הייעודית בראש הלשונית, לא בין שורות המוסדות
+  const authorityCoordRows = execRows.filter((r) => isAuthorityCoord(r[6]));
+  const schoolRows = execRows.filter((r) => !isAuthorityCoord(r[6]));
+  const filled = await fillMinistryReport(srcBuf, schoolRows, coordRows, expenses, income, authorityCoordRows);
   const exAuthority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
   // כשהקובץ שהועלה הוא בעצמו ייצוא קודם שלנו — לא לשרשר "דוח ביצוע ממולא" פעמיים
   const exBase = (report.budget_file_name || 'report.xlsx').replace(/\.xlsx?$/i, '').replace(/^(דוח ביצוע ממולא - )+/, '');
