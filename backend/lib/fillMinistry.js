@@ -88,6 +88,10 @@ function detectStartRow(buf) {
   if (!head) return { error: 'לא נמצאה שורת הכותרות ("סמל מקום פעילות") בגיליון עלויות כח האדם.' };
   const skipCoord = cells.some((x) => x.r === head.r + 1 && x.v.includes('רכז רשותי'));
   const colSpecs = MINISTRY_OFFSETS.map(({ src, off, kind, overrideFormula, keepFormulaFlag }) => ({ src, col: XLSX.utils.encode_col(head.c + off), kind, overrideFormula: !!overrideFormula, keepFormulaFlag }));
+  // עמודת "הסבר במידה ולא תקין" (מיקומה משתנה בין תבניות — לפי הכותרת):
+  // הערת השורה ([13] בשורת הייצוא) נכתבת אליה כטקסט
+  const expl = cells.find((x) => x.r === head.r && x.c > head.c && x.v.includes('הסבר'));
+  if (expl) colSpecs.push({ src: 13, col: XLSX.utils.encode_col(expl.c), kind: 'text', overrideFormula: false });
   // שורת "רכז רשותי" (מיד אחרי הכותרת, כשקיימת בתבנית): איש צוות/תפקיד
   // ממולאים מראש; כותבים בה רק ת.ז/שמות/מעסיק/תעריפים/שעות — לא סמל
   const coordRow = skipCoord ? head.r + 2 : null;

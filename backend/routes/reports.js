@@ -539,6 +539,7 @@ router.get('/:id/prep', ah(async (req, res) => {
       clubOperator: isClubOperator(r.role_text),
       // עלות מעביד 0 — מוצג במסך אך לא נכתב לדוח הביצוע (רעות 7.10)
       zeroCost: !(Number(r.cost) > 0),
+      expNote: r.exp_note || null, // הסבר לשורה בקובץ המשרד
       gross: r.gross, cost: r.cost, hours: r.hours,
       hourlyGross: r.gross != null && r.hours ? r.gross / r.hours : null,
       hourlyCost: r.cost != null && r.hours ? r.cost / r.hours : null,
@@ -920,6 +921,8 @@ const prepSchema = z.object({
     role: z.string().nullable().optional(),
     // תיקון ת.ז לא תקינה (כלל רעות 23.9) — מעדכן את כל שורות העובד ונלמד ללקוח
     empId: z.string().nullable().optional(),
+    // הסבר לשורה ("הסבר במידה ולא תקין" בקובץ המשרד) — נשלח רק כשנערך
+    expNote: z.string().max(300).nullable().optional(),
     // תעריפים ידניים (כלל 22.9): מה שבתוכנה קובע — נכתב על השורה עצמה
     hours: z.number().nonnegative().nullable().optional(),
     hourlyGross: z.number().nonnegative().nullable().optional(),
@@ -983,6 +986,11 @@ router.put('/:id/prep', ah(async (req, res) => {
         .run(a.symbol || null, a.staffType || null, a.role || null, parseInt(rowId), id)
     ));
     updated += results.reduce((s, r) => s + (r.changes || 0), 0);
+  }
+  // הסבר לשורה — רק לשורות שנשלח בהן ערך (מחרוזת ריקה = מחיקה)
+  for (const [rowId, a] of entries) {
+    if (a.expNote === undefined) continue;
+    await db.prepare('UPDATE cost_rows SET exp_note = ? WHERE id = ? AND report_id = ?').run(a.expNote && a.expNote.trim() ? a.expNote.trim() : null, parseInt(rowId), id);
   }
   // תעריפים ידניים (שעות/ברוטו שעתי/עלות שעתית) — רק לשורות שנשלח בהן ערך
   for (const [rowId, a] of entries) {
@@ -1512,6 +1520,7 @@ router.get('/:id/export', ah(async (req, res) => {
       round2(hourlyGross), round2(hourlyCost), round2(r.hours),
       null,
       roleByFormula, // [12] — כשעמודת התפקיד בתבנית היא נוסחה: להשאיר אותה בשורה זו
+      r.exp_note || null, // [13] — "הסבר במידה ולא תקין"
     ];
   });
 

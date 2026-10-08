@@ -467,6 +467,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
               <th style={{ padding: '6px 8px', fontWeight: 600, width: 70 }}>שעות</th>
               <th style={{ padding: '6px 8px', fontWeight: 600, width: 80 }}>ברוטו שעתי</th>
               <th style={{ padding: '6px 8px', fontWeight: 600, width: 80 }}>עלות שעתית</th>
+              <th style={{ padding: '6px 8px', fontWeight: 600, width: 130 }} title='נכתב לעמודת "הסבר במידה ולא תקין" בקובץ המשרד'>הסבר</th>
               <th style={{ padding: '6px 8px', fontWeight: 600, width: 26 }} title="שחזור ערכי דוח העלות"></th>
             </tr>
           </thead>
@@ -544,6 +545,13 @@ export default function PrepSection({ reportId }: { reportId: number }) {
                       </td>
                     );
                   })}
+                  <td style={{ padding: '5px 4px' }}>
+                    <input type="text" value={a.expNote !== undefined ? (a.expNote ?? '') : (r.expNote ?? '')} placeholder="—"
+                      onChange={(e) => set(r.rowId, { expNote: e.target.value })}
+                      title='הסבר שנכתב לקובץ המשרד בעמודת "הסבר במידה ולא תקין" — למשל אזרחית זרה עם דרכון'
+                      style={{ ...input, padding: '3px 5px', fontSize: 11.5, width: '100%',
+                        borderColor: (a.expNote !== undefined ? a.expNote : r.expNote) ? T.amber : T.line }} />
+                  </td>
                   <td style={{ padding: '5px 2px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                     {(r.manualRates || a.hours !== undefined || a.hourlyGross !== undefined || a.hourlyCost !== undefined) && (
                       <button title="שחזור שעות ותעריפים מדוח העלות"

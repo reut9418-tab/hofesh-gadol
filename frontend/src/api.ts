@@ -186,6 +186,7 @@ export type PrepRow = {
   dept: string; symbol: string | null; staffType: string | null; role: string | null; saved: boolean;
   clubOperator?: boolean; // מפעיל/ת חוג — לא נכתב לדוח הביצוע
   zeroCost?: boolean; // עלות מעביד 0 — לא נכתב לדוח הביצוע
+  expNote?: string | null; // הסבר לשורה בקובץ המשרד
   gross: number | null; cost: number | null; hours: number | null; hourlyGross: number | null; hourlyCost: number | null;
   manualRates?: { orig: { gross: number | null; cost: number | null; hours: number | null } } | null;
 };
@@ -213,6 +214,8 @@ export type Assignment = {
   hours?: number | null; hourlyGross?: number | null; hourlyCost?: number | null;
   // תיקון ת.ז לא תקינה (כלל 23.9): נשלח רק כשנערך — מעדכן את כל שורות העובד ונלמד
   empId?: string | null;
+  // הסבר לשורה ("הסבר במידה ולא תקין" בקובץ המשרד) — נשלח רק כשנערך
+  expNote?: string | null;
 };
 export const getReportPrep = (reportId: number): Promise<PrepData> =>
   api.get(`/reports/${reportId}/prep`).then((r) => r.data);
