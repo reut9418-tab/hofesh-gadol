@@ -15,7 +15,29 @@ const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extr
   SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer, AUTHORITY_COORD, isAuthorityCoord } = require('../lib/fillMinistry');
 const { isClubOperator, notClubSql, salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor } = require('../lib/salaryCheck');
 const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = require('../lib/applyAssignments');
-const { COST_MARKUP_LIMIT, effectiveGross } = require('../lib/ingest');
+const { COST_MARKUP_LIMIT, GROSS_BUMP_LIMIT, effectiveGross } = require('../lib/ingest');
+
+/* התאמת ברוטו אוטומטית (רעות 8.10): לכל שורה שהעלות השעתית (כולל מע"מ) שלה
+   חורגת מ-140% מהברוטו — נרשמת התאמה (gross_bump, ₪ לשעה) שמיישרת את
+   הבקרה, עד GROSS_BUMP_LIMIT. נקראת לפני מסך ההכנה ולפני הייצוא, כך
+   שהברוטו שנכתב לדוח הביצוע תקין בלי אישור ידני. התאמה קיימת שכבר מספיקה
+   לא נדרסת; מעבר למגבלה — נשאר כפי שהוא (מוצג כחריגה) */
+async function autoApplyBumps(db, reportId, vatF) {
+  const rows = await db.prepare('SELECT id, gross, cost, hours, gross_bump FROM cost_rows WHERE report_id = ?').all(reportId);
+  const updates = [];
+  for (const r of rows) {
+    if (!(r.gross > 0 && r.hours > 0 && r.cost != null)) continue;
+    const needed = ((r.cost / r.hours) * vatF) / COST_MARKUP_LIMIT - r.gross / r.hours;
+    if (!(needed > 0.01 && needed <= GROSS_BUMP_LIMIT)) continue;
+    const bump = Math.ceil(needed * 100) / 100;
+    if ((Number(r.gross_bump) || 0) >= bump - 0.001) continue;
+    updates.push([bump, r.id]);
+  }
+  for (let i = 0; i < updates.length; i += 10) {
+    await Promise.all(updates.slice(i, i + 10).map((u) => db.prepare('UPDATE cost_rows SET gross_bump = ? WHERE id = ?').run(...u)));
+  }
+  return updates.length;
+}
 const { renderCostMatchHtml, buildCostMatchXlsx } = require('../lib/costMatch');
 const { recommendations } = require('../lib/recommend');
 const { matchDeptsToInstitutions, cardSymbolResolver } = require('../lib/nameMatch');
@@ -435,6 +457,9 @@ router.get('/:id/prep', ah(async (req, res) => {
   const validSymbols = new Set(institutions.map((i) => i.symbol));
   const toActivity = (s) => (s ? (md.redirect.get(String(s)) || s) : s);
 
+  // התאמות ברוטו אוטומטיות (עד 20 ₪ לשעה) — לפני טעינת השורות, כך שהמסך
+  // והבקרות כבר משקפים את הברוטו שייכתב
+  await autoApplyBumps(db, id, client && client.has_vat ? 1.18 : 1);
   const rawRows = await db.prepare(
     `SELECT cr.id, cr.emp_id, cr.emp_name, cr.first_name, cr.last_name, cr.dept,
             cr.inst_symbol, cr.inst_name, cr.symbol_override, cr.staff_type, cr.role,
@@ -534,8 +559,8 @@ router.get('/:id/prep', ah(async (req, res) => {
     console.log(`[prep ${id}] ${Date.now() - t0}ms סה"כ | קובץ משרד ${tMinistry - t0}ms | שורות ${tRows - tMinistry}ms | בדיקות ${Date.now() - tRows}ms`);
   }
 
-  // מועמדים להתאמת ברוטו (עד 5 ₪ לשעה): העלות המוכרת חורגת מ-140% מהברוטו,
-  // והגדלה קטנה של הברוטו מיישרת את בקרת המשרד בלי לוותר על הכרה בעלות
+  // התאמות הברוטו (עד 20 ₪ לשעה, אוטומטיות): העלות המוכרת חורגת מ-140% מהברוטו,
+  // והגדלת הברוטו מיישרת את בקרת המשרד בלי לוותר על הכרה בעלות — לתצוגה
   const vatF = client && client.has_vat ? 1.18 : 1;
   const bumps = rawRows
     .map((r) => {
@@ -544,7 +569,7 @@ router.get('/:id/prep', ah(async (req, res) => {
       const hourlyGross = r.gross / r.hours;
       const hourlyCostVat = (r.cost / r.hours) * vatF;
       const needed = hourlyCostVat / COST_MARKUP_LIMIT - hourlyGross;
-      if (!(needed > 0.01 && needed <= 5)) return null;
+      if (!(needed > 0.01 && needed <= GROSS_BUMP_LIMIT)) return null;
       return {
         rowId: r.id, name: r.emp_name || '', dept: r.dept,
         hourlyGross: Math.round(hourlyGross * 100) / 100,
@@ -880,7 +905,7 @@ router.post('/:id/apply-bumps', ah(async (req, res) => {
     const r = await db.prepare('SELECT id, gross, cost, hours FROM cost_rows WHERE id = ? AND report_id = ?').get(rowId, id);
     if (!r || !(r.gross > 0 && r.hours > 0 && r.cost != null)) continue;
     const needed = ((r.cost / r.hours) * vatF) / COST_MARKUP_LIMIT - r.gross / r.hours;
-    if (!(needed > 0 && needed <= 5)) continue;
+    if (!(needed > 0 && needed <= GROSS_BUMP_LIMIT)) continue;
     await db.prepare('UPDATE cost_rows SET gross_bump = ? WHERE id = ?').run(Math.ceil(needed * 100) / 100, rowId);
     applied++;
   }
@@ -1418,11 +1443,14 @@ router.get('/:id/export', ah(async (req, res) => {
   const authority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
   const employer = (authority && authority.name) || (client && client.name) || '';
 
-  // מפעילי/ות חוג (לפי התפקיד בדוח השכר) אינם מדווחים בדוח הביצוע (רעות 5.10)
+  // התאמות ברוטו אוטומטיות (עד 20 ₪ לשעה) — הברוטו שנכתב עומד בבקרת ה-140%
+  await autoApplyBumps(db, id, client && client.has_vat ? 1.18 : 1);
+  // מפעילי/ות חוג (לפי התפקיד בדוח השכר) אינם מדווחים בדוח הביצוע (רעות 5.10),
+  // וגם עובד/ת בלי עלות מעביד (0 או חסרה) — אין שורה בקובץ (רעות 7-8.10)
   const rows = (await db.prepare(
     `SELECT cr.*, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id
      WHERE cr.report_id = ? ORDER BY COALESCE(cr.symbol_override, cr.inst_symbol, ''), cr.emp_name`
-  ).all(id)).filter((r) => !isClubOperator(r.role_text));
+  ).all(id)).filter((r) => !isClubOperator(r.role_text) && Number(r.cost) !== 0 && r.cost != null);
   if (!rows.length) return res.status(422).json({ error: 'אין שורות שכר מנותבות לדוח זה.' });
 
   const { resolveSymbol } = await makeSymbolResolver(db, report, exMd, rows);

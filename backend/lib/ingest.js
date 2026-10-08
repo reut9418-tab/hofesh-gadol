@@ -290,6 +290,10 @@ function aggregateComponents(recs) {
    vatFactor: 1.18 ללקוח חייב מע"מ — העלות המוכרת = עלות מעביד + מע"מ.
    כלל ה-40%: העלות השעתית המוכרת לא תחרוג מ-140% מהברוטו השעתי. */
 const COST_MARKUP_LIMIT = 1.4;
+/* התאמת ברוטו אוטומטית (רעות 8.10): כשהעלות השעתית (כולל מע"מ) חורגת מ-140%
+   מהברוטו השעתי, הברוטו הנכתב לדוח הביצוע מוגדל בדיוק כדי לעמוד בבקרה —
+   עד 20 ₪ לשעה (קודם: עד 5 ₪, ובאישור ידני). מעבר לזה — נשאר לבדיקה */
+const GROSS_BUMP_LIMIT = 20;
 
 /* הברוטו האפקטיבי של שורה: הברוטו מהקובץ + התאמת ברוטו שאושרה (gross_bump,
    ₪ לשעה עד 5) — ההתאמה מעלה את תקרת ה-140% כך שבקרות המשרד עוברות */
@@ -546,5 +550,5 @@ function parseCostFile(buf, learned = {}) {
 module.exports = {
   FIELD_DEFS, SOFTWARE_SIGNATURES, norm, isValidIsraeliId,
   detectStructure, inferMissingColumns, normalizeRows, aggregateComponents, runChecks,
-  readWorkbookSheets, parseCostFile, EMPLOYER_FACTOR, HOURS_CAP, COST_MARKUP_LIMIT, recognizedRowCost, effectiveGross,
+  readWorkbookSheets, parseCostFile, EMPLOYER_FACTOR, HOURS_CAP, COST_MARKUP_LIMIT, GROSS_BUMP_LIMIT, recognizedRowCost, effectiveGross,
 };

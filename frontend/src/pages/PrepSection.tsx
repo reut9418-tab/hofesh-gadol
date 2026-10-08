@@ -313,18 +313,18 @@ export default function PrepSection({ reportId }: { reportId: number }) {
         </div>
       )}
 
-      {/* התאמות ברוטו (עד 5 ₪ לשעה) — מיישרות את בקרת ה-140% של המשרד בלי לוותר על הכרה */}
+      {/* התאמות ברוטו (עד 20 ₪ לשעה) — מוחלות אוטומטית בשרת (רעות 8.10); הרשימה כאן נשארת למקרה של שורות שטרם הותאמו */}
       {(data.bumps || []).filter((b) => !b.applied).length > 0 && (
         <div style={{ border: `1px solid ${T.blue}`, background: T.blueBg, borderRadius: 8, padding: '10px 14px', marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-            <span style={{ fontWeight: 700, fontSize: 12.5 }}>התאמות ברוטו — עד ₪5 לשעה</span>
+            <span style={{ fontWeight: 700, fontSize: 12.5 }}>התאמות ברוטו — עד ₪20 לשעה</span>
             <span style={{ fontSize: 11.5, color: T.inkSoft }}>
               העלות (כולל מע"מ) חורגת מ-140% מהברוטו; הגדלה קטנה של הברוטו מיישרת את בקרת המשרד ומכירה במלוא העלות.
             </span>
             <button style={{ ...btn('primary'), marginInlineStart: 'auto' }}
               onClick={async () => {
                 const list = (data.bumps || []).filter((b) => !b.applied);
-                if (!window.confirm(`לאשר הגדלת ברוטו ל-${list.length} עובדים (עד ₪5 לשעה כל אחד)? הברוטו המעודכן ייכתב בדוח הביצוע.`)) return;
+                if (!window.confirm(`לאשר הגדלת ברוטו ל-${list.length} עובדים (עד ₪20 לשעה כל אחד)? הברוטו המעודכן ייכתב בדוח הביצוע.`)) return;
                 await applyBumps(reportId, list.map((b) => b.rowId));
                 await load();
                 setMsg('התאמות הברוטו אושרו — ייכתבו בייצוא הבא.');
@@ -354,7 +354,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
       )}
       {(data.bumps || []).some((b) => b.applied) && (
         <div style={{ fontSize: 11.5, color: T.green, background: T.greenBg, borderRadius: 8, padding: '6px 11px', marginBottom: 12 }}>
-          ✓ {(data.bumps || []).filter((b) => b.applied).length} התאמות ברוטו מאושרות — נכתבות בייצוא.
+          ✓ {(data.bumps || []).filter((b) => b.applied).length} התאמות ברוטו אוטומטיות (עד ₪20 לשעה) — הברוטו המעודכן נכתב בדוח הביצוע.
         </div>
       )}
 
