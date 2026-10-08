@@ -459,7 +459,8 @@ router.get('/:id/prep', ah(async (req, res) => {
 
   // התאמות ברוטו אוטומטיות (עד 20 ₪ לשעה) — לפני טעינת השורות, כך שהמסך
   // והבקרות כבר משקפים את הברוטו שייכתב
-  await autoApplyBumps(db, id, client && client.has_vat ? 1.18 : 1);
+  const bumpClient = await db.prepare('SELECT has_vat FROM clients WHERE id = ?').get(report.client_id);
+  await autoApplyBumps(db, id, bumpClient && bumpClient.has_vat ? 1.18 : 1);
   const rawRows = await db.prepare(
     `SELECT cr.id, cr.emp_id, cr.emp_name, cr.first_name, cr.last_name, cr.dept,
             cr.inst_symbol, cr.inst_name, cr.symbol_override, cr.staff_type, cr.role,
