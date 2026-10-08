@@ -250,6 +250,9 @@ function parseAggregateSheet(rows, sheetName, wb = null, opts = {}) {
         baskets[key] = Math.round(kids * rate * 100) / 100;
         actual[key] = actual[key] || 0;
       }
+      // בתבנית הגנים סל "ארוחת בוקר" = סל הגמיש (אותו תקציב, שימוש אחד שלו) —
+      // אינו בשורת התעריפים לילד, ולכן מושלם מהגמיש (כמו בקובץ שחושב באקסל)
+      if (!(baskets.breakfast > 0) && baskets.flexible > 0) { baskets.breakfast = baskets.flexible; actual.breakfast = actual.breakfast || 0; }
     }
   }
   const inst = {
