@@ -127,6 +127,24 @@ function detectStructure(rows, learned = {}) {
     const idx = parseInt(k.slice(1));
     if (Number.isFinite(idx) && v !== 'none' && FIELD_DEFS.some((f) => f.key === v)) best.mapping[v] = idx;
   }
+  // 'none' שנלמד בקובץ אחד לא משאיר שדה חיוני ריק בקובץ אחר (לביא 8.10):
+  // בקובץ הרכזים "סה"כ שעות (תמורת חופשה)" סומן "ללא שימוש" כי שם השעות
+  // ב"שעות 15 יום"/"שעות הרחבה"; בקובץ המאוחד של אותו לקוח זו עמודת השעות
+  // היחידה — וכל 2,064 העובדים נקלטו בלי שעות. כשאין לשדה (שעות/עלות/
+  // ברוטו) שום עמודה, עמודה שסומנה 'none' ושמה תואם את השדה חוזרת לשימוש
+  if (best.rowIdx >= 0) {
+    const row = rows[best.rowIdx] || [];
+    for (const key of ['hours', 'cost', 'gross']) {
+      if (best.mapping[key] !== undefined) continue;
+      const f = FIELD_DEFS.find((x) => x.key === key);
+      row.forEach((cell, c) => {
+        if (best.mapping[key] !== undefined || Object.values(best.mapping).includes(c)) return;
+        const cellN = norm(cell);
+        if (learned[cellN] !== 'none') return;
+        if (f.syn.some((s) => cellN === norm(s) || cellN.includes(norm(s)))) best.mapping[key] = c;
+      });
+    }
+  }
   // עידון מחלקה: כשיש כמה עמודות מתאימות (קוד + שם), ניתוב עובד לפי טקסט,
   // לכן בוחרים את העמודה עם הערכים הטקסטואליים ביותר (שם מחלקה ולא קוד).
   // מחלקה שנבחרה ידנית — לא נוגעים
