@@ -538,7 +538,7 @@ router.get('/:id/prep', ah(async (req, res) => {
       // מפעיל/ת חוג — מוצג במסך אך לא נכתב לדוח הביצוע (רעות 5.10)
       clubOperator: isClubOperator(r.role_text),
       // עלות מעביד 0 — מוצג במסך אך לא נכתב לדוח הביצוע (רעות 7.10)
-      zeroCost: !(Number(r.cost) !== 0 && r.cost != null),
+      zeroCost: !(Number(r.cost) > 0),
       gross: r.gross, cost: r.cost, hours: r.hours,
       hourlyGross: r.gross != null && r.hours ? r.gross / r.hours : null,
       hourlyCost: r.cost != null && r.hours ? r.cost / r.hours : null,
@@ -1451,7 +1451,7 @@ router.get('/:id/export', ah(async (req, res) => {
   const rows = (await db.prepare(
     `SELECT cr.*, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id
      WHERE cr.report_id = ? ORDER BY COALESCE(cr.symbol_override, cr.inst_symbol, ''), cr.emp_name`
-  ).all(id)).filter((r) => !isClubOperator(r.role_text) && Number(r.cost) !== 0 && r.cost != null);
+  ).all(id)).filter((r) => !isClubOperator(r.role_text) && Number(r.cost) > 0);
   if (!rows.length) return res.status(422).json({ error: 'אין שורות שכר מנותבות לדוח זה.' });
 
   const { resolveSymbol } = await makeSymbolResolver(db, report, exMd, rows);
