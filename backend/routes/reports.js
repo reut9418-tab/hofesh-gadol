@@ -790,14 +790,17 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
   const roleUpdates = [];
   let leads = 0, aides = 0;
   const capHours = 6 * (report.program === 'extension' ? (report.extension_days || 6) : 15);
-  let overCap = 0;
+  let overCap = 0, capped = 0;
+  const capFixes = []; // גננת שחורגת מהתקן עד 6 שעות — השעות מעודכנות לתקן (רעות 8.10, גנים בלבד)
   for (const [, list] of byGarden) {
     list.sort((a, b) => (b.hours || 0) - (a.hours || 0) || (b.gross || 0) - (a.gross || 0));
     list.forEach((r, i) => {
       const want = i === 0
         ? { staffType: 'גננת', role: 'גננת של הגן' }
         : { staffType: aideTypeForPayer(r.payer || aaEmployer, aaAuth && aaAuth.name), role: 'סייעת' };
-      if (i === 0 && (r.hours || 0) > capHours + 0.01) overCap++;
+      if (i === 0 && (r.hours || 0) > capHours + 0.01) {
+        if ((r.hours || 0) <= capHours + 6) capFixes.push(r.id); else overCap++;
+      }
       if (r.staff_type === want.staffType && r.role === want.role) return;
       roleUpdates.push({ r, ...want });
       if (i === 0) leads++; else aides++;
@@ -807,13 +810,19 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
     await Promise.all(roleUpdates.slice(i, i + CHUNK).map((u) =>
       db.prepare('UPDATE cost_rows SET staff_type = ?, role = ? WHERE id = ?').run(u.staffType, u.role, u.r.id)));
   }
+  // חריגה של עד 6 שעות מהתקן — השעות מעודכנות לתקן כתעריף ידני (התעריפים
+  // השעתיים נשמרים, המקור ניתן לשחזור ב-↺); מעבר לזה — נשארת ומסומנת כחריגה
+  for (const rowId of capFixes) {
+    try { if (await applyManualRates(db, id, rowId, { hours: capHours })) capped++; }
+    catch (e) { console.error('עדכון שעות לתקן נכשל לשורה ' + rowId + ':', e.message); }
+  }
   // הזיכרון הידני (worker_assign) מתעדכן בהתאם — אחרת החלפת קובץ תחזיר את הישן
   if (roleUpdates.length) {
     try {
       await saveManualAssignments(db, id, roleUpdates.map((u) => ({ empId: u.r.emp_id, dept: u.r.dept, symbol: symbolOf(u.r), staffType: u.staffType, role: u.role })));
     } catch { /* זיכרון בלבד */ }
   }
-  res.json({ ok: true, assigned, gardens: gardens.length, coordinators: coordDesignated, coordPositions, leads, aides, overCap, capHours });
+  res.json({ ok: true, assigned, gardens: gardens.length, coordinators: coordDesignated, coordPositions, leads, aides, capped, overCap, capHours });
 }));
 
 /* ---------- פיצול שורת עובד/ת בין מוסדות (כלל רעות 17.9: "פיצול שורות
