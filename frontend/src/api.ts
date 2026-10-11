@@ -252,7 +252,7 @@ export type LedgerCard = {
 };
 export const setLedgerTxSymbol = (txId: number, symbol: string | null) =>
   api.put(`/ledger-tx/${txId}/symbol`, { symbol }).then((r) => r.data);
-export type LedgerCheck = { id: string; level: 'ok' | 'warn' | 'err'; text: string; a: number; b: number; diff: number };
+export type LedgerCheck = { id: string; title?: string; level: 'ok' | 'warn' | 'err'; text: string; a: number; b: number; diff: number };
 export type PayerRow = {
   payer: string; rows: number; hours: number; costNet: number; reported: number;
   ledgerSalary: number | null; diff: number | null; level: 'ok' | 'warn' | 'err' | 'none';
@@ -270,6 +270,8 @@ export type LedgerData = {
     byBasket?: { type: string; label: string; amount: number }[];
     unassigned?: number; ledgerSalary?: number; costTotal?: number;
     execActual?: number; expectedExec?: number; hasVat?: boolean;
+    // התאמת שכר לפי בתי ספר (בתי"ס/מכינות עם כרטסות שכר) — סיכום שורה אחת
+    salaryMatch?: { level: 'ok' | 'warn' | 'err'; text: string; modes: string[] } | null;
     checks?: LedgerCheck[];
   };
   payerMatrix?: { rows: PayerRow[]; hasVat: boolean; multi?: boolean };
@@ -326,18 +328,25 @@ export const clientStage2DocUrl = (clientId: number) => `${API_BASE}/clients/${c
 export const stage2DetailDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/stage2-detail-doc`;
 export const clientStage2DetailDocUrl = (clientId: number) => `${API_BASE}/clients/${clientId}/stage2-detail-doc`;
 
-/* דוח התאמת ההעשרה כקובץ אקסל — הורדה ישירה */
-export const downloadEnrichMatchXlsx = async (reportId: number) => {
-  const res = await api.get(`/reports/${reportId}/enrich-match-xlsx`, { responseType: 'blob' });
+/* הורדת קובץ אקסל מהשרת בשם שהשרת נתן (filename*) */
+const downloadXlsx = async (path: string, fallback: string) => {
+  const res = await api.get(path, { responseType: 'blob' });
   const dispo: string = res.headers['content-disposition'] || '';
   const m = /filename\*=UTF-8''([^;]+)/.exec(dispo);
-  const name = m ? decodeURIComponent(m[1]) : `דוח התאמת העשרה - ${reportId}.xlsx`;
+  const name = m ? decodeURIComponent(m[1]) : fallback;
   const url = URL.createObjectURL(res.data);
   const a = document.createElement('a');
   a.href = url; a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 };
+/* דוח התאמת ההעשרה כקובץ אקסל — הורדה ישירה */
+export const downloadEnrichMatchXlsx = (reportId: number) =>
+  downloadXlsx(`/reports/${reportId}/enrich-match-xlsx`, `דוח התאמת העשרה - ${reportId}.xlsx`);
+/* דוח התאמת שכר לבתי ספר (כרטסת השכר מול דוח העלות פר סמל מוסד) — דף להדפסה + אקסל */
+export const salaryMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/salary-match-doc`;
+export const downloadSalaryMatchXlsx = (reportId: number) =>
+  downloadXlsx(`/reports/${reportId}/salary-match-xlsx`, `דוח התאמת שכר לבתי ספר - ${reportId}.xlsx`);
 
 /* דוח ההתאמה כקובץ אקסל — הורדה ישירה (blob) */
 export const downloadCostMatchXlsx = async (reportId: number) => {

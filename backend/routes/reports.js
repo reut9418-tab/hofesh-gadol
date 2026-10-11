@@ -1391,6 +1391,37 @@ router.get('/:id/enrich-match-xlsx', ah(async (req, res) => {
   res.send(buf);
 }));
 
+/* שלב 2: דוח התאמת שכר לבתי ספר — כרטסת השכר מול דוח העלות פר סמל מוסד
+   (בדיקת משרד החינוך; רעות 11.10). דף להדפסה + אקסל */
+async function salaryMatchFor(req, res) {
+  const db = getDB();
+  const id = parseInt(req.params.id);
+  const report = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+  if (!report) { res.status(404).json({ error: 'דוח לא נמצא' }); return null; }
+  const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(report.client_id);
+  const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
+  const { salaryMatchData } = require('../lib/salaryMatch');
+  return { report, client, authority, d: await salaryMatchData(db, report, client, authority) };
+}
+router.get('/:id/salary-match-doc', ah(async (req, res) => {
+  const x = await salaryMatchFor(req, res);
+  if (!x) return;
+  const { renderSalaryMatchHtml } = require('../lib/salaryMatch');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderSalaryMatchHtml(x.d));
+}));
+router.get('/:id/salary-match-xlsx', ah(async (req, res) => {
+  const x = await salaryMatchFor(req, res);
+  if (!x) return;
+  if (!x.d.hasCards) return res.status(422).json({ error: 'לא נקלטו כרטסות שכר לדוח זה.' });
+  const { buildSalaryMatchXlsx } = require('../lib/salaryMatch');
+  const { reportLabel } = require('../lib/domain');
+  const outName = `דוח התאמת שכר לבתי ספר - ${downloadWho(x.client, x.authority)} - ${reportLabel(x.report.framework, x.report.program)}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="salary_match_${x.report.id}.xlsx"; filename*=UTF-8''${encodeURIComponent(outName)}`);
+  res.send(buildSalaryMatchXlsx(x.d));
+}));
+
 /* סעיף 5 של המכתב — טבלת יעדי הכרטסות — כקובץ אקסל מעוצב להנה"ח */
 router.get('/:id/targets-xlsx', ah(async (req, res) => {
   const db = getDB();

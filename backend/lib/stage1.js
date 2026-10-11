@@ -62,6 +62,41 @@ async function fileMeta(db, report) {
   return entry;
 }
 
+/* שיוך שורות דוח העלות לסמל מוסד — זהה לזה של הייצוא: שיוך ידני ← מחלקה
+   שאושרה ידנית ← סמל גולמי מדוח העלות כשהוא מוכר ← שיוך שמולא בקובץ
+   שהועלה (ת"ז) ← התאמת שם המוסד ← התאמת שם המחלקה; והפניית בתי ספר
+   מאוחדים לסמל מקום הפעילות. משותף למכתב שלב 1 ולדוח התאמת השכר לבתי ספר.
+   rows — שורות cost_rows; insts — מוסדות הדוח מהמסד (גיבוי כשאין קובץ) */
+async function schoolRowResolver(db, report, rows, insts) {
+  const meta = await fileMeta(db, report);
+  const matchInsts = meta.insts.length ? meta.insts : insts;
+  const deptSymbol = report.framework !== 'gardens' && matchInsts.length
+    ? matchDeptsToInstitutions(matchInsts, [...new Set(rows.map((r) => r.dept))])
+    : {};
+  const nameSymbol = matchInsts.length
+    ? matchDeptsToInstitutions(matchInsts, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))])
+    : {};
+  const validSyms = new Set(matchInsts.map((i) => String(i.symbol)));
+  const toActivity = (s) => (s ? (meta.redirect.get(String(s)) || String(s)) : null);
+  // שיוך ידני מחלקה→סמל שאושר ע"י המשתמשת (כלל 17.9: דו-משמעי = שאלה,
+  // והתשובה נלמדת) — גובר על כל שיוך אוטומטי ושורד קליטה מחדש של דוח העלות
+  const deptManual = {};
+  (await db.prepare("SELECT map_key, map_value FROM client_mappings WHERE client_id = ? AND mapping_type = 'dept_symbol'")
+    .all(report.client_id)).forEach((r) => { deptManual[r.map_key] = r.map_value; });
+  // שיוך שמולא בלשונית כח האדם של הקובץ שהועלה (ת"ז→סמל) — נשמר בעדכונים
+  const fileSym = (r) => {
+    const a = meta.workerSyms && meta.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
+    return a && validSyms.has(a.symbol) ? a.symbol : null;
+  };
+  const rowSymbol = (r) => toActivity(r.symbol_override
+    || deptManual[r.dept]
+    || (r.inst_symbol && validSyms.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
+    || fileSym(r)
+    || (r.inst_name && nameSymbol[r.inst_name])
+    || deptSymbol[r.dept] || null);
+  return { meta, matchInsts, rowSymbol };
+}
+
 /* ---------- איסוף הנתונים ---------- */
 async function stage1Data(db, report, client, authority) {
   const cost = await costDataForReport(db, report);
@@ -103,35 +138,8 @@ async function stage1Data(db, report, client, authority) {
   // עמודות שכר נפרדות רק כשבאמת מוגדרים שני משלמים שונים
   const definedPayers = new Set(rows.map((r) => r.payer).filter(Boolean));
   const payers = definedPayers.size >= 2 ? [...new Set(rows.map((r) => r.payer || DEFAULT_PAYER))] : [DEFAULT_PAYER];
-  // שיוך זהה לזה של הייצוא: התאמת שמות מול מוסדות קובץ המשרד (לשונית
-  // ההרשמה — שמות מלאים), סמל גולמי מדוח העלות כשהוא מוכר, והפניית
-  // בתי ספר מאוחדים לסמל מקום הפעילות
-  const meta = await fileMeta(db, report);
-  const matchInsts = meta.insts.length ? meta.insts : insts;
-  const deptSymbol = report.framework !== 'gardens' && matchInsts.length
-    ? matchDeptsToInstitutions(matchInsts, [...new Set(rows.map((r) => r.dept))])
-    : {};
-  const nameSymbol = matchInsts.length
-    ? matchDeptsToInstitutions(matchInsts, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))])
-    : {};
-  const validSyms = new Set(matchInsts.map((i) => String(i.symbol)));
-  const toActivity = (s) => (s ? (meta.redirect.get(String(s)) || String(s)) : null);
-  // שיוך ידני מחלקה→סמל שאושר ע"י המשתמשת (כלל 17.9: דו-משמעי = שאלה,
-  // והתשובה נלמדת) — גובר על כל שיוך אוטומטי ושורד קליטה מחדש של דוח העלות
-  const deptManual = {};
-  (await db.prepare("SELECT map_key, map_value FROM client_mappings WHERE client_id = ? AND mapping_type = 'dept_symbol'")
-    .all(report.client_id)).forEach((r) => { deptManual[r.map_key] = r.map_value; });
-  // שיוך שמולא בלשונית כח האדם של הקובץ שהועלה (ת"ז→סמל) — נשמר בעדכונים
-  const fileSym = (r) => {
-    const a = meta.workerSyms && meta.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
-    return a && validSyms.has(a.symbol) ? a.symbol : null;
-  };
-  const rowSymbol = (r) => toActivity(r.symbol_override
-    || deptManual[r.dept]
-    || (r.inst_symbol && validSyms.has(String(r.inst_symbol)) ? String(r.inst_symbol) : null)
-    || fileSym(r)
-    || (r.inst_name && nameSymbol[r.inst_name])
-    || deptSymbol[r.dept] || null);
+  // שיוך זהה לזה של הייצוא (schoolRowResolver — משותף גם לדוח התאמת השכר לבתי ספר)
+  const { meta, rowSymbol } = await schoolRowResolver(db, report, rows, insts);
 
   // פיצול הניצול המוכר של יחידה לסל הדרכה מול סל הריכוז (רכז+סגן) —
   // ההשוואה במכתב היא סל-מול-סל, לא סך שכר מול סך תקציבים
@@ -671,4 +679,4 @@ ${d.unassignedCost > 0 ? `<p class="note">⚠ עלות של ₪${fmt(d.unassigne
 }
 
 const invalidateFileMeta = (reportId) => { fileMetaCache.delete(reportId); };
-module.exports = { stage1Data, renderStage1Html, invalidateFileMeta, fileMeta };
+module.exports = { stage1Data, renderStage1Html, invalidateFileMeta, fileMeta, schoolRowResolver };

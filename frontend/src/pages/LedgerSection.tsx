@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { T } from '../theme';
 import { btn, card } from '../ui';
-import { getReportLedger, uploadLedgerFile, setLedgerCardBasket, setLedgerCardSymbol, setLedgerTxSymbol, deleteLedgerFile, setLedgerFilePayer, enrichMatchDocUrl, downloadEnrichMatchXlsx, LedgerData } from '../api';
+import { getReportLedger, uploadLedgerFile, setLedgerCardBasket, setLedgerCardSymbol, setLedgerTxSymbol, deleteLedgerFile, setLedgerFilePayer, enrichMatchDocUrl, downloadEnrichMatchXlsx, salaryMatchDocUrl, downloadSalaryMatchXlsx, LedgerData } from '../api';
+
+// סלי השכר — כרטיס שכר משויך לבית ספר (לפי השם / ידנית) לצורך ההתאמה לפי בתי ספר
+const SALARY_BASKETS = ['instruction', 'coordinator', 'deputy', 'salary_combined'];
 
 const fmt = (n: number | null | undefined, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -46,7 +49,21 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
         <span style={{ fontWeight: 700, fontSize: 14 }}>כרטסות הנהלת חשבונות</span>
         <span style={{ fontSize: 11.5, color: T.inkSoft }}>כל כרטיס משויך לסל לפי שמו — והשיוך נלמד להעלאה הבאה.</span>
-        <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 8 }}>
+        <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {(data?.institutions || []).length > 0 && (data?.cards || []).some((c) => SALARY_BASKETS.includes(c.basket_type || '')) && (
+            <>
+              <button onClick={async () => {
+                setErr(null);
+                try { await downloadSalaryMatchXlsx(reportId); }
+                catch (e: any) { setErr(e?.response?.data?.error || 'הורדת דוח ההתאמה נכשלה.'); }
+              }}
+                title="כרטסת השכר מול דוח העלות לפי סמל מוסד — הבדיקה שמשרד החינוך עושה (אקסל מעוצב)"
+                style={btn('ghost')}>🏫 דוח התאמת שכר לבתי ספר (אקסל)</button>
+              <button onClick={() => window.open(salaryMatchDocUrl(reportId), '_blank')}
+                title="דוח התאמת השכר לבתי ספר כדף להדפסה / שמירה כ-PDF"
+                style={btn('ghost')}>🖨 PDF</button>
+            </>
+          )}
           {(data?.cards || []).some((c) => c.basket_type === 'enrichment') && (
             <>
               <button onClick={async () => {
@@ -80,11 +97,25 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
           {/* רשימת בדיקות שלב 2: כרטסת ↔ דוח עלות ↔ דוח ביצוע + העשרה + הכנסות */}
           <div style={{ fontWeight: 700, fontSize: 13, margin: '4px 0 6px' }}>בדיקות שלב 2</div>
           <div style={{ display: 'grid', gap: 6, marginBottom: 12 }}>
-            {(rec.checks || []).map((c) => (
+            {/* רק מה שדורש טיפול בולט; הבדיקות התקינות מקופלות לשורה אחת (רעות 11.10: פחות רעש) */}
+            {(rec.checks || []).filter((c) => c.level !== 'ok').map((c) => (
               <div key={c.id} style={{ fontSize: 12.5, color: lvColor(c.level), background: lvBg(c.level), borderRadius: 6, padding: '7px 11px' }}>
-                {c.level === 'ok' ? '✓' : '⚠'} {(c as any).title && <b>{(c as any).title}: </b>}{c.text}
+                ⚠ {c.title && <b>{c.title}: </b>}{c.text}
               </div>
             ))}
+            {(rec.checks || []).some((c) => c.level === 'ok') && (
+              <details style={{ fontSize: 12.5, color: T.green, background: T.greenBg, borderRadius: 6, padding: '7px 11px' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+                  ✓ {(rec.checks || []).filter((c) => c.level === 'ok').length} בדיקות תקינות
+                  {(rec.checks || []).every((c) => c.level === 'ok') ? ' — אין פערים' : ''} · לחיצה לפירוט
+                </summary>
+                <div style={{ display: 'grid', gap: 4, marginTop: 6 }}>
+                  {(rec.checks || []).filter((c) => c.level === 'ok').map((c) => (
+                    <div key={c.id}>✓ {c.title && <b>{c.title}: </b>}{c.text}</div>
+                  ))}
+                </div>
+              </details>
+            )}
             {data!.hasVat && (
               <div style={{ fontSize: 11.5, color: T.inkSoft }}>
                 לקוח חייב במע"מ: הכרטסת ודוח העלות אמורים להתאים; מול דוח הביצוע צפוי פער של 18% (מע"מ).
@@ -293,7 +324,7 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
                   </td>
                   {showSchool && (
                     <td style={{ padding: '6px 8px' }}>
-                      {c.split && EXPENSE_BASKETS.includes(c.basket_type || '') ? (
+                      {c.split && (EXPENSE_BASKETS.includes(c.basket_type || '') || SALARY_BASKETS.includes(c.basket_type || '')) ? (
                         // כרטיס מאוחד: סמל בית הספר באסמכתא של כל תנועה — מתפצל לפי התנועות
                         <div style={{ fontSize: 11.5 }}>
                           <span style={{ color: c.split.unassignedCount ? T.amber : T.green, fontWeight: 600 }}
@@ -306,18 +337,22 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
                             {openSplit.has(c.id) ? 'הסתרה' : 'פירוט התנועות'}
                           </button>
                         </div>
-                      ) : EXPENSE_BASKETS.includes(c.basket_type || '') ? (
+                      ) : EXPENSE_BASKETS.includes(c.basket_type || '') || SALARY_BASKETS.includes(c.basket_type || '') ? (() => {
+                        // כרטיס שכר: "כללי" = כרטסת אחת לכל בתי הספר (לא פיצול יחסי) — נבדק מול סך בתי הספר בדוח ההתאמה
+                        const isSalary = SALARY_BASKETS.includes(c.basket_type || '');
+                        return (
                         <select
                           value={c.symbol_override === 'general' ? 'general' : c.symbol_override ? String(c.symbol_override) : ''}
                           onChange={async (e) => { await setLedgerCardSymbol(c.id, e.target.value || null); await load(); onChange(); }}
-                          title={c.symbol ? `משויך ל: ${instName(c.symbol)}` : 'לא משויך — מתחלק בין כל בתי הספר'}
+                          title={c.symbol ? `משויך ל: ${instName(c.symbol)}` : isSalary ? 'לא משויך לבית ספר מסוים — כרטסת כללית לכל בתי הספר' : 'לא משויך — מתחלק בין כל בתי הספר'}
                           style={{ padding: '4px 6px', fontSize: 11.5, width: '100%', borderRadius: 6, fontFamily: 'inherit',
-                            border: `1px solid ${c.symbol ? T.green : T.amber}`, background: c.symbol ? undefined : T.amberBg }}>
-                          <option value="">{c.autoSymbol ? `לפי השם: ${instName(c.autoSymbol)}` : '— כללי: מתחלק בין כולם —'}</option>
+                            border: `1px solid ${c.symbol ? T.green : isSalary ? T.line : T.amber}`, background: c.symbol || isSalary ? undefined : T.amberBg }}>
+                          <option value="">{c.autoSymbol ? `לפי השם: ${instName(c.autoSymbol)}` : isSalary ? '— כללי: לכל בתי הספר —' : '— כללי: מתחלק בין כולם —'}</option>
                           {insts.map((i) => <option key={i.symbol} value={String(i.symbol)}>{i.name} ({i.symbol})</option>)}
-                          <option value="general">כללי — לחלק בין כל בתי הספר</option>
+                          <option value="general">{isSalary ? 'כללי — כרטסת לכל בתי הספר' : 'כללי — לחלק בין כל בתי הספר'}</option>
                         </select>
-                      ) : <span style={{ color: T.inkSoft }}>—</span>}
+                        );
+                      })() : <span style={{ color: T.inkSoft }}>—</span>}
                     </td>
                   )}
                 </tr>

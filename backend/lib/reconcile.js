@@ -164,6 +164,20 @@ async function ledgerReconcile(db, report, client) {
     });
   }
 
+  // בדיקה 1ב (רעות 11.10): כרטסת השכר מול דוח העלות פר בית ספר — הבדיקה
+  // שמשרד החינוך עושה. שורה אחת מסודרת; הפירוט ב"דוח התאמת שכר לבתי ספר"
+  let salaryMatch = null;
+  if (report.framework !== 'gardens') {
+    try {
+      const { salaryMatchData } = require('./salaryMatch');
+      const sm = await salaryMatchData(db, report, client, await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id || 0));
+      if (sm.hasCards && sm.summary) {
+        salaryMatch = { level: sm.summary.level, text: sm.summary.text, modes: sm.groups.map((g) => g.mode) };
+        checks.push({ id: 'school_salary_match', title: 'שכר לפי בתי ספר — כרטסת מול דוח עלות', level: sm.summary.level, text: sm.summary.text, a: 0, b: 0, diff: 0 });
+      }
+    } catch (e) { console.warn('salaryMatch failed:', e.message); }
+  }
+
   // בדיקה 3: הכנסות משתתפים — כרטסת ההכנסות מול הגבייה המדווחת (ילדים × תעריף).
   // לקוח חייב מע"מ: הדיווח כולל מע"מ, הכרטסת נטו → צפוי פער 18%.
   const incomeCards = cards.filter((c) => c.basket_type === 'income');
@@ -231,6 +245,7 @@ async function ledgerReconcile(db, report, client) {
     unassigned: cards.filter((c) => !c.basket_type).length,
     ledgerSalary, costTotal, execActual, expectedExec, hasVat, vatRate: VAT_RATE,
     payers, multiPayer,
+    salaryMatch, // סיכום ההתאמה לפי בתי ספר (null בגנים / בלי כרטסות שכר)
     checks,
   };
 }
