@@ -4,7 +4,7 @@
    בתי"ס פר סמל מוסד, גנים במרוכז. מוגש כדף HTML להדפסה/PDF. */
 
 const { costDataForReport } = require('./reportCosts');
-const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, coordHoursCapFor, isCoordType, notClubSql, projectDays } = require('./salaryCheck');
+const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, coordHoursCapFor, isCoordType, notClubSql, projectDays, explicitStaff } = require('./salaryCheck');
 const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions, cardSymbolResolver } = require('./nameMatch');
 const { cardSplits } = require('./ledgerSplit');
@@ -172,7 +172,7 @@ async function stage1Data(db, report, client, authority) {
       if (coordSibling.has(r.id)) return 'רכזת תכנית בבית הספר';
       return report.framework === 'gardens'
         ? (r.staff_type || (ws && ws.staffType) || suggestRole(r.dept).staffType)
-        : (r.staff_type || (byHours && byHours.staffType) || (ws && ws.staffType) || suggestRole(r.dept).staffType);
+        : ((explicitStaff(r) || {}).staffType || (byHours && byHours.staffType) || (ws && ws.staffType) || suggestRole(r.dept).staffType);
     };
     // דיווח הסגן מוכר רק כשמדווח גם רכז (תנאי הנוסחה בלשונית האיוש)
     const hasCoordRow = ordered.some((r) => basketForStaff(staffOf(r)) === 'coordinator');

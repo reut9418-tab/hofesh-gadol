@@ -13,7 +13,7 @@ const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff, parseGardenExecKids, norm } = require('../lib/budgetFile');
 const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
   SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer, AUTHORITY_COORD, isAuthorityCoord } = require('../lib/fillMinistry');
-const { isClubOperator, notClubSql, salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, defaultSchoolsStaff, coordHoursCapFor, projectDays } = require('../lib/salaryCheck');
+const { isClubOperator, notClubSql, salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, defaultSchoolsStaff, coordHoursCapFor, projectDays, explicitStaff } = require('../lib/salaryCheck');
 const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = require('../lib/applyAssignments');
 const { COST_MARKUP_LIMIT, GROSS_BUMP_LIMIT, effectiveGross } = require('../lib/ingest');
 
@@ -579,15 +579,16 @@ router.get('/:id/prep', ah(async (req, res) => {
     const wsA = md.workerSyms && md.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
     // כלל 11.10: שורה-אחות של רכז/ת (אותה ת.ז, שני תעריפים) — רכז/ת גם היא
     const sib = coordSiblingPrep.has(r.id);
+    const exS = explicitStaff(r); // שמור או תגית המחלקה (^רכז) — לפני כלל השעות
     let stVal = demotedPrep.has(r.id) ? 'מורה'
       : sib ? 'רכזת תכנית בבית הספר'
       : isSchools
-        ? (r.staff_type || (byHours && byHours.staffType) || (wsA && wsA.staffType) || sug.staffType)
+        ? ((exS && exS.staffType) || (byHours && byHours.staffType) || (wsA && wsA.staffType) || sug.staffType)
         : (r.staff_type || (wsA && wsA.staffType) || sug.staffType);
     let roleVal = demotedPrep.has(r.id) ? 'מורה'
       : sib ? 'רכז/ת תכנית בבית הספר'
       : isSchools
-        ? (r.role || (byHours && byHours.role) || (wsA && wsA.role) || sug.role)
+        ? ((exS && exS.role) || (byHours && byHours.role) || (wsA && wsA.role) || sug.role)
         : (r.role || (wsA && wsA.role) || sug.role);
     // בתי"ס בלי שום סיווג (עמודת התפקיד בדוח העלות ריקה) — ברירת מחדל
     // "מורה" עם תפקיד לפי מדרגת הברוטו השעתי (כלל רעות 22.9, גוש עציון)
@@ -1653,15 +1654,16 @@ router.get('/:id/export', ah(async (req, res) => {
     // תפקיד שמולא בקובץ שהועלה (ת"ז): בגנים קודם לניחוש; בבתי"ס כלל השעות גובר
     const exWs = exMd.workerSyms && exMd.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
     const sibEx = coordSiblingEx.has(r.id); // כלל 11.10: שורה-אחות של רכז/ת — רכז/ת גם היא
+    const exS2 = explicitStaff(r); // שמור או תגית המחלקה (^רכז) — לפני כלל השעות
     let stVal = demotedEx.has(r.id) ? 'מורה'
       : sibEx ? 'רכזת תכנית בבית הספר'
       : isSch
-        ? (r.staff_type || (byHours && byHours.staffType) || (exWs && exWs.staffType) || sug.staffType || '')
+        ? ((exS2 && exS2.staffType) || (byHours && byHours.staffType) || (exWs && exWs.staffType) || sug.staffType || '')
         : (r.staff_type || (exWs && exWs.staffType) || sug.staffType || '');
     let roleVal = demotedEx.has(r.id) ? 'מורה'
       : sibEx ? 'רכז/ת תכנית בבית הספר'
       : isSch
-        ? (r.role || (byHours && byHours.role) || (exWs && exWs.role) || sug.role || '')
+        ? ((exS2 && exS2.role) || (byHours && byHours.role) || (exWs && exWs.role) || sug.role || '')
         : (r.role || (exWs && exWs.role) || sug.role || '');
     // בתי"ס בלי שום סיווג — ברירת מחדל לפי מדרגת הברוטו השעתי (כלל 22.9)
     if (isSch && !stVal) ({ staffType: stVal, role: roleVal } = defaultSchoolsStaff(hourlyGross || 0));
