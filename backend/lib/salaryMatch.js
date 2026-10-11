@@ -41,12 +41,22 @@ async function salaryMatchData(db, report, client, authority) {
   if (!cards.length) return base;
   base.hasCards = true;
 
-  const insts = await db.prepare('SELECT id, symbol, name FROM institutions WHERE report_id = ? ORDER BY symbol').all(report.id);
+  const insts = await db.prepare('SELECT id, symbol, name, salary_actual FROM institutions WHERE report_id = ? ORDER BY symbol').all(report.id);
   const rows = await db.prepare(
     `SELECT cr.*, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id WHERE cr.report_id = ? AND ${notClubSql('cr.')}`
   ).all(report.id);
   const { schoolRowResolver } = require('./stage1');
   const { matchInsts, rowSymbol } = await schoolRowResolver(db, report, rows, insts);
+  // דוח הביצוע (קובץ המשרד שהועלה): ביצוע השכר פר מוסד (הדרכה+רכזים+סגנים),
+  // מול הצפוי מדוח העלות — העלות המוכרת (×מע"מ ללקוח חייב, תקרת ברוטו+40%)
+  const { recognizedRowCost } = require('./ingest');
+  const hasVat = !!(client && client.has_vat);
+  const vatFactor = hasVat ? 1.18 : 1;
+  const execBy = {};
+  for (const i of insts) if (Number(i.salary_actual) > 0) execBy[String(i.symbol)] = r2(Number(i.salary_actual));
+  const hasExec = Object.keys(execBy).length > 0;
+  base.hasExec = hasExec;
+  base.hasVat = hasVat;
   // רשימת בתי הספר: מוסדות הדוח + סמל פעילות שאליו הופנו שורות ואינו ברשימה
   const nameOf = new Map();
   for (const i of [...matchInsts, ...insts]) if (!nameOf.has(String(i.symbol))) nameOf.set(String(i.symbol), i.name || '');
@@ -85,10 +95,11 @@ async function salaryMatchData(db, report, client, authority) {
 
     // דוח העלות פר בית ספר
     const costBy = {};
+    const expectedExecBy = {}; // הצפוי בדוח הביצוע (העלות המוכרת) פר בית ספר
     let unassignedCost = 0, unassignedCount = 0;
     for (const r of gRows) {
       const s = rowSymbol(r);
-      if (s) costBy[s] = (costBy[s] || 0) + (r.cost || 0);
+      if (s) { costBy[s] = (costBy[s] || 0) + (r.cost || 0); expectedExecBy[s] = (expectedExecBy[s] || 0) + recognizedRowCost(r, vatFactor); }
       else { unassignedCost += r.cost || 0; unassignedCount++; }
     }
 
@@ -124,7 +135,14 @@ async function salaryMatchData(db, report, client, authority) {
       .map((i) => {
         const ledger = r2(ledgerBy[i.symbol] || 0);
         const cost = r2(costBy[i.symbol] || 0);
-        return { symbol: i.symbol, name: i.name, ledger, cost, diff: r2(ledger - cost), remainder: r2(Math.max(0, cost - ledger)) };
+        // דוח הביצוע פר בית ספר (רק כשיש משלם אחד — בקובץ המשרד אין פיצול לפי משלם)
+        const exec = hasExec && !multiPayer ? (execBy[i.symbol] ?? null) : null;
+        const expectedExec = r2(expectedExecBy[i.symbol] || 0);
+        const execDiff = exec != null ? r2(exec - expectedExec) : null;
+        return {
+          symbol: i.symbol, name: i.name, ledger, cost, diff: r2(ledger - cost), remainder: r2(Math.max(0, cost - ledger)),
+          exec, expectedExec, execDiff, execLevel: execDiff == null ? 'none' : levelOf(execDiff, expectedExec),
+        };
       })
       .sort((a, b) => b.cost - a.cost);
 
@@ -167,9 +185,16 @@ async function salaryMatchData(db, report, client, authority) {
       generalCheck ? generalCheck.level : null,
       mode === 'perSchool' ? levelOf(totalDiff, costTotal) : null,
     ].filter(Boolean);
+    // סיכום דוח הביצוע לקבוצה: הביצוע בקובץ מול הצפוי (רק בבתי ספר שיש להם ביצוע)
+    const withExec = schools.filter((s) => s.exec != null);
+    const execTotals = withExec.length ? (() => {
+      const exec = r2(withExec.reduce((s, x) => s + x.exec, 0));
+      const expected = r2(withExec.reduce((s, x) => s + x.expectedExec, 0));
+      return { exec, expected, diff: r2(exec - expected), level: levelOf(exec - expected, expected), bad: withExec.filter((s) => s.execLevel !== 'ok') };
+    })() : null;
     groups.push({
       payer: multiPayer ? payer : null, mode,
-      cards: cardsOut, schools, generalCheck,
+      cards: cardsOut, schools, generalCheck, execTotals,
       unassignedCost: r2(unassignedCost), unassignedCount,
       splitUnassigned: cardsOut.filter((c) => c.unassigned).map((c) => ({ key: c.key, name: c.name, ...c.unassigned })),
       totals: { ledger: r2(directTotal + generalTotal), direct: directTotal, general: generalTotal, cost: costTotal, diff: totalDiff },
@@ -217,6 +242,13 @@ function summarize(d) {
       parts.push(t + '.');
       levels.push(...bad.map((s) => s.level));
     }
+    if (g.execTotals && g.execTotals.bad.length) {
+      const et = g.execTotals;
+      // הפער הכולל מול דוח הביצוע כבר מדווח בבדיקה "דוח ביצוע מול דוח העלות" —
+      // כאן רק ההפניה לפירוט לפי בתי ספר, בלי להחמיר את הרמה (פחות רעש)
+      parts.push(`דוח הביצוע בקובץ המשרד: פער ב-${et.bad.length} ${et.bad.length === 1 ? 'בית ספר' : 'בתי ספר'} (${et.bad.slice(0, 3).map((s) => s.name || s.symbol).join(', ')}${et.bad.length > 3 ? ` ועוד ${et.bad.length - 3}` : ''}) — פירוט בדוח ההתאמה.`);
+      levels.push('warn');
+    }
     if (g.unassignedCount) {
       parts.push(`${g.unassignedCount} ${g.unassignedCount === 1 ? 'עובד/ת' : 'עובדים'} בדוח העלות (₪${fmt(g.unassignedCost)}) ללא בית ספר — יש לשייך במסך ההכנה.`);
       levels.push('warn');
@@ -238,6 +270,18 @@ function renderSalaryMatchHtml(d) {
   const label = reportLabel(d.report.framework, d.report.program);
   const cls = (lv) => (lv === 'ok' ? 'ok' : lv === 'covered' ? 'cov' : lv === 'warn' ? 'warn' : lv === 'err' ? 'err' : '');
   const mark = (lv) => (lv === 'ok' ? '✓ תואם' : lv === 'covered' ? 'מכוסה בכרטיס כללי' : lv === 'warn' || lv === 'err' ? '⚠ פער' : '');
+  // תא דוח הביצוע: הסכום בקובץ המשרד; כשאינו תואם לצפוי מדוח העלות — ההפרש
+  const execCell = (s) => (s.exec == null ? '—'
+    : s.execLevel === 'ok' ? `₪${fmt(s.exec)}`
+    : `<span class="bad" title="צפוי לפי דוח העלות: ₪${fmt(s.expectedExec)}">₪${fmt(s.exec)} <small>(${s.execDiff > 0 ? '+' : ''}${fmt(s.execDiff)})</small></span>`);
+  const execBasis = [d.hasVat && 'כולל מע"מ 18%', 'אחרי תקרת ברוטו+40%'].filter(Boolean).join(', ');
+  const execLine = (g) => {
+    if (!g.execTotals) return '';
+    const et = g.execTotals;
+    return `<div class="check ${cls(et.level === 'ok' && !et.bad.length ? 'ok' : et.level === 'ok' ? 'warn' : et.level)}">${!et.bad.length
+      ? `✓ דוח הביצוע (קובץ המשרד) ₪${fmt(et.exec)} תואם לצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) בכל בתי הספר.`
+      : `⚠ דוח הביצוע (קובץ המשרד) ₪${fmt(et.exec)} מול הצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) — פער ב-${et.bad.length} בתי ספר (מסומן בעמודה). הורדת דוח ביצוע מעודכן מהמערכת תיישר את הקובץ.`}</div>`;
+  };
 
   const groupBlocks = d.groups.map((g) => {
     const head = g.payer ? `<h2>בספרי ${esc(g.payer)}</h2>` : '';
@@ -247,23 +291,25 @@ function renderSalaryMatchHtml(d) {
       body += `<section class="block">
         <div class="cardline">${gc.cards.map((c) => `כרטסת <b>${esc(c.key)}</b> — ${esc(c.name)}: <b>₪${fmt(c.net)}</b>`).join('<br>')}</div>
         <div class="big">סה"כ בכרטסת השכר: ₪${fmt(gc.total)}</div>
-        <table><thead><tr><th>סמל מוסד</th><th>שם בית הספר</th><th class="num">שכר בדוח העלות</th></tr></thead><tbody>
-          ${g.schools.map((s, i) => `<tr${i % 2 ? ' class="z"' : ''}><td>${esc(s.symbol)}</td><td>${esc(s.name)}</td><td class="num">₪${fmt(s.cost)}</td></tr>`).join('')}
-          ${g.unassignedCount ? `<tr class="warnrow"><td>—</td><td>ללא שיוך לבית ספר (${g.unassignedCount} עובדים)</td><td class="num">₪${fmt(g.unassignedCost)}</td></tr>` : ''}
-          ${gc.shared.map((o) => `<tr class="z"><td>—</td><td>${esc(o.label)} (אותה כרטסת, פרויקט אחר)</td><td class="num">₪${fmt(o.cost)}</td></tr>`).join('')}
-          <tr class="total"><td colspan="2">סה"כ בתי הספר</td><td class="num">₪${fmt(g.totals.cost + gc.sharedCost)}</td></tr>
+        <table><thead><tr><th>סמל מוסד</th><th>שם בית הספר</th><th class="num">שכר בדוח העלות</th>${g.execTotals ? '<th class="num">דוח ביצוע (קובץ המשרד)</th>' : ''}</tr></thead><tbody>
+          ${g.schools.map((s, i) => `<tr${i % 2 ? ' class="z"' : ''}><td>${esc(s.symbol)}</td><td>${esc(s.name)}</td><td class="num">₪${fmt(s.cost)}</td>${g.execTotals ? `<td class="num">${execCell(s)}</td>` : ''}</tr>`).join('')}
+          ${g.unassignedCount ? `<tr class="warnrow"><td>—</td><td>ללא שיוך לבית ספר (${g.unassignedCount} עובדים)</td><td class="num">₪${fmt(g.unassignedCost)}</td>${g.execTotals ? '<td></td>' : ''}</tr>` : ''}
+          ${gc.shared.map((o) => `<tr class="z"><td>—</td><td>${esc(o.label)} (אותה כרטסת, פרויקט אחר)</td><td class="num">₪${fmt(o.cost)}</td>${g.execTotals ? '<td></td>' : ''}</tr>`).join('')}
+          <tr class="total"><td colspan="2">סה"כ בתי הספר</td><td class="num">₪${fmt(g.totals.cost + gc.sharedCost)}</td>${g.execTotals ? `<td class="num">₪${fmt(g.execTotals.exec)}</td>` : ''}</tr>
         </tbody></table>
+        ${execLine(g)}
         <div class="check ${cls(gc.level)}">${gc.level === 'ok'
           ? `✓ סך השכר בבתי הספר (₪${fmt(g.totals.cost + gc.sharedCost)}) שווה לכרטסת (₪${fmt(gc.total)})${Math.abs(gc.diff) > 0.5 ? ` — הפרש זניח ₪${fmt(gc.diff)}` : ''}.`
           : `⚠ סך השכר בבתי הספר (₪${fmt(g.totals.cost + gc.sharedCost)}) אינו שווה לכרטסת (₪${fmt(gc.total)}) — הפרש ₪${fmt(gc.diff)}.`}</div>
       </section>`;
     } else {
       body += `<section class="block">
-        <table><thead><tr><th>סמל מוסד</th><th>שם בית הספר</th><th class="num">כרטסת שכר</th><th class="num">דוח עלות</th><th class="num">הפרש</th><th>מצב</th></tr></thead><tbody>
-          ${g.schools.map((s, i) => `<tr class="${i % 2 ? 'z ' : ''}${cls(s.level)}"><td>${esc(s.symbol)}</td><td>${esc(s.name)}</td><td class="num">${s.ledger ? `₪${fmt(s.ledger)}` : '—'}</td><td class="num">₪${fmt(s.cost)}</td><td class="num">${s.ledger ? `₪${fmt(s.diff)}` : '—'}</td><td>${mark(s.level)}</td></tr>`).join('')}
-          ${g.unassignedCount ? `<tr class="warnrow"><td>—</td><td>ללא שיוך לבית ספר (${g.unassignedCount} עובדים)</td><td class="num">—</td><td class="num">₪${fmt(g.unassignedCost)}</td><td class="num">—</td><td>⚠ לשייך במסך ההכנה</td></tr>` : ''}
-          <tr class="total"><td colspan="2">סה"כ</td><td class="num">₪${fmt(g.totals.direct)}</td><td class="num">₪${fmt(g.totals.cost)}</td><td class="num">₪${fmt(g.totals.direct - g.totals.cost)}</td><td></td></tr>
+        <table><thead><tr><th>סמל מוסד</th><th>שם בית הספר</th><th class="num">כרטסת שכר</th><th class="num">דוח עלות</th><th class="num">הפרש</th>${g.execTotals ? '<th class="num">דוח ביצוע (קובץ המשרד)</th>' : ''}<th>מצב</th></tr></thead><tbody>
+          ${g.schools.map((s, i) => `<tr class="${i % 2 ? 'z ' : ''}${cls(s.level)}"><td>${esc(s.symbol)}</td><td>${esc(s.name)}</td><td class="num">${s.ledger ? `₪${fmt(s.ledger)}` : '—'}</td><td class="num">₪${fmt(s.cost)}</td><td class="num">${s.ledger ? `₪${fmt(s.diff)}` : '—'}</td>${g.execTotals ? `<td class="num">${execCell(s)}</td>` : ''}<td>${mark(s.level)}</td></tr>`).join('')}
+          ${g.unassignedCount ? `<tr class="warnrow"><td>—</td><td>ללא שיוך לבית ספר (${g.unassignedCount} עובדים)</td><td class="num">—</td><td class="num">₪${fmt(g.unassignedCost)}</td><td class="num">—</td>${g.execTotals ? '<td></td>' : ''}<td>⚠ לשייך במסך ההכנה</td></tr>` : ''}
+          <tr class="total"><td colspan="2">סה"כ</td><td class="num">₪${fmt(g.totals.direct)}</td><td class="num">₪${fmt(g.totals.cost)}</td><td class="num">₪${fmt(g.totals.direct - g.totals.cost)}</td>${g.execTotals ? `<td class="num">₪${fmt(g.execTotals.exec)}</td>` : ''}<td></td></tr>
         </tbody></table>
+        ${execLine(g)}
         ${g.generalCheck ? `<div class="sub2">כרטיסי שכר כלליים (לא לבית ספר מסוים): ${g.generalCheck.cards.map((c) => `${esc(c.name)} (${esc(c.key)}) ₪${fmt(c.net)}`).join(' · ')} — סה"כ <b>₪${fmt(g.generalCheck.total)}</b> מול ${coversHe(g.generalCheck)} <b>₪${fmt(g.generalCheck.expected)}</b>.</div>
         <div class="check ${cls(g.generalCheck.level)}">${g.generalCheck.level === 'ok' ? '✓ הכרטיסים הכלליים תואמים ליתרה.' : `⚠ הפרש ₪${fmt(g.generalCheck.diff)} בין הכרטיסים הכלליים ליתרה.`}</div>` : ''}
         <div class="check ${cls(levelOf(g.totals.diff, g.totals.cost))}">${levelOf(g.totals.diff, g.totals.cost) === 'ok' ? `✓ סה"כ כרטסות השכר ₪${fmt(g.totals.ledger)} מול דוח העלות ₪${fmt(g.totals.cost)} — תואם${Math.abs(g.totals.diff) > 0.5 ? ` (הפרש זניח ₪${fmt(g.totals.diff)})` : ''}.` : `⚠ סה"כ כרטסות השכר ₪${fmt(g.totals.ledger)} מול דוח העלות ₪${fmt(g.totals.cost)} — הפרש ₪${fmt(g.totals.diff)}.`}</div>
@@ -280,6 +326,7 @@ function renderSalaryMatchHtml(d) {
 
   return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
 <title>דוח התאמת שכר לבתי ספר — ${esc(who)} — ${esc(label)}</title>
+<style>.bad{color:#B3362B;font-weight:600} .bad small{font-weight:400}</style>
 <style>
   body{font-family:'Segoe UI',Arial,sans-serif;color:#37322A;max-width:900px;margin:0 auto;padding:30px;line-height:1.7;font-size:13.5px}
   h1{font-size:19px;margin:14px 0 2px}
@@ -307,8 +354,8 @@ function renderSalaryMatchHtml(d) {
   @media print { body{padding:10px} details{display:none} }
 </style></head><body>
 <div class="letterhead"><span><b>גוטליב את ביטון, רו"ח</b></span><span>${today}</span></div>
-<h1>דוח התאמת שכר לבתי ספר — כרטסת השכר מול דוח העלות</h1>
-<div class="sub">${esc(who)} · ${esc(label)} · הסכומים נטו (עלות מעביד בספרים), לפי סמל מוסד — כבדיקת משרד החינוך.</div>
+<h1>דוח התאמת שכר לבתי ספר — כרטסת השכר מול דוח העלות${d.hasExec ? ' ודוח הביצוע' : ''}</h1>
+<div class="sub">${esc(who)} · ${esc(label)} · כרטסת ודוח עלות נטו (עלות מעביד בספרים), לפי סמל מוסד — כבדיקת משרד החינוך.${d.hasExec ? ` דוח הביצוע = מה שכתוב בקובץ המשרד שהועלה (${execBasis}).` : ''}</div>
 ${!d.applicable ? '<p>בגנים הדיווח מרוכז לכל הגנים — אין התאמה לפי מוסד.</p>'
   : !d.hasCards ? '<p>לא נקלטו כרטסות שכר לדוח זה — מעלים כרטסת בלשונית שלב 2 והדוח ייבנה אוטומטית.</p>'
   : `<div class="summary ${cls(d.summary.level)}">${d.summary.level === 'ok' ? '✓' : '⚠'} ${esc(d.summary.text)}</div>${groupBlocks}`}
@@ -345,10 +392,17 @@ function buildSalaryMatchXlsx(d) {
     [cell(`${who} — ${label} · ${today} · סכומים נטו (עלות מעביד בספרים) לפי סמל מוסד`, S.sub)],
     [],
   ];
-  const W = 6;
+  const W = 8;
   const merges = [0, 1].map((r) => ({ s: { r, c: 0 }, e: { r, c: W - 1 } }));
   const mergeLast = () => merges.push({ s: { r: aoa.length - 1, c: 0 }, e: { r: aoa.length - 1, c: W - 1 } });
   const statusHe = (lv) => (lv === 'ok' ? 'תואם' : lv === 'covered' ? 'מכוסה בכרטיס כללי' : lv === 'warn' || lv === 'err' ? 'פער' : '');
+  const execBasis = [d.hasVat && 'כולל מע"מ 18%', 'אחרי תקרת ברוטו+40%'].filter(Boolean).join(', ');
+  const execLineText = (g) => {
+    const et = g.execTotals;
+    return !et.bad.length
+      ? `✓ דוח הביצוע (קובץ המשרד) ₪${fmt(et.exec)} תואם לצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) בכל בתי הספר`
+      : `⚠ דוח הביצוע (קובץ המשרד) ₪${fmt(et.exec)} מול הצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) — פער ב-${et.bad.length} בתי ספר; הורדת דוח ביצוע מעודכן מהמערכת תיישר את הקובץ`;
+  };
 
   if (d.summary) { aoa.push([cell(d.summary.text, S.meta)]); mergeLast(); aoa.push([]); }
 
@@ -358,20 +412,27 @@ function buildSalaryMatchXlsx(d) {
       const gc = g.generalCheck;
       for (const c of gc.cards) { aoa.push([cell(`כרטסת ${c.key} — ${c.name}: ₪${fmt(c.net)}`, S.meta)]); mergeLast(); }
       aoa.push([cell(`סה"כ בכרטסת השכר: ₪${fmt(gc.total)}`, S.big)]); mergeLast();
-      aoa.push([cell('סמל מוסד', S.head), cell('שם בית הספר', S.head), cell('שכר בדוח העלות', S.head)]);
-      g.schools.forEach((s, i) => aoa.push([cell(s.symbol, S.cellR(i % 2)), cell(s.name, S.cellR(i % 2)), cell(s.cost, S.cellN(i % 2))]));
+      const ex = !!g.execTotals;
+      aoa.push([cell('סמל מוסד', S.head), cell('שם בית הספר', S.head), cell('שכר בדוח העלות', S.head), ...(ex ? [cell('דוח ביצוע (קובץ המשרד)', S.head), cell('הפרש מול הצפוי', S.head)] : [])]);
+      g.schools.forEach((s, i) => aoa.push([cell(s.symbol, S.cellR(i % 2)), cell(s.name, S.cellR(i % 2)), cell(s.cost, S.cellN(i % 2)),
+        ...(ex ? [cell(s.exec, S.cellN(i % 2, s.execLevel !== 'ok' && s.execLevel !== 'none')), cell(s.execDiff, S.cellN(i % 2, s.execLevel !== 'ok' && s.execLevel !== 'none'))] : [])]));
       if (g.unassignedCount) aoa.push([cell('—', S.cellR(0, true)), cell(`ללא שיוך לבית ספר (${g.unassignedCount} עובדים)`, S.cellR(0, true)), cell(g.unassignedCost, S.cellN(0, true))]);
       gc.shared.forEach((o) => aoa.push([cell('—', S.cellR(1)), cell(`${o.label} (אותה כרטסת, פרויקט אחר)`, S.cellR(1)), cell(o.cost, S.cellN(1))]));
-      aoa.push([cell('סה"כ בתי הספר', S.totalR), cell('', S.totalR), cell(r2(g.totals.cost + gc.sharedCost), S.total)]);
+      aoa.push([cell('סה"כ בתי הספר', S.totalR), cell('', S.totalR), cell(r2(g.totals.cost + gc.sharedCost), S.total), ...(ex ? [cell(g.execTotals.exec, S.total), cell(g.execTotals.diff, S.total)] : [])]);
+      if (ex) { aoa.push([cell(execLineText(g), g.execTotals.bad.length ? S.bad : S.ok)]); mergeLast(); }
       aoa.push([cell(gc.level === 'ok' ? `✓ סך השכר בבתי הספר שווה לכרטסת (₪${fmt(gc.total)})` : `⚠ סך השכר בבתי הספר (₪${fmt(g.totals.cost + gc.sharedCost)}) אינו שווה לכרטסת (₪${fmt(gc.total)}) — הפרש ₪${fmt(gc.diff)}`, gc.level === 'ok' ? S.ok : S.bad)]); mergeLast();
     } else {
-      aoa.push([cell('סמל מוסד', S.head), cell('שם בית הספר', S.head), cell('כרטסת שכר', S.head), cell('דוח עלות', S.head), cell('הפרש', S.head), cell('מצב', S.head)]);
+      const ex = !!g.execTotals;
+      aoa.push([cell('סמל מוסד', S.head), cell('שם בית הספר', S.head), cell('כרטסת שכר', S.head), cell('דוח עלות', S.head), cell('הפרש', S.head), ...(ex ? [cell('דוח ביצוע (קובץ המשרד)', S.head), cell('הפרש מול הצפוי', S.head)] : []), cell('מצב', S.head)]);
       g.schools.forEach((s, i) => {
         const bad = s.level === 'warn' || s.level === 'err';
-        aoa.push([cell(s.symbol, S.cellR(i % 2, bad)), cell(s.name, S.cellR(i % 2, bad)), cell(s.ledger, S.cellN(i % 2, bad)), cell(s.cost, S.cellN(i % 2, bad)), cell(s.diff, S.cellN(i % 2, bad)), cell(statusHe(s.level), S.cellR(i % 2, bad))]);
+        const exBad = s.execLevel !== 'ok' && s.execLevel !== 'none';
+        aoa.push([cell(s.symbol, S.cellR(i % 2, bad)), cell(s.name, S.cellR(i % 2, bad)), cell(s.ledger, S.cellN(i % 2, bad)), cell(s.cost, S.cellN(i % 2, bad)), cell(s.diff, S.cellN(i % 2, bad)),
+          ...(ex ? [cell(s.exec, S.cellN(i % 2, exBad)), cell(s.execDiff, S.cellN(i % 2, exBad))] : []), cell(statusHe(s.level), S.cellR(i % 2, bad))]);
       });
-      if (g.unassignedCount) aoa.push([cell('—', S.cellR(0, true)), cell(`ללא שיוך לבית ספר (${g.unassignedCount} עובדים)`, S.cellR(0, true)), cell('', S.cellR(0, true)), cell(g.unassignedCost, S.cellN(0, true)), cell('', S.cellR(0, true)), cell('לשייך במסך ההכנה', S.cellR(0, true))]);
-      aoa.push([cell('סה"כ', S.totalR), cell('', S.totalR), cell(g.totals.direct, S.total), cell(g.totals.cost, S.total), cell(r2(g.totals.direct - g.totals.cost), S.total), cell('', S.totalR)]);
+      if (g.unassignedCount) aoa.push([cell('—', S.cellR(0, true)), cell(`ללא שיוך לבית ספר (${g.unassignedCount} עובדים)`, S.cellR(0, true)), cell('', S.cellR(0, true)), cell(g.unassignedCost, S.cellN(0, true)), cell('', S.cellR(0, true)), ...(ex ? [cell('', S.cellR(0, true)), cell('', S.cellR(0, true))] : []), cell('לשייך במסך ההכנה', S.cellR(0, true))]);
+      aoa.push([cell('סה"כ', S.totalR), cell('', S.totalR), cell(g.totals.direct, S.total), cell(g.totals.cost, S.total), cell(r2(g.totals.direct - g.totals.cost), S.total), ...(ex ? [cell(g.execTotals.exec, S.total), cell(g.execTotals.diff, S.total)] : []), cell('', S.totalR)]);
+      if (ex) { aoa.push([cell(execLineText(g), g.execTotals.bad.length ? S.bad : S.ok)]); mergeLast(); }
       if (g.generalCheck) {
         const gc = g.generalCheck;
         aoa.push([cell(`כרטיסי שכר כלליים: ${gc.cards.map((c) => `${c.name} (${c.key}) ₪${fmt(c.net)}`).join(' · ')} — סה"כ ₪${fmt(gc.total)} מול ${coversHe(gc)} ₪${fmt(gc.expected)}`, S.meta)]); mergeLast();
@@ -391,7 +452,7 @@ function buildSalaryMatchXlsx(d) {
   }
 
   const ws = XLSXS.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [{ wch: 13 }, { wch: 36 }, { wch: 15 }, { wch: 15 }, { wch: 13 }, { wch: 20 }];
+  ws['!cols'] = [{ wch: 13 }, { wch: 36 }, { wch: 15 }, { wch: 15 }, { wch: 13 }, { wch: 18 }, { wch: 15 }, { wch: 18 }];
   ws['!merges'] = merges;
   const wb = XLSXS.utils.book_new();
   wb.Workbook = { Views: [{ RTL: true }] };
