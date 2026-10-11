@@ -13,7 +13,7 @@ const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff, parseGardenExecKids, norm } = require('../lib/budgetFile');
 const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
   SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer, AUTHORITY_COORD, isAuthorityCoord } = require('../lib/fillMinistry');
-const { isClubOperator, notClubSql, salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor } = require('../lib/salaryCheck');
+const { isClubOperator, notClubSql, salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, defaultSchoolsStaff, coordHoursCapFor } = require('../lib/salaryCheck');
 const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = require('../lib/applyAssignments');
 const { COST_MARKUP_LIMIT, GROSS_BUMP_LIMIT, effectiveGross } = require('../lib/ingest');
 
@@ -555,6 +555,7 @@ router.get('/:id/prep', ah(async (req, res) => {
   // כלל רעות 16.9 (בתי"ס): רכז אחד לכל היותר בבי"ס, סגן 0 או 1 —
   // מסווגי-שעות עודפים יורדים למורה
   const demotedPrep = new Set();
+  const coordSiblingPrep = new Set();
   if (isSchools) {
     const bySchool = new Map();
     for (const r of rawRows) {
@@ -564,7 +565,10 @@ router.get('/:id/prep', ah(async (req, res) => {
     }
     // תקרת שעות הריכוז פר מוסד (מוסד ד-ו — 20 ימים)
     const coordBud = await coordBudgetBySymbol(db, report.id);
-    for (const [s, g] of bySchool) for (const id of demoteExtraSchoolRoles(g, coordHoursCapFor(report, coordBud.get(s)))) demotedPrep.add(id);
+    for (const [s, g] of bySchool) {
+      for (const id of demoteExtraSchoolRoles(g, coordHoursCapFor(report, coordBud.get(s)))) demotedPrep.add(id);
+      for (const id of coordinatorSiblingRows(g)) coordSiblingPrep.add(id); // כלל 11.10: רכז בשתי השורות
+    }
   }
   const rows = rawRows.map((r) => {
     const sug = suggestRole(r.dept);
@@ -573,11 +577,15 @@ router.get('/:id/prep', ah(async (req, res) => {
     const byHours = isSchools && !demotedPrep.has(r.id) ? schoolsRoleByHours(r.hours) : null;
     // שיוך שמולא בקובץ שהועלה (ת"ז): בגנים קודם לניחוש; בבתי"ס כלל השעות גובר
     const wsA = md.workerSyms && md.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
+    // כלל 11.10: שורה-אחות של רכז/ת (אותה ת.ז, שני תעריפים) — רכז/ת גם היא
+    const sib = coordSiblingPrep.has(r.id);
     let stVal = demotedPrep.has(r.id) ? 'מורה'
+      : sib ? 'רכזת תכנית בבית הספר'
       : isSchools
         ? (r.staff_type || (byHours && byHours.staffType) || (wsA && wsA.staffType) || sug.staffType)
         : (r.staff_type || (wsA && wsA.staffType) || sug.staffType);
     let roleVal = demotedPrep.has(r.id) ? 'מורה'
+      : sib ? 'רכז/ת תכנית בבית הספר'
       : isSchools
         ? (r.role || (byHours && byHours.role) || (wsA && wsA.role) || sug.role)
         : (r.role || (wsA && wsA.role) || sug.role);
@@ -737,7 +745,10 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
       if (list.some(isCoord)) continue;
       const pick = list.slice().sort((a, b) => (b.hours || 0) - (a.hours || 0) || (b.cost || 0) - (a.cost || 0))[0];
       if (!pick) continue;
-      await db.prepare("UPDATE cost_rows SET staff_type = 'רכזת תכנית בבית הספר', role = 'רכז/ת תכנית בבית הספר' WHERE id = ?").run(pick.id);
+      // כלל 11.10: הרכז/ת בכל השורות שלו/ה בבית הספר (שני תעריפים = שתי שורות)
+      const pickId = String(pick.emp_id || '').replace(/\D/g, '').replace(/^0+/, '');
+      const sameWorker = list.filter((r) => r.id === pick.id || (pickId && String(r.emp_id || '').replace(/\D/g, '').replace(/^0+/, '') === pickId));
+      for (const r of sameWorker) await db.prepare("UPDATE cost_rows SET staff_type = 'רכזת תכנית בבית הספר', role = 'רכז/ת תכנית בבית הספר' WHERE id = ?").run(r.id);
       promoted++;
     }
     return res.json({ ok: true, assigned: placed + promoted, placed, promoted, gardens: bySchool.size, mode: 'schools' });
@@ -1581,6 +1592,7 @@ router.get('/:id/export', ah(async (req, res) => {
   const exSchoolTypes = report.framework !== 'gardens' ? exMd.schoolTypes : null;
   // כלל רעות 23.9 (בתי"ס): רכזים עד תקרת שעות (7.6×ימים), סגן 0 או 1
   const demotedEx = new Set();
+  const coordSiblingEx = new Set();
   if (report.framework !== 'gardens') {
     const bySchool = new Map();
     for (const r of rows) {
@@ -1589,7 +1601,10 @@ router.get('/:id/export', ah(async (req, res) => {
       bySchool.get(s).push(r);
     }
     const coordBudEx = await coordBudgetBySymbol(db, report.id);
-    for (const [s, g] of bySchool) for (const rid of demoteExtraSchoolRoles(g, coordHoursCapFor(report, coordBudEx.get(s)))) demotedEx.add(rid);
+    for (const [s, g] of bySchool) {
+      for (const rid of demoteExtraSchoolRoles(g, coordHoursCapFor(report, coordBudEx.get(s)))) demotedEx.add(rid);
+      for (const rid of coordinatorSiblingRows(g)) coordSiblingEx.add(rid); // כלל 11.10: רכז בשתי השורות
+    }
   }
   // ללקוח חייב מע"מ — העלות השעתית המדווחת למשרד כוללת מע"מ (הברוטו נשאר כפי שהוא).
   // העלות המדווחת מוגבלת לנמוך מבין עלות×מע"מ לבין ברוטו שעתי×140% (תקרת המשרד);
@@ -1606,11 +1621,14 @@ router.get('/:id/export', ah(async (req, res) => {
     const byHours = isSch && !demotedEx.has(r.id) ? schoolsRoleByHours(r.hours) : null;
     // תפקיד שמולא בקובץ שהועלה (ת"ז): בגנים קודם לניחוש; בבתי"ס כלל השעות גובר
     const exWs = exMd.workerSyms && exMd.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
+    const sibEx = coordSiblingEx.has(r.id); // כלל 11.10: שורה-אחות של רכז/ת — רכז/ת גם היא
     let stVal = demotedEx.has(r.id) ? 'מורה'
+      : sibEx ? 'רכזת תכנית בבית הספר'
       : isSch
         ? (r.staff_type || (byHours && byHours.staffType) || (exWs && exWs.staffType) || sug.staffType || '')
         : (r.staff_type || (exWs && exWs.staffType) || sug.staffType || '');
     let roleVal = demotedEx.has(r.id) ? 'מורה'
+      : sibEx ? 'רכז/ת תכנית בבית הספר'
       : isSch
         ? (r.role || (byHours && byHours.role) || (exWs && exWs.role) || sug.role || '')
         : (r.role || (exWs && exWs.role) || sug.role || '');

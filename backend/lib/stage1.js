@@ -4,7 +4,7 @@
    בתי"ס פר סמל מוסד, גנים במרוכז. מוגש כדף HTML להדפסה/PDF. */
 
 const { costDataForReport } = require('./reportCosts');
-const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles, coordHoursCapFor, isCoordType, notClubSql } = require('./salaryCheck');
+const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, coordHoursCapFor, isCoordType, notClubSql } = require('./salaryCheck');
 const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions, cardSymbolResolver } = require('./nameMatch');
 const { cardSplits } = require('./ledgerSplit');
@@ -152,6 +152,8 @@ async function stage1Data(db, report, client, authority) {
     // מסווגי-שעות עודפים יורדים למורה; שיוך ידני לא נדרס (שעותיו נספרות)
     // תקרה פר מוסד — במוסד ד-ו (תוספת שכר רכז) הרכז מתוקצב ל-20 ימים
     const demoted = report.framework !== 'gardens' ? demoteExtraSchoolRoles(ordered, coordHoursCapFor(report, coordBudget)) : new Set();
+    // כלל 11.10: שורה-אחות של רכז/ת (אותה ת.ז, שני תעריפים) — רכז/ת גם היא
+    const coordSibling = report.framework !== 'gardens' ? coordinatorSiblingRows(ordered) : new Set();
     const staffOf = (r) => {
       const byHours = report.framework !== 'gardens' && !demoted.has(r.id) ? schoolsRoleByHours(r.hours) : null;
       // תפקיד שמולא בקובץ שהועלה (ת"ז): בגנים קודם לניחוש (יבנה 16.9);
@@ -159,6 +161,7 @@ async function stage1Data(db, report, client, authority) {
       // (עובד עם כמה שורות בקובץ נלכד לפי הראשונה — לא אמין כדריסה)
       const ws = meta.workerSyms && meta.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
       if (demoted.has(r.id)) return 'מורה';
+      if (coordSibling.has(r.id)) return 'רכזת תכנית בבית הספר';
       return report.framework === 'gardens'
         ? (r.staff_type || (ws && ws.staffType) || suggestRole(r.dept).staffType)
         : (r.staff_type || (byHours && byHours.staffType) || (ws && ws.staffType) || suggestRole(r.dept).staffType);

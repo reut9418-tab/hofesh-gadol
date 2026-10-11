@@ -51,14 +51,41 @@ function coordHoursCapFor(report, coordBudget = null) {
   return Math.round(COORD_HOURS_PER_DAY * capDays * 100) / 100;
 }
 const isCoordType = (st) => /רכז/.test(st) && !/סג[נן]/.test(st) && !/רכזת גן/.test(st) && !/רשותי/.test(st); // רכז רשותי — לא בתקרת בי"ס
+/* כלל רעות 11.10 (כל פרויקטי בתי הספר): רכז/ת שמופיע/ה בכמה שורות באותו
+   בית ספר (שני תעריפים) הוא/היא רכז/ת בכולן. schoolRows — שורות של בי"ס אחד.
+   מחזיר Set של row.id שחייבים להיות רכז כי שורה אחרת של אותו/ה עובד/ת
+   (אותה ת.ז) היא רכז/ת — לפי שיוך שמור או לפי כלל השעות */
+function coordinatorSiblingRows(schoolRows) {
+  const byWorker = new Map();
+  for (const r of schoolRows) {
+    const id = String(r.emp_id || '').replace(/\D/g, '').replace(/^0+/, '');
+    if (!id) continue;
+    if (!byWorker.has(id)) byWorker.set(id, []);
+    byWorker.get(id).push(r);
+  }
+  const isCoord = (r) => {
+    const st = r.staff_type || (schoolsRoleByHours(r.hours) || {}).staffType;
+    return !!st && isCoordType(String(st));
+  };
+  const out = new Set();
+  for (const list of byWorker.values()) {
+    if (list.length < 2 || !list.some(isCoord)) continue;
+    for (const r of list) if (!isCoord(r)) out.add(r.id);
+  }
+  return out;
+}
+
 function demoteExtraSchoolRoles(schoolRows, coordCap = COORD_HOURS_PER_DAY * 15) {
   const demoted = new Set();
+  // שורות-אחיות של רכז/ת (כלל 11.10) נחשבות רכז מפורש: נספרות בתקרה ולא יורדות
+  const siblings = coordinatorSiblingRows(schoolRows);
+  const isExplicitCoord = (r) => (r.staff_type && isCoordType(String(r.staff_type))) || siblings.has(r.id);
   // רכזים — תקרת שעות: הידניים נספרים תחילה, ואז מסווגי-שעות לפי שעות יורד
   const explicitHours = schoolRows
-    .filter((r) => r.staff_type && isCoordType(String(r.staff_type)))
+    .filter(isExplicitCoord)
     .reduce((s, r) => s + (r.hours || 0), 0);
   const inferredCoords = schoolRows.filter((r) => {
-    if (r.staff_type) return false;
+    if (r.staff_type || siblings.has(r.id)) return false;
     const bh = schoolsRoleByHours(r.hours);
     return bh && isCoordType(String(bh.staffType));
   });
@@ -66,7 +93,7 @@ function demoteExtraSchoolRoles(schoolRows, coordCap = COORD_HOURS_PER_DAY * 15)
   // הרכז/ת הראשון/ה נשאר/ת תמיד — גם מעל התקרה (אחרת בי"ס עם רכז יחיד של
   // 136 שעות נשאר בלי רכז והמשרד לא מתקצב אותו); התקרה מגבילה רכזים נוספים
   let used = explicitHours;
-  let hasKept = schoolRows.some((r) => r.staff_type && isCoordType(String(r.staff_type)));
+  let hasKept = schoolRows.some(isExplicitCoord);
   for (const r of inferredCoords) {
     if (!hasKept) { hasKept = true; used += r.hours || 0; continue; }
     if (used + (r.hours || 0) <= coordCap + 0.01) used += r.hours || 0;
@@ -214,4 +241,4 @@ async function salaryCheck(db, report) {
   };
 }
 
-module.exports = { isClubOperator, notClubSql, salaryCheck, suggestRole, basketForStaff, staffFromRoleText, schoolsRoleByHours, demoteExtraSchoolRoles, defaultSchoolsStaff, coordHoursCapFor, isCoordType };
+module.exports = { isClubOperator, notClubSql, salaryCheck, suggestRole, basketForStaff, staffFromRoleText, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, defaultSchoolsStaff, coordHoursCapFor, isCoordType };
