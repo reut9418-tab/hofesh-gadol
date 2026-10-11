@@ -4,16 +4,45 @@
    בתי ספר: שכר צוות חינוכי + שכר רכזים + שכר סגני רכזים (deputy)
    וחריגה מעבר לסלים נבלעת בסל הגמיש (flexible) — עד גובהו. */
 
+/* ימי הפרויקט של הדוח — הבסיס לכללי השעות (מכינות 8, הרחבה לפי הדוח, אחרת 15) */
+function projectDays(report) {
+  if (!report) return 15;
+  return report.framework === 'prep' ? 8 : report.program === 'extension' ? (report.extension_days || 6) : 15;
+}
+
+/* תגית תפקיד בסוף שם המחלקה — "110106^אגרון גרשון^הארכת ק^רכז" (לביא, רעות 11.10):
+   המקטע האחרון אחרי ^ הוא התפקיד המפורש של השורה */
+function deptRoleTag(dept) {
+  const d = String(dept || '');
+  if (!d.includes('^')) return null;
+  const t = d.split('^').pop().trim();
+  return t || null;
+}
+/* תפקיד מפורש מתגית המחלקה → איש צוות + תפקיד לפי רשימת תבנית בתי הספר.
+   נשמר בקליטה כמו עמודת "תפקיד" (מקור מוסמך — לא נדרס בניחושי שעות/מחלקה) */
+function staffFromDeptTag(dept) {
+  const t = deptRoleTag(dept);
+  if (!t) return null;
+  if (/רשותי/.test(t)) return { staffType: 'רכז רשותי', role: 'רכז רשותי' };
+  if (/סג[נן]/.test(t)) return { staffType: 'סגנית רכזת מעל 150', role: 'סגנ/ית רכ/זת>150' };
+  if (/רכז/.test(t)) return { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' }; // "רכז" בלשון זכר — לא רק "רכזת"
+  if (/ע\.?\s?חינוך|עוזר/.test(t)) return { staffType: 'מורה', role: 'עוזר/ת חינוך' };
+  if (/מורה/.test(t)) return { staffType: 'מורה', role: 'מורה' };
+  return staffFromRoleText(t); // סייעת/מובילה/מד"צ — כמו עמודת תפקיד; "מדריך" וכד' — ברירת מחדל לפי ברוטו
+}
+
 /* ברירת מחדל לתפקיד לפי שם המחלקה (משמש גם את מסך ההכנה וגם את הייצוא) */
 function suggestRole(dept) {
   const d = String(dept || '');
+  const tag = staffFromDeptTag(d);
+  if (tag) return tag;
   if (/רכזות גנים|רכזת גן/.test(d)) return { staffType: 'רכזת גן', role: 'רכז/ת גן' };
   // "סייעת" כללית — ממשיכה/חדשה נקבע לפי המשלם (aideTypeForPayer) במסך ובייצוא
   if (/סייע/.test(d)) return { staffType: 'סייעת', role: 'סייעת' };
   if (/מוביל|גננת|גננות/.test(d)) return { staffType: 'גננת', role: 'גננת של הגן' };
   // "מורים +רכזות" = מחלקה משולבת של בי"ס — ברירת המחדל מורה (הרכזת תסומן ידנית)
   if (/מור(ה|ים)/.test(d)) return { staffType: 'מורה', role: 'מורה' };
-  if (/רכזת|רכזות/.test(d)) return { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' };
+  if (/רכז/.test(d)) return { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' }; // גם "רכז" בלשון זכר (לביא 11.10)
   return { staffType: null, role: null };
 }
 
@@ -21,10 +50,17 @@ function suggestRole(dept) {
    מעל 93 שעות = רכז/ת בי"ס; מעל 90 ועד 93 = סגן/ית רכז. בדיוק 90 שעות =
    יום עבודה מלא של מורה (15 יום × 6 שעות) — לא סגן. המשרד מציג את
    תקציב בית הספר רק כשמוגדר רכז בכל סמל מוסד. */
-function schoolsRoleByHours(hours) {
+function schoolsRoleByHours(hours, days = 15) {
   if (!(hours > 0)) return null;
-  if (hours > 93) return { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' };
-  if (hours > 90) return { staffType: 'סגנית רכזת מעל 150', role: 'סגנ/ית רכז/ת>150' };
+  if (days === 15) {
+    if (hours > 93) return { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' };
+    if (hours > 90) return { staffType: 'סגנית רכזת מעל 150', role: 'סגנ/ית רכז/ת>150' };
+    return null;
+  }
+  // הרחבה/מכינות (כלל רעות 11.10): עד 6 שעות ליום = מורה; יותר מ-6 ועד 7 = סגנ/ית; יותר מ-7 = רכז/ת
+  const perDay = hours / days;
+  if (perDay > 7) return { staffType: 'רכזת תכנית בבית הספר', role: 'רכז/ת תכנית בבית הספר' };
+  if (perDay > 6) return { staffType: 'סגנית רכזת מעל 150', role: 'סגנ/ית רכז/ת>150' };
   return null;
 }
 
@@ -55,7 +91,7 @@ const isCoordType = (st) => /רכז/.test(st) && !/סג[נן]/.test(st) && !/ר�
    בית ספר (שני תעריפים) הוא/היא רכז/ת בכולן. schoolRows — שורות של בי"ס אחד.
    מחזיר Set של row.id שחייבים להיות רכז כי שורה אחרת של אותו/ה עובד/ת
    (אותה ת.ז) היא רכז/ת — לפי שיוך שמור או לפי כלל השעות */
-function coordinatorSiblingRows(schoolRows) {
+function coordinatorSiblingRows(schoolRows, days = 15) {
   const byWorker = new Map();
   for (const r of schoolRows) {
     const id = String(r.emp_id || '').replace(/\D/g, '').replace(/^0+/, '');
@@ -64,7 +100,7 @@ function coordinatorSiblingRows(schoolRows) {
     byWorker.get(id).push(r);
   }
   const isCoord = (r) => {
-    const st = r.staff_type || (schoolsRoleByHours(r.hours) || {}).staffType;
+    const st = r.staff_type || (schoolsRoleByHours(r.hours, days) || {}).staffType;
     return !!st && isCoordType(String(st));
   };
   const out = new Set();
@@ -75,10 +111,10 @@ function coordinatorSiblingRows(schoolRows) {
   return out;
 }
 
-function demoteExtraSchoolRoles(schoolRows, coordCap = COORD_HOURS_PER_DAY * 15) {
+function demoteExtraSchoolRoles(schoolRows, coordCap = COORD_HOURS_PER_DAY * 15, days = 15) {
   const demoted = new Set();
   // שורות-אחיות של רכז/ת (כלל 11.10) נחשבות רכז מפורש: נספרות בתקרה ולא יורדות
-  const siblings = coordinatorSiblingRows(schoolRows);
+  const siblings = coordinatorSiblingRows(schoolRows, days);
   const isExplicitCoord = (r) => (r.staff_type && isCoordType(String(r.staff_type))) || siblings.has(r.id);
   // רכזים — תקרת שעות: הידניים נספרים תחילה, ואז מסווגי-שעות לפי שעות יורד
   const explicitHours = schoolRows
@@ -86,7 +122,7 @@ function demoteExtraSchoolRoles(schoolRows, coordCap = COORD_HOURS_PER_DAY * 15)
     .reduce((s, r) => s + (r.hours || 0), 0);
   const inferredCoords = schoolRows.filter((r) => {
     if (r.staff_type || siblings.has(r.id)) return false;
-    const bh = schoolsRoleByHours(r.hours);
+    const bh = schoolsRoleByHours(r.hours, days);
     return bh && isCoordType(String(bh.staffType));
   });
   inferredCoords.sort((a, b) => (b.hours || 0) - (a.hours || 0) || (b.gross || 0) - (a.gross || 0));
@@ -104,7 +140,7 @@ function demoteExtraSchoolRoles(schoolRows, coordCap = COORD_HOURS_PER_DAY * 15)
   const explicitDep = schoolRows.filter((r) => r.staff_type && isDep(String(r.staff_type))).length;
   const inferredDeps = schoolRows.filter((r) => {
     if (r.staff_type) return false;
-    const bh = schoolsRoleByHours(r.hours);
+    const bh = schoolsRoleByHours(r.hours, days);
     return bh && isDep(String(bh.staffType));
   });
   inferredDeps.sort((a, b) => (b.hours || 0) - (a.hours || 0) || (b.gross || 0) - (a.gross || 0));
@@ -241,4 +277,4 @@ async function salaryCheck(db, report) {
   };
 }
 
-module.exports = { isClubOperator, notClubSql, salaryCheck, suggestRole, basketForStaff, staffFromRoleText, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, defaultSchoolsStaff, coordHoursCapFor, isCoordType };
+module.exports = { isClubOperator, notClubSql, salaryCheck, suggestRole, basketForStaff, staffFromRoleText, staffFromDeptTag, deptRoleTag, projectDays, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, defaultSchoolsStaff, coordHoursCapFor, isCoordType };

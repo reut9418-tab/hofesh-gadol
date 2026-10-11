@@ -4,7 +4,7 @@
    בתי"ס פר סמל מוסד, גנים במרוכז. מוגש כדף HTML להדפסה/PDF. */
 
 const { costDataForReport } = require('./reportCosts');
-const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, coordHoursCapFor, isCoordType, notClubSql } = require('./salaryCheck');
+const { salaryCheck, suggestRole, basketForStaff, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, coordHoursCapFor, isCoordType, notClubSql, projectDays } = require('./salaryCheck');
 const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions, cardSymbolResolver } = require('./nameMatch');
 const { cardSplits } = require('./ledgerSplit');
@@ -159,11 +159,11 @@ async function stage1Data(db, report, client, authority) {
     // כלל רעות 23.9 (בתי"ס): רכזים עד תקרת שעות 7.6×ימי הפרויקט, סגן 0 או 1 —
     // מסווגי-שעות עודפים יורדים למורה; שיוך ידני לא נדרס (שעותיו נספרות)
     // תקרה פר מוסד — במוסד ד-ו (תוספת שכר רכז) הרכז מתוקצב ל-20 ימים
-    const demoted = report.framework !== 'gardens' ? demoteExtraSchoolRoles(ordered, coordHoursCapFor(report, coordBudget)) : new Set();
+    const demoted = report.framework !== 'gardens' ? demoteExtraSchoolRoles(ordered, coordHoursCapFor(report, coordBudget), projectDays(report)) : new Set();
     // כלל 11.10: שורה-אחות של רכז/ת (אותה ת.ז, שני תעריפים) — רכז/ת גם היא
-    const coordSibling = report.framework !== 'gardens' ? coordinatorSiblingRows(ordered) : new Set();
+    const coordSibling = report.framework !== 'gardens' ? coordinatorSiblingRows(ordered, projectDays(report)) : new Set();
     const staffOf = (r) => {
-      const byHours = report.framework !== 'gardens' && !demoted.has(r.id) ? schoolsRoleByHours(r.hours) : null;
+      const byHours = report.framework !== 'gardens' && !demoted.has(r.id) ? schoolsRoleByHours(r.hours, projectDays(report)) : null;
       // תפקיד שמולא בקובץ שהועלה (ת"ז): בגנים קודם לניחוש (יבנה 16.9);
       // בבתי"ס כלל השעות המאומת (90/93) גובר — הקובץ רק כשאין שעות מסווגות
       // (עובד עם כמה שורות בקובץ נלכד לפי הראשונה — לא אמין כדריסה)

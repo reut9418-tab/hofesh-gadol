@@ -13,7 +13,7 @@ const { reportHealth } = require('../lib/status');
 const { parseBudgetFile, extractTariff, parseGardenExecKids, norm } = require('../lib/budgetFile');
 const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extractExecGardens, extractWorkerAssignments, STAFF_TYPES, SCHOOL_STAFF_TYPES, extractSchoolStaffTypes,
   SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer, AUTHORITY_COORD, isAuthorityCoord } = require('../lib/fillMinistry');
-const { isClubOperator, notClubSql, salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, defaultSchoolsStaff, coordHoursCapFor } = require('../lib/salaryCheck');
+const { isClubOperator, notClubSql, salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, defaultSchoolsStaff, coordHoursCapFor, projectDays } = require('../lib/salaryCheck');
 const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = require('../lib/applyAssignments');
 const { COST_MARKUP_LIMIT, GROSS_BUMP_LIMIT, effectiveGross } = require('../lib/ingest');
 
@@ -566,15 +566,15 @@ router.get('/:id/prep', ah(async (req, res) => {
     // תקרת שעות הריכוז פר מוסד (מוסד ד-ו — 20 ימים)
     const coordBud = await coordBudgetBySymbol(db, report.id);
     for (const [s, g] of bySchool) {
-      for (const id of demoteExtraSchoolRoles(g, coordHoursCapFor(report, coordBud.get(s)))) demotedPrep.add(id);
-      for (const id of coordinatorSiblingRows(g)) coordSiblingPrep.add(id); // כלל 11.10: רכז בשתי השורות
+      for (const id of demoteExtraSchoolRoles(g, coordHoursCapFor(report, coordBud.get(s)), projectDays(report))) demotedPrep.add(id);
+      for (const id of coordinatorSiblingRows(g, projectDays(report))) coordSiblingPrep.add(id); // כלל 11.10: רכז בשתי השורות
     }
   }
   const rows = rawRows.map((r) => {
     const sug = suggestRole(r.dept);
     // בתי ספר: רכז/סגן מזוהים לפי שעות (מעל 93 = רכז, 90-93 = סגן) —
     // המשרד מציג את תקציב בית הספר רק כשמוגדר רכז בכל סמל
-    const byHours = isSchools && !demotedPrep.has(r.id) ? schoolsRoleByHours(r.hours) : null;
+    const byHours = isSchools && !demotedPrep.has(r.id) ? schoolsRoleByHours(r.hours, projectDays(report)) : null;
     // שיוך שמולא בקובץ שהועלה (ת"ז): בגנים קודם לניחוש; בבתי"ס כלל השעות גובר
     const wsA = md.workerSyms && md.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
     // כלל 11.10: שורה-אחות של רכז/ת (אותה ת.ז, שני תעריפים) — רכז/ת גם היא
@@ -737,7 +737,7 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
     }
 
     const isCoord = (r) => {
-      const st = r.staff_type || (schoolsRoleByHours(r.hours) || {}).staffType;
+      const st = r.staff_type || (schoolsRoleByHours(r.hours, projectDays(report)) || {}).staffType;
       return st === 'רכזת תכנית בבית הספר';
     };
     let promoted = 0;
@@ -1633,8 +1633,8 @@ router.get('/:id/export', ah(async (req, res) => {
     }
     const coordBudEx = await coordBudgetBySymbol(db, report.id);
     for (const [s, g] of bySchool) {
-      for (const rid of demoteExtraSchoolRoles(g, coordHoursCapFor(report, coordBudEx.get(s)))) demotedEx.add(rid);
-      for (const rid of coordinatorSiblingRows(g)) coordSiblingEx.add(rid); // כלל 11.10: רכז בשתי השורות
+      for (const rid of demoteExtraSchoolRoles(g, coordHoursCapFor(report, coordBudEx.get(s)), projectDays(report))) demotedEx.add(rid);
+      for (const rid of coordinatorSiblingRows(g, projectDays(report))) coordSiblingEx.add(rid); // כלל 11.10: רכז בשתי השורות
     }
   }
   // ללקוח חייב מע"מ — העלות השעתית המדווחת למשרד כוללת מע"מ (הברוטו נשאר כפי שהוא).
@@ -1649,7 +1649,7 @@ router.get('/:id/export', ah(async (req, res) => {
     const hourlyCost = rawHourlyCost != null && cap140 != null ? Math.min(rawHourlyCost, cap140) : rawHourlyCost;
     const sug = suggestRole(r.dept);
     const isSch = report.framework !== 'gardens';
-    const byHours = isSch && !demotedEx.has(r.id) ? schoolsRoleByHours(r.hours) : null;
+    const byHours = isSch && !demotedEx.has(r.id) ? schoolsRoleByHours(r.hours, projectDays(report)) : null;
     // תפקיד שמולא בקובץ שהועלה (ת"ז): בגנים קודם לניחוש; בבתי"ס כלל השעות גובר
     const exWs = exMd.workerSyms && exMd.workerSyms[String(r.emp_id || '').replace(/\D/g, '')];
     const sibEx = coordSiblingEx.has(r.id); // כלל 11.10: שורה-אחות של רכז/ת — רכז/ת גם היא

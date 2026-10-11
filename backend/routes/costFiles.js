@@ -5,7 +5,7 @@ const { z } = require('zod');
 const { getDB } = require('../db');
 const { parseCostFile, norm, FIELD_DEFS, readWorkbookSheets, detectStructure, inferMissingColumns } = require('../lib/ingest');
 const { reportLabel } = require('../lib/domain');
-const { staffFromRoleText } = require('../lib/salaryCheck');
+const { staffFromRoleText, staffFromDeptTag, deptRoleTag } = require('../lib/salaryCheck');
 const { applyStoredFileAssignments } = require('../lib/applyAssignments');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -110,10 +110,10 @@ router.post('/clients/:clientId/cost-files', upload.single('file'), ah(async (re
   // הכנסה בבת-אחת (קבוצות של 50) — הכנסה שורה-שורה מול DB בענן איטית מאוד
   const values = parsed.records.map((r) => {
     // אם דוח השכר כולל עמודת "תפקיד" — איש הצוות והתפקיד נגזרים ממנה אוטומטית
-    const staff = staffFromRoleText(r.roleText);
+    const staff = staffFromRoleText(r.roleText) || staffFromDeptTag(r.dept); // תפקיד מעמודת תפקיד, ואם אין — מתגית המחלקה ("...^רכז", לביא 11.10)
     return [fileId, clientId, null, r.id, r.name || null, r.firstName, r.lastName, r.dept,
       r.instSymbol, r.instName || null, JSON.stringify(r.componentNames || []), r.gross, r.cost, r.hours,
-      staff ? staff.staffType : null, staff ? staff.role : null, r.roleText ? String(r.roleText).trim() : null];
+      staff ? staff.staffType : null, staff ? staff.role : null, r.roleText ? String(r.roleText).trim() : (deptRoleTag(r.dept) || null)];
   });
   for (let i = 0; i < values.length; i += 50) {
     const chunk = values.slice(i, i + 50);
@@ -375,7 +375,7 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
 
   const routing = await learnedRouting(db, file.client_id);
   const vals2 = parsed.records.map((r) => {
-    const staff = staffFromRoleText(r.roleText);
+    const staff = staffFromRoleText(r.roleText) || staffFromDeptTag(r.dept); // תפקיד מעמודת תפקיד, ואם אין — מתגית המחלקה ("...^רכז", לביא 11.10)
     const old = keep.get(`${r.id}|${norm(r.dept)}`);
     let reportId = old ? old.report_id : null;
     if (reportId == null) {
@@ -390,7 +390,7 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
       old ? old.symbol_override : null, old ? old.gross_bump : 0,
       old ? old.moved_from_dept : null, old ? old.moved_from_symbol : null, old ? old.move_declined : 0,
       old ? old.moved_from_report : null, old ? old.cross_declined : 0,
-      r.roleText ? String(r.roleText).trim() : null];
+      r.roleText ? String(r.roleText).trim() : (deptRoleTag(r.dept) || null)];
   });
   for (let i = 0; i < vals2.length; i += 50) {
     const chunk = vals2.slice(i, i + 50);
