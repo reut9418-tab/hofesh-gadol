@@ -170,7 +170,7 @@ async function ledgerReconcile(db, report, client) {
   if (report.framework !== 'gardens') {
     try {
       const { salaryMatchData } = require('./salaryMatch');
-      const sm = await salaryMatchData(db, report, client, await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id || 0));
+      const sm = await salaryMatchData(db, report, client, await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id || 0), { withExec: false });
       if (sm.hasCards && sm.summary) {
         salaryMatch = { level: sm.summary.level, text: sm.summary.text, modes: sm.groups.map((g) => g.mode) };
         checks.push({ id: 'school_salary_match', title: 'שכר לפי בתי ספר — כרטסת מול דוח עלות', level: sm.summary.level, text: sm.summary.text, a: 0, b: 0, diff: 0 });

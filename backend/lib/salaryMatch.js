@@ -30,7 +30,8 @@ const coversHe = (gc) => (gc.pattern === 'all' ? 'השכר שאינו מכוסה
 const listNames = (cards, max = 3) => cards.slice(0, max).map((c) => c.name).join(', ') + (cards.length > max ? ` ועוד ${cards.length - max}` : '');
 const worst = (levels) => (levels.includes('err') ? 'err' : levels.includes('warn') ? 'warn' : 'ok');
 
-async function salaryMatchData(db, report, client, authority) {
+/* withExec — עמודת דוח הביצוע (מחשבת את המכתב, ~2 שניות): בדוח/אקסל כן, בשורת שלב 2 לא */
+async function salaryMatchData(db, report, client, authority, { withExec = true } = {}) {
   const base = { report, client, authority, applicable: report.framework !== 'gardens', hasCards: false, groups: [], summary: null };
   if (!base.applicable) return base;
 
@@ -65,9 +66,19 @@ async function salaryMatchData(db, report, client, authority) {
   const vatFactor = hasVat ? 1.18 : 1;
   const execBy = {};
   for (const i of insts) if (Number(i.salary_actual) > 0) execBy[String(i.symbol)] = r2(Number(i.salary_actual));
-  const hasExec = Object.keys(execBy).length > 0;
+  const hasExec = withExec && Object.keys(execBy).length > 0;
   base.hasExec = hasExec;
   base.hasVat = hasVat;
+  // הצפוי בדוח הביצוע פר מוסד — בדיוק לפי כללי קובץ המשרד (סגן/ית מוכר/ת רק
+  // במוסד זכאי ועם רכז/ת, תקרת ריכוז, מע"מ, תקרת 140%) — מיחידות מכתב שלב 1
+  const unitActual = {};
+  if (hasExec) {
+    try {
+      const { stage1Data } = require('./stage1');
+      const s1 = await stage1Data(db, report, client, authority);
+      for (const u of s1.units || []) if (u.symbol) unitActual[String(u.symbol)] = r2((u.salaryActual || 0) - (u.authEstAmount || 0));
+    } catch (e) { console.warn('salaryMatch: stage1 units failed —', e.message); }
+  }
   // רשימת בתי הספר: מוסדות הדוח + סמל פעילות שאליו הופנו שורות ואינו ברשימה
   const nameOf = new Map();
   for (const i of [...matchInsts, ...insts]) if (!nameOf.has(String(i.symbol))) nameOf.set(String(i.symbol), i.name || '');
@@ -142,6 +153,7 @@ async function salaryMatchData(db, report, client, authority) {
         cardsOut.push({ ...info, attribution: 'general' });
       }
     }
+    if (hasExec && !multiPayer) for (const [s, v] of Object.entries(unitActual)) if (expectedExecBy[s] != null) expectedExecBy[s] = v;
     const generalTotal = r2(general.reduce((s, c) => s + c.net, 0));
     const directTotal = r2(Object.values(ledgerBy).reduce((s, v) => s + v, 0));
     const costTotal = r2(Object.values(costBy).reduce((s, v) => s + v, 0) + unassignedCost);
