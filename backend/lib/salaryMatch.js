@@ -46,7 +46,18 @@ async function salaryMatchData(db, report, client, authority) {
     `SELECT cr.*, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id WHERE cr.report_id = ? AND ${notClubSql('cr.')}`
   ).all(report.id);
   const { schoolRowResolver } = require('./stage1');
-  const { matchInsts, rowSymbol } = await schoolRowResolver(db, report, rows, insts);
+  const { meta, matchInsts, rowSymbol } = await schoolRowResolver(db, report, rows, insts);
+  // העובדים שכתובים בלשונית כח האדם של קובץ הביצוע שהועלה (ת"ז → שיוך) —
+  // עובד/ת בדוח העלות שאינו/ה שם = לא נכנס/ה לדוח הביצוע (רעות 11.10)
+  const fileWorkers = (meta && meta.workerSyms) || {};
+  const hasFileWorkers = Object.keys(fileWorkers).length > 0;
+  base.hasFileWorkers = hasFileWorkers;
+  const inFile = (r) => {
+    const raw = String(r.emp_id || '').replace(/\D/g, '');
+    const id = raw.replace(/^0+/, '');
+    if (!id) return null; // ת.ז לא מספרית (דרכון) — אי אפשר להצליב
+    return [raw, id, id.slice(0, 8), id.padStart(9, '0')].some((k) => k && fileWorkers[k]);
+  };
   // דוח הביצוע (קובץ המשרד שהועלה): ביצוע השכר פר מוסד (הדרכה+רכזים+סגנים),
   // מול הצפוי מדוח העלות — העלות המוכרת (×מע"מ ללקוח חייב, תקרת ברוטו+40%)
   const { recognizedRowCost } = require('./ingest');
@@ -97,10 +108,16 @@ async function salaryMatchData(db, report, client, authority) {
     const costBy = {};
     const expectedExecBy = {}; // הצפוי בדוח הביצוע (העלות המוכרת) פר בית ספר
     let unassignedCost = 0, unassignedCount = 0;
+    const missingBy = {}; // סמל → עובדים בדוח העלות שאינם בלשונית כח האדם של קובץ הביצוע
+    const missingUnassigned = [];
     for (const r of gRows) {
       const s = rowSymbol(r);
       if (s) { costBy[s] = (costBy[s] || 0) + (r.cost || 0); expectedExecBy[s] = (expectedExecBy[s] || 0) + recognizedRowCost(r, vatFactor); }
       else { unassignedCost += r.cost || 0; unassignedCount++; }
+      if (hasFileWorkers && inFile(r) === false) {
+        const w = { name: r.emp_name || '—', empId: r.emp_id || '', dept: r.dept || '', cost: r2(r.cost), hours: r2(r.hours), expected: r2(recognizedRowCost(r, vatFactor)) };
+        if (s) (missingBy[s] = missingBy[s] || []).push(w); else missingUnassigned.push(w);
+      }
     }
 
     // ייחוס הכרטיסים: בית ספר / פיצול לפי אסמכתא / כללי
@@ -142,6 +159,7 @@ async function salaryMatchData(db, report, client, authority) {
         return {
           symbol: i.symbol, name: i.name, ledger, cost, diff: r2(ledger - cost), remainder: r2(Math.max(0, cost - ledger)),
           exec, expectedExec, execDiff, execLevel: execDiff == null ? 'none' : levelOf(execDiff, expectedExec),
+          missing: missingBy[i.symbol] || [], // עובדים בדוח העלות שלא נמצאו בדוח הביצוע
         };
       })
       .sort((a, b) => b.cost - a.cost);
@@ -192,9 +210,11 @@ async function salaryMatchData(db, report, client, authority) {
       const expected = r2(withExec.reduce((s, x) => s + x.expectedExec, 0));
       return { exec, expected, diff: r2(exec - expected), level: levelOf(exec - expected, expected), bad: withExec.filter((s) => s.execLevel !== 'ok') };
     })() : null;
+    const missingAll = [...schools.flatMap((s) => s.missing.map((w) => ({ ...w, symbol: s.symbol, school: s.name }))), ...missingUnassigned.map((w) => ({ ...w, symbol: null, school: 'ללא בית ספר' }))];
     groups.push({
       payer: multiPayer ? payer : null, mode,
       cards: cardsOut, schools, generalCheck, execTotals,
+      missing: missingAll, missingCost: r2(missingAll.reduce((s, w) => s + w.cost, 0)), missingExpected: r2(missingAll.reduce((s, w) => s + w.expected, 0)),
       unassignedCost: r2(unassignedCost), unassignedCount,
       splitUnassigned: cardsOut.filter((c) => c.unassigned).map((c) => ({ key: c.key, name: c.name, ...c.unassigned })),
       totals: { ledger: r2(directTotal + generalTotal), direct: directTotal, general: generalTotal, cost: costTotal, diff: totalDiff },
@@ -249,6 +269,11 @@ function summarize(d) {
       parts.push(`דוח הביצוע בקובץ המשרד: פער ב-${et.bad.length} ${et.bad.length === 1 ? 'בית ספר' : 'בתי ספר'} (${et.bad.slice(0, 3).map((s) => s.name || s.symbol).join(', ')}${et.bad.length > 3 ? ` ועוד ${et.bad.length - 3}` : ''}) — פירוט בדוח ההתאמה.`);
       levels.push('warn');
     }
+    if (g.missing && g.missing.length) {
+      const m = g.missing;
+      parts.push(`${m.length} ${m.length === 1 ? 'עובד/ת' : 'עובדים'} מדוח העלות (₪${fmt(g.missingCost)}) לא ${m.length === 1 ? 'נמצא/ת' : 'נמצאים'} בדוח הביצוע: ${m.slice(0, 3).map((w) => `${w.name} (${w.school})`).join(', ')}${m.length > 3 ? ` ועוד ${m.length - 3}` : ''} — פירוט בדוח ההתאמה.`);
+      levels.push('warn');
+    }
     if (g.unassignedCount) {
       parts.push(`${g.unassignedCount} ${g.unassignedCount === 1 ? 'עובד/ת' : 'עובדים'} בדוח העלות (₪${fmt(g.unassignedCost)}) ללא בית ספר — יש לשייך במסך ההכנה.`);
       levels.push('warn');
@@ -273,14 +298,23 @@ function renderSalaryMatchHtml(d) {
   // תא דוח הביצוע: הסכום בקובץ המשרד; כשאינו תואם לצפוי מדוח העלות — ההפרש
   const execCell = (s) => (s.exec == null ? '—'
     : s.execLevel === 'ok' ? `₪${fmt(s.exec)}`
-    : `<span class="bad" title="צפוי לפי דוח העלות: ₪${fmt(s.expectedExec)}">₪${fmt(s.exec)} <small>(${s.execDiff > 0 ? '+' : ''}${fmt(s.execDiff)})</small></span>`);
+    : `<span class="bad" title="צפוי לפי דוח העלות: ₪${fmt(s.expectedExec)}">₪${fmt(s.exec)} <small>(${s.execDiff > 0 ? '+' : ''}${fmt(s.execDiff)})</small></span>`)
+    + (s.missing && s.missing.length ? ` <span class="bad" title="${esc(s.missing.map((w) => w.name).join(', '))}"><small>· ${s.missing.length} ${s.missing.length === 1 ? 'עובד/ת חסר/ה' : 'עובדים חסרים'}</small></span>` : '');
   const execBasis = [d.hasVat && 'כולל מע"מ 18%', 'אחרי תקרת ברוטו+40%'].filter(Boolean).join(', ');
+  // עובדים מדוח העלות שלא נמצאו בלשונית כח האדם של קובץ הביצוע — לפי בית ספר
+  const missingBlock = (g) => {
+    if (!g.missing || !g.missing.length) return d.hasFileWorkers ? '<div class="check ok">✓ כל העובדים מדוח העלות נמצאים בדוח הביצוע (לשונית כח האדם).</div>' : '';
+    return `<div class="check err">⚠ ${g.missing.length} ${g.missing.length === 1 ? 'עובד/ת מדוח העלות לא נמצא/ת' : 'עובדים מדוח העלות לא נמצאים'} בדוח הביצוע (לשונית כח האדם) — ₪${fmt(g.missingCost)} עלות מעביד${d.hasVat ? `, ₪${fmt(g.missingExpected)} כולל מע"מ` : ''}. הורדת דוח ביצוע מעודכן מהמערכת תכניס אותם.</div>
+    <table class="small"><thead><tr><th>בית ספר</th><th>שם העובד/ת</th><th>ת.ז</th><th>מחלקה בדוח העלות</th><th class="num">שעות</th><th class="num">עלות מעביד</th></tr></thead><tbody>
+      ${g.missing.map((w, i) => `<tr${i % 2 ? ' class="z"' : ''}><td>${esc(w.school)}${w.symbol ? ` (${esc(w.symbol)})` : ''}</td><td>${esc(w.name)}</td><td>${esc(w.empId)}</td><td>${esc(w.dept)}</td><td class="num">${fmt(w.hours)}</td><td class="num">₪${fmt(w.cost)}</td></tr>`).join('')}
+    </tbody></table>`;
+  };
   const execLine = (g) => {
-    if (!g.execTotals) return '';
+    if (!g.execTotals) return missingBlock(g);
     const et = g.execTotals;
     return `<div class="check ${cls(et.level === 'ok' && !et.bad.length ? 'ok' : et.level === 'ok' ? 'warn' : et.level)}">${!et.bad.length
       ? `✓ דוח הביצוע (קובץ המשרד) ₪${fmt(et.exec)} תואם לצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) בכל בתי הספר.`
-      : `⚠ דוח הביצוע (קובץ המשרד) ₪${fmt(et.exec)} מול הצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) — פער ב-${et.bad.length} בתי ספר (מסומן בעמודה). הורדת דוח ביצוע מעודכן מהמערכת תיישר את הקובץ.`}</div>`;
+      : `⚠ דוח הביצוע (קובץ המשרד) ₪${fmt(et.exec)} מול הצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) — פער ב-${et.bad.length} בתי ספר (מסומן בעמודה). הורדת דוח ביצוע מעודכן מהמערכת תיישר את הקובץ.`}</div>${missingBlock(g)}`;
   };
 
   const groupBlocks = d.groups.map((g) => {
@@ -440,6 +474,15 @@ function buildSalaryMatchXlsx(d) {
       }
       const tl = levelOf(g.totals.diff, g.totals.cost);
       aoa.push([cell(tl === 'ok' ? `✓ סה"כ כרטסות השכר ₪${fmt(g.totals.ledger)} = דוח העלות ₪${fmt(g.totals.cost)}` : `⚠ סה"כ כרטסות השכר ₪${fmt(g.totals.ledger)} מול דוח העלות ₪${fmt(g.totals.cost)} — הפרש ₪${fmt(g.totals.diff)}`, tl === 'ok' ? S.ok : S.bad)]); mergeLast();
+    }
+    // עובדים מדוח העלות שלא נמצאו בדוח הביצוע (לשונית כח האדם)
+    if (g.missing && g.missing.length) {
+      aoa.push([]);
+      aoa.push([cell(`⚠ ${g.missing.length} ${g.missing.length === 1 ? 'עובד/ת מדוח העלות לא נמצא/ת' : 'עובדים מדוח העלות לא נמצאים'} בדוח הביצוע (לשונית כח האדם) — ₪${fmt(g.missingCost)} עלות מעביד. הורדת דוח ביצוע מעודכן מהמערכת תכניס אותם.`, S.bad)]); mergeLast();
+      aoa.push([cell('בית ספר', S.head), cell('שם העובד/ת', S.head), cell('ת.ז', S.head), cell('מחלקה בדוח העלות', S.head), cell('שעות', S.head), cell('עלות מעביד', S.head)]);
+      g.missing.forEach((w, i) => aoa.push([cell(`${w.school}${w.symbol ? ` (${w.symbol})` : ''}`, S.cellR(i % 2)), cell(w.name, S.cellR(i % 2)), cell(w.empId, S.cellR(i % 2)), cell(w.dept, S.cellR(i % 2)), cell(w.hours, S.cellN(i % 2)), cell(w.cost, S.cellN(i % 2))]));
+    } else if (d.hasFileWorkers) {
+      aoa.push([cell('✓ כל העובדים מדוח העלות נמצאים בדוח הביצוע (לשונית כח האדם)', S.ok)]); mergeLast();
     }
     aoa.push([]);
     aoa.push([cell('איך שויך כל כרטיס', S.sub)]); mergeLast();
