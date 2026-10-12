@@ -28,7 +28,7 @@ function basketForCardName(name) {
   // חומרי יצירה והדפסות = העשרה (כלל רעות 6.10)
   if (/יצירה|הדפס/.test(n)) return 'enrichment';
   if (/אבטחה/.test(n)) return 'security';
-  if (/ארוחת/.test(n)) return 'breakfast';
+  if (/ארוחת|הזנה/.test(n)) return 'breakfast'; // "הזנה" (ראש העין) = ארוחות בוקר
   if (/מלגות/.test(n)) return 'scholarships';
   if (/ניהול|תקורה|תפעול|הנהלה/.test(n)) return 'management';
   // כרטסת "סל גמיש" משויכת כברירת מחדל לארוחות בוקר (כלל רעות 6.10) — זה
@@ -89,6 +89,61 @@ function basketOptionsFor(framework) {
 /* מספרים שיכולים להיות סמל מוסד (5–7 ספרות) בתוך תא — "112102", "סמל 484402" */
 const symbolCandidates = (v) => (String(v ?? '').match(/(?<!\d)\d{5,7}(?!\d)/g) || []);
 
+/* כרטסת בלי שורת כותרות (ראש העין 12.10 — ייצוא "כרטסת" מחשבשבת): כל כרטיס
+   נפתח ב-[שם | מפתח חשבון | קוד מיון], אחריו "יתרת פתיחה", שורות תנועה שבהן
+   הסכום הוא התא המספרי הימני ביותר והפרטים הם התא הטקסטואלי הימני ביותר,
+   ונסגר ב"סה"כ מפתח חשבון" + שורות "220,630.85 חובה" / "0.00 זכות" / "הפרש".
+   סכומי החובה/הזכות של הכרטיס נלקחים משורות הסיכום (מוסמך); התנועות — לפירוט
+   ולסמלים באסמכתא (מעמודת הפרטים בלבד — בלי כותרות אי אפשר להבחין בין
+   אסמכתא למספר חשבון נגדי). */
+const TOTAL_RE = /^(-?[\d,]+(?:\.\d+)?)\s*(חובה|זכות)$/;
+function parseHeaderless(rows) {
+  const cards = [];
+  let cur = null;
+  const finish = (i) => {
+    if (!cur) return;
+    // שורות הסיכום: בשורת "סה"כ" עצמה ובשתיים שאחריה
+    let debit = null, credit = null;
+    for (let k = i; k < Math.min(rows.length, i + 3); k++) {
+      for (const c of rows[k] || []) {
+        const m = TOTAL_RE.exec(String(c ?? '').trim());
+        if (!m) continue;
+        const v = Number(m[1].replace(/,/g, ''));
+        if (m[2] === 'חובה' && debit === null) debit = v;
+        if (m[2] === 'זכות' && credit === null) credit = v;
+      }
+    }
+    if (debit !== null || credit !== null) { cur.debit = debit || 0; cur.credit = credit || 0; }
+    if (cur.txCount > 0 || cur.debit || cur.credit) { cur.net = cur.debit - cur.credit; cards.push(cur); }
+    cur = null;
+  };
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const c0 = norm(row[0]), c1 = norm(row[1]);
+    if (c0.includes('סהכ מפתח חשבון')) { finish(i); continue; }
+    if (c0 && /^\d{3,12}$/.test(c1) && !c0.includes('סהכ')) {
+      finish(i);
+      cur = { key: c1, name: String(row[0]).trim(), debit: 0, credit: 0, net: 0, txCount: 0, tx: [] };
+      continue;
+    }
+    if (!cur || /יתרת פתיחה/.test(norm(row[2]))) continue;
+    // סכום התנועה = התא המספרי הימני ביותר (מעבר לעמודות הזיהוי); פרטים = הטקסט הימני ביותר
+    let amount = null, details = '';
+    for (let j = row.length - 1; j >= 3; j--) {
+      const v = row[j];
+      if (amount === null && typeof v === 'number' && Number.isFinite(v)) amount = v;
+      else if (amount === null && typeof v === 'string' && /^-?[\d,]+(?:\.\d+)?$/.test(v.trim()) && v.trim() !== '') amount = Number(v.replace(/,/g, ''));
+      else if (!details && typeof v === 'string' && /[א-ת]/.test(v)) details = v.trim();
+    }
+    if (amount === null) continue;
+    const d = amount >= 0 ? amount : 0, c = amount < 0 ? -amount : 0;
+    cur.debit += d; cur.credit += c; cur.txCount++;
+    cur.tx.push({ refs: symbolCandidates(details), details, debit: d, credit: c });
+  }
+  finish(rows.length);
+  return cards;
+}
+
 /* מפענח קובץ כרטסת → [{key, name, debit, credit, net, txCount, tx}]
    tx — התנועות של הכרטיס: { refs: מועמדי סמל מעמודות אסמ'/אסמ'2/פרטים,
    details, debit, credit } — לכרטיס מאוחד שבו סמל בית הספר כתוב באסמכתא
@@ -111,7 +166,7 @@ function parseLedgerFile(buf) {
         if (n === 'פרטים' && detailsCol < 0) detailsCol = j;
       });
     }
-    if (debitCol < 0 || creditCol < 0) continue; // לא לשונית כרטסת
+    if (debitCol < 0 || creditCol < 0) { cards.push(...parseHeaderless(rows)); continue; } // בלי שורת כותרות — מבנה "כרטסת" של ראש העין
 
     let cur = null;
     const pushCur = () => { if (cur && cur.txCount > 0) { cur.net = cur.debit - cur.credit; cards.push(cur); } };
