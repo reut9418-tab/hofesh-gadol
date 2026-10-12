@@ -18,12 +18,14 @@ const FIELD_DEFS = [
   { key: 'roleText', label: 'תפקיד (בדוח השכר)', syn: ['תפקיד'] },
   { key: 'instName', label: 'שם גן/מוסד (בדוח השכר)', syn: ['שם מוסד', 'שם הגן', 'שם גן', 'שם בית ספר', 'שם בית הספר', 'שם ביס', 'שם מקום פעילות'] },
   { key: 'gross', label: 'סה"כ ברוטו', syn: ['סה"כ ברוטו', 'סהכ ברוטו', 'סה"כ סכום', 'סהכ סכום', 'ברוטו', 'שכר ברוטו', 'ריכוז תשלומים', 'ריכוז  תשלומים'] },
-  { key: 'cost', label: 'עלות מעביד', syn: ['עלות עובד', 'עלות מעביד', 'סה"כ עלות', 'סהכ עלות', 'עלות שכר', 'עלות כוללת', 'עלות'] },
-  { key: 'hours', label: 'שעות עבודה', syn: ['שעות עבודה', 'סך שעות', 'כמות שעות', 'שעות', 'סה"כ שעות', 'ש.עבודה'] },
+  // קובץ דו-מחזורי (נבון): "מחזור א" = 15 הימים, "מחזור ב" = ההרחבה — עמודות
+  // התקופה קודמות לסה"כ, והקליטה מפצלת כל עובד לשתי תקופות (רעות 12.10)
+  { key: 'cost', label: 'עלות מעביד', syn: ['עלות מחזור א', 'עלות עובד', 'עלות מעביד', 'סה"כ עלות', 'סהכ עלות', 'עלות שכר', 'עלות כוללת', 'עלות'] },
+  { key: 'hours', label: 'שעות עבודה', syn: ['שעות מחזור א', 'שעות עבודה', 'סך שעות', 'כמות שעות', 'שעות', 'סה"כ שעות', 'ש.עבודה'] },
   // קובץ תקופה-כפולה (עיריית יבנה): שורה אחת לעובד לכל הקיץ + עמודות פר
   // תקופה ("עבור 15 יום"/"עבור 6 ימים") — הקליטה מפצלת כל שורה לשתי תקופות
-  { key: 'extPortion', label: 'עלות ימי ההרחבה (עבור X ימים)', syn: ['עבור 6 ימים'] },
-  { key: 'extHours', label: 'שעות ימי ההרחבה', syn: ['הרחבה שעות', 'שעות הרחבה'] },
+  { key: 'extPortion', label: 'עלות ימי ההרחבה (עבור X ימים)', syn: ['עבור 6 ימים', 'עלות מחזור ב'] },
+  { key: 'extHours', label: 'שעות ימי ההרחבה', syn: ['הרחבה שעות', 'שעות הרחבה', 'שעות מחזור ב'] },
 ];
 
 const norm = (s) => String(s ?? '').replace(/["'״׳]/g, '').replace(/\s+/g, ' ').trim();
@@ -283,12 +285,12 @@ function aggregateComponents(recs) {
     const key = `${r.id}||${r.dept}||${r.payer || ''}||${r.instSymbol || ''}`;
     const cur = m.get(key);
     if (!cur) {
-      m.set(key, { ...r, components: 1, componentNames: r.component ? [r.component] : [], _roleHours: r.roleText ? { [r.roleText]: Number(r.hours) || 0 } : {} });
+      m.set(key, { ...r, components: 1, componentNames: r.component ? [r.component] : [], _roleHours: r.roleText ? { [r.roleText]: (Number(r.hours) || 0) + (Number(r.extHours) || 0) } : {} });
     } else {
       // תפקיד בדוח השכר: כשאותו/ה עובד/ת מופיע/ה באותו מוסד בשני תפקידים
       // (קינן נטע: מובילה 5.5 ש' + סייעת 27.5 ש') — התפקיד של רוב השעות
       if (r.roleText) {
-        cur._roleHours[r.roleText] = (cur._roleHours[r.roleText] || 0) + (Number(r.hours) || 0);
+        cur._roleHours[r.roleText] = (cur._roleHours[r.roleText] || 0) + (Number(r.hours) || 0) + (Number(r.extHours) || 0);
         const top = Object.entries(cur._roleHours).sort((a, b) => b[1] - a[1])[0];
         if (top && top[0] !== cur.roleText) cur.roleText = top[0];
       }
@@ -524,11 +526,11 @@ function parseCostFile(buf, learned = {}) {
     // כוללת את ההרחבה ואין לחסר ממנה (כלל רעות 16.9: "רק העמודות של
     // 15 יום והרחבה"); כשהיא סה"כ כללי — ההרחבה מחוסרת ממנה כמו קודם
     const costHeader = s.det.mapping.cost !== undefined ? norm((s.rows[s.det.rowIdx] || [])[s.det.mapping.cost]) : '';
-    const periodCost = /עבור|15 יום|15 ימים/.test(costHeader);
+    const periodCost = /עבור|15 יום|15 ימים|מחזור א/.test(costHeader);
     // עמודת השעות שמופתה היא של תקופת הבסיס בלבד ("שעות 1-21.7 (רגיל)") —
     // אז הסה"כ = בסיס + הרחבה; אחרת ("שעות עבודה") היא סה"כ שכולל את ההרחבה
     const hoursHeader = s.det.mapping.hours !== undefined ? norm((s.rows[s.det.rowIdx] || [])[s.det.mapping.hours]) : '';
-    const periodHours = /רגיל|1-21|15 יום|15 ימים/.test(hoursHeader);
+    const periodHours = /רגיל|1-21|15 יום|15 ימים|מחזור א/.test(hoursHeader);
     recs.forEach((r) => { r._periodCost = periodCost; r._periodHours = periodHours; });
     records.push(...recs);
   });
