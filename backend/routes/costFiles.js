@@ -376,7 +376,10 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
   const routing = await learnedRouting(db, file.client_id);
   const vals2 = parsed.records.map((r) => {
     const staff = staffFromRoleText(r.roleText) || staffFromDeptTag(r.dept); // תפקיד מעמודת תפקיד, ואם אין — מתגית המחלקה ("...^רכז", לביא 11.10)
-    const old = keep.get(`${r.id}|${norm(r.dept)}`);
+    let old = keep.get(`${r.id}|${norm(r.dept)}`);
+    // התפקיד בדוח השכר השתנה בקליטה מחדש (איחוד לפי מוסד — התפקיד של רוב
+    // השעות): השיוך הישן של איש הצוות/התפקיד לא נשמר, רק הניתוב והשאר
+    if (old && r.roleText && old.role_text && norm(old.role_text) !== norm(r.roleText)) old = { ...old, staff_type: null, role: null };
     let reportId = old ? old.report_id : null;
     if (reportId == null) {
       const lv = routing[norm(r.dept)];

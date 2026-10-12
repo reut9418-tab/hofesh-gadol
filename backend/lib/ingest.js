@@ -277,12 +277,21 @@ function normalizeRows(rows, headerIdx, mapping, defaultDept) {
 function aggregateComponents(recs) {
   const m = new Map();
   recs.forEach((r) => {
-    // עובד המשולם ע"י שני משלמים (מתנ"ס + רשות) נשאר בשורות נפרדות
-    const key = `${r.id}||${r.dept}||${r.payer || ''}`;
+    // עובד המשולם ע"י שני משלמים (מתנ"ס + רשות) נשאר בשורות נפרדות;
+    // וכך גם עובד/ת שמופיע/ה בכמה מוסדות (סמל מוסד שונה) — שורה לכל מוסד,
+    // כמו בדוח הביצוע (חבל יבנה הרחבה: סייעת מחליפה ב-5 גנים, רעות 12.10)
+    const key = `${r.id}||${r.dept}||${r.payer || ''}||${r.instSymbol || ''}`;
     const cur = m.get(key);
     if (!cur) {
-      m.set(key, { ...r, components: 1, componentNames: r.component ? [r.component] : [] });
+      m.set(key, { ...r, components: 1, componentNames: r.component ? [r.component] : [], _roleHours: r.roleText ? { [r.roleText]: Number(r.hours) || 0 } : {} });
     } else {
+      // תפקיד בדוח השכר: כשאותו/ה עובד/ת מופיע/ה באותו מוסד בשני תפקידים
+      // (קינן נטע: מובילה 5.5 ש' + סייעת 27.5 ש') — התפקיד של רוב השעות
+      if (r.roleText) {
+        cur._roleHours[r.roleText] = (cur._roleHours[r.roleText] || 0) + (Number(r.hours) || 0);
+        const top = Object.entries(cur._roleHours).sort((a, b) => b[1] - a[1])[0];
+        if (top && top[0] !== cur.roleText) cur.roleText = top[0];
+      }
       cur.components += 1;
       cur.gross = cur.gross === null && r.gross === null ? null : (cur.gross ?? 0) + (r.gross ?? 0);
       cur.cost = cur.cost === null && r.cost === null ? null : (cur.cost ?? 0) + (r.cost ?? 0);
