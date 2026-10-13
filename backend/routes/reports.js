@@ -522,7 +522,7 @@ router.get('/:id/prep', ah(async (req, res) => {
   const rawRows = await db.prepare(
     `SELECT cr.id, cr.emp_id, cr.emp_name, cr.first_name, cr.last_name, cr.dept,
             cr.inst_symbol, cr.inst_name, cr.symbol_override, cr.staff_type, cr.role,
-            cr.gross, cr.cost, cr.hours, cr.gross_bump, cr.manual_rates, cr.role_text, cf.payer
+            cr.gross, cr.cost, cr.hours, cr.gross_bump, cr.manual_rates, cr.role_text, cr.moved_from_report, cf.payer
      FROM cost_rows cr LEFT JOIN cost_files cf ON cf.id = cr.cost_file_id
      WHERE cr.report_id = ? ORDER BY cr.dept, cr.emp_name`
   ).all(id);
@@ -570,6 +570,9 @@ router.get('/:id/prep', ah(async (req, res) => {
       for (const id of coordinatorSiblingRows(g, projectDays(report))) coordSiblingPrep.add(id); // כלל 11.10: רכז בשתי השורות
     }
   }
+  // ניודי שעות שמורים לדוח (ת.ז → שעות) — לתצוגה בטבלה
+  const prepTransfers = {};
+  try { for (const t of await require('../lib/hourTransfers').listTransfers(db, id)) prepTransfers[String(t.empId).replace(/\D/g, '')] = t.hours; } catch { /* אין */ }
   const rows = rawRows.map((r) => {
     const sug = suggestRole(r.dept);
     // בתי ספר: רכז/סגן מזוהים לפי שעות (מעל 93 = רכז, 90-93 = סגן) —
@@ -610,6 +613,9 @@ router.get('/:id/prep', ah(async (req, res) => {
       gross: r.gross, cost: r.cost, hours: r.hours,
       hourlyGross: r.gross != null && r.hours ? r.gross / r.hours : null,
       hourlyCost: r.cost != null && r.hours ? r.cost / r.hours : null,
+      // ניוד שעות להרחבה (רעות 13.10): שורה שנוצרה מניוד / כמה שעות נוידו מהשורה הזו
+      movedFromReport: r.moved_from_report || null,
+      transferHours: (!r.moved_from_report && prepTransfers[String(r.emp_id || '').replace(/\D/g, '')]) || 0,
       // תעריפים ידניים: מסומן במסך + מאפשר שחזור לערכי דוח העלות
       manualRates: r.manual_rates ? (() => { try { return JSON.parse(r.manual_rates); } catch { return null; } })() : null,
     };
@@ -649,8 +655,14 @@ router.get('/:id/prep', ah(async (req, res) => {
     })
     .filter(Boolean);
 
+  // דוח ההרחבה המקביל (אותה מסגרת ורשות) — יעד כפתור "ניוד שעות להרחבה"
+  const prepSibling = report.program !== 'extension'
+    ? await db.prepare('SELECT id FROM reports WHERE client_id = ? AND framework = ? AND program = ? AND COALESCE(authority_id, 0) = COALESCE(?, 0) AND id <> ?')
+      .get(report.client_id, report.framework, 'extension', report.authority_id, report.id)
+    : null;
   res.json({
     rows, institutions,
+    extensionReportId: prepSibling ? prepSibling.id : null,
     // + "רכז רשותי" (רעות 8.10, בנימינה) — נכתב לשורה הייעודית בראש לשונית כח האדם
     staffTypes: [...(isSchools ? (schoolTypes || SCHOOL_STAFF_TYPES) : STAFF_TYPES), { type: AUTHORITY_COORD, roles: [AUTHORITY_COORD] }],
     employer: (authority && authority.name) || (client && client.name) || '',

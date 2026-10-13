@@ -188,6 +188,8 @@ export type PrepRow = {
   zeroCost?: boolean; // עלות מעביד 0 — לא נכתב לדוח הביצוע
   expNote?: string | null; // הסבר לשורה בקובץ המשרד
   gross: number | null; cost: number | null; hours: number | null; hourlyGross: number | null; hourlyCost: number | null;
+  movedFromReport?: number | null; // שורה שנוצרה מניוד שעות מדוח אחר
+  transferHours?: number; // שעות שנוידו מהשורה הזו לדוח ההרחבה
   manualRates?: { orig: { gross: number | null; cost: number | null; hours: number | null } } | null;
 };
 export type StaffType = { type: string; roles: string[] };
@@ -204,6 +206,7 @@ export type Recommendations = {
 };
 export type PrepData = {
   rows: PrepRow[]; institutions: { symbol: string; name: string }[]; staffTypes: StaffType[];
+  extensionReportId?: number | null; // דוח ההרחבה המקביל — יעד ניוד שעות
   employer: string; hasBudgetFile: boolean; budgetFileName: string | null;
   salary: SalaryCheck; framework: string; recommendations: Recommendations;
   bumps?: BumpSuggestion[];
@@ -217,6 +220,9 @@ export type Assignment = {
   // הסבר לשורה ("הסבר במידה ולא תקין" בקובץ המשרד) — נשלח רק כשנערך
   expNote?: string | null;
 };
+/* ניוד שעות של עובד/ת לדוח ההרחבה (0 = ביטול הניוד) — נשמר ושורד קליטה מחדש */
+export const setHourTransfer = (reportId: number, empId: string, toReportId: number, hours: number) =>
+  api.post(`/reports/${reportId}/hour-transfers`, { empId, toReportId, hours }).then((r) => r.data);
 export const getReportPrep = (reportId: number): Promise<PrepData> =>
   api.get(`/reports/${reportId}/prep`).then((r) => r.data);
 export const saveReportPrep = (reportId: number, assignments: Record<string, Assignment>) =>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { T } from '../theme';
 import { btn, card, input } from '../ui';
-import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, downloadCostAssignedXlsx, downloadTargetsXlsx, applyMove, applyBumps, autoAssign, deleteCostRow, deleteCostRows, addWorker, NewWorker, PrepData, Assignment } from '../api';
+import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, downloadCostAssignedXlsx, downloadTargetsXlsx, applyMove, applyBumps, autoAssign, deleteCostRow, deleteCostRows, addWorker, setHourTransfer, NewWorker, PrepData, Assignment } from '../api';
 
 const fmt = (n: number | null, d = 0) =>
   n == null ? '—' : n.toLocaleString('he-IL', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -561,6 +561,27 @@ export default function PrepSection({ reportId }: { reportId: number }) {
                         borderColor: (a.expNote !== undefined ? a.expNote : r.expNote) ? T.amber : T.line }} />
                   </td>
                   <td style={{ padding: '5px 2px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                    {/* ניוד שעות לדוח ההרחבה (רעות 13.10): נשמר ללקוח ושורד קליטה מחדש של הקובץ */}
+                    {r.movedFromReport ? (
+                      <span title="שורה שנוצרה מניוד שעות מדוח 15 יום — משתנה שם" style={{ fontSize: 11, color: T.inkSoft }}>↩ ניוד</span>
+                    ) : data.extensionReportId && r.empId ? (
+                      <button title={r.transferHours ? `${r.transferHours} שעות נוידו לדוח ההרחבה — לחיצה לשינוי (0 = ביטול)` : 'ניוד חלק מהשעות של העובד/ת לדוח ההרחבה, באותו תעריף שעתי'}
+                        onClick={async () => {
+                          const nm = r.name || `${r.firstName || ''} ${r.lastName || ''}`;
+                          const v = window.prompt(`כמה שעות של ${nm} לנייד לדוח ההרחבה?
+(בשורה כרגע ${Math.round(((r.hours || 0) + (r.transferHours || 0)) * 100) / 100} שעות; 0 = ביטול הניוד)`, String(r.transferHours || ''));
+                          if (v === null) return;
+                          const h = parseFloat(v);
+                          if (!Number.isFinite(h) || h < 0) { setMsg('מספר שעות לא תקין.'); return; }
+                          setBusy(true);
+                          try { await saveReportPrep(reportId, assign); await setHourTransfer(reportId, r.empId, data.extensionReportId!, h); await load(); setMsg(h > 0 ? `${h} שעות של ${nm} נוידו לדוח ההרחבה.` : `הניוד של ${nm} בוטל.`); }
+                          catch (e: any) { setMsg(e?.response?.data?.error || 'הניוד נכשל.'); }
+                          finally { setBusy(false); }
+                        }}
+                        style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, padding: '0 3px', color: r.transferHours ? T.amber : T.inkSoft, fontWeight: r.transferHours ? 700 : 400 }}>
+                        {r.transferHours ? `↪ ${r.transferHours}` : '↪'}
+                      </button>
+                    ) : null}
                     {(r.manualRates || a.hours !== undefined || a.hourlyGross !== undefined || a.hourlyCost !== undefined) && (
                       <button title="שחזור שעות ותעריפים מדוח העלות"
                         onClick={() => set(r.rowId, { hours: null, hourlyGross: null, hourlyCost: null })}
