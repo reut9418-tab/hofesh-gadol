@@ -224,6 +224,7 @@ router.get('/clients/:clientId/cost-files', ah(async (req, res) => {
       sheetsUsed: JSON.parse(f.sheets_used || '[]'),
       rowCount: f.row_count, routed: !!f.routed, routedRows: routedCount,
       payer: f.payer || null,
+      vat: !!Number(f.vat), // קובץ "כולל מע"מ" (קבלן שמגיש חשבונית — לביא/אביב)
       created_at: f.created_at,
     });
   }
@@ -238,6 +239,19 @@ router.put('/cost-files/:fileId/payer', ah(async (req, res) => {
   const payer = String(req.body.payer || '').trim() || null;
   await db.prepare('UPDATE cost_files SET payer = ? WHERE id = ?').run(payer, fileId);
   res.json({ ok: true, payer });
+}));
+
+/* ---------- קובץ עלות "כולל מע"מ" (לביא/אביב 13.10): עובדים של קבלן שמגיש
+   חשבונית — העלות המוכרת שלהם ×1.18 גם כשהלקוח לא חייב מע"מ (הנמוך מבין
+   עלות×1.18 לבין ברוטו×1.4). הדגל נשמר בקובץ ומועתק לכל שורותיו. ---------- */
+router.put('/cost-files/:fileId/vat', ah(async (req, res) => {
+  const db = getDB();
+  const fileId = parseInt(req.params.fileId);
+  if (!(await db.prepare('SELECT id FROM cost_files WHERE id = ?').get(fileId))) return res.status(404).json({ error: 'קובץ לא נמצא' });
+  const vat = req.body.vat ? 1 : 0;
+  await db.prepare('UPDATE cost_files SET vat = ? WHERE id = ?').run(vat, fileId);
+  await db.prepare('UPDATE cost_rows SET vat = ? WHERE cost_file_id = ?').run(vat, fileId);
+  res.json({ ok: true, vat: !!vat });
 }));
 
 /* ---------- מחלקות של קובץ + הצעת ניתוב (לפתיחה מחדש של מסך הניתוב) ---------- */
@@ -421,6 +435,8 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
   }
   await db.prepare('UPDATE cost_files SET software = ?, sheets_used = ?, row_count = ? WHERE id = ?')
     .run(parsed.software, JSON.stringify(parsed.sheetsUsed), parsed.records.length, fileId);
+  // השורות נוצרו מחדש — דגל "כולל מע"מ" של הקובץ חוזר אליהן
+  if (Number(file.vat)) await db.prepare('UPDATE cost_rows SET vat = 1 WHERE cost_file_id = ?').run(fileId);
   for (const rid of affectedReports) {
     await refreshReportFlag(db, rid);
     try { await applyStoredFileAssignments(db, rid); } catch { /* אין קובץ/שיוכים */ }

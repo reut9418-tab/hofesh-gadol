@@ -9,7 +9,7 @@ const { recommendations } = require('./recommend');
 const { matchDeptsToInstitutions, cardSymbolResolver } = require('./nameMatch');
 const { cardSplits } = require('./ledgerSplit');
 const { reportLabel } = require('./domain');
-const { recognizedRowCost, effectiveGross, COST_MARKUP_LIMIT } = require('./ingest');
+const { recognizedRowCost, effectiveGross, COST_MARKUP_LIMIT, rowVatFactor } = require('./ingest');
 const { authorityEstimate } = require('./authorityEstimate');
 
 const fmt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
@@ -131,9 +131,9 @@ async function stage1Data(db, report, client, authority) {
   // עובדים שעלותם דווחה לפי תקרת ברוטו+40% (הנמוך מבין) — מידע, לא חריגה.
   // על הברוטו האפקטיבי (כולל התאמות ברוטו שאושרו), בדיוק כמו בייצוא ובדוח ההתאמה
   const cappedRows = rows.filter((r) =>
-    r.gross > 0 && r.cost != null && r.cost * vatFactor > effectiveGross(r) * COST_MARKUP_LIMIT * 1.001);
+    r.gross > 0 && r.cost != null && r.cost * rowVatFactor(r, vatFactor) > effectiveGross(r) * COST_MARKUP_LIMIT * 1.001);
   const cappedCount = cappedRows.length;
-  const cappedReduction = cappedRows.reduce((s, r) => s + (r.cost * vatFactor - recognizedRowCost(r, vatFactor)), 0);
+  const cappedReduction = cappedRows.reduce((s, r) => s + (r.cost * rowVatFactor(r, vatFactor) - recognizedRowCost(r, vatFactor)), 0);
   const DEFAULT_PAYER = clientName(client, authority);
   // עמודות שכר נפרדות רק כשבאמת מוגדרים שני משלמים שונים
   const definedPayers = new Set(rows.map((r) => r.payer).filter(Boolean));

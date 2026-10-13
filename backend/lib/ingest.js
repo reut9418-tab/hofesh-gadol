@@ -294,7 +294,7 @@ function aggregateComponents(recs) {
     // כמו בדוח הביצוע (חבל יבנה הרחבה: סייעת מחליפה ב-5 גנים, רעות 12.10)
     // עובד/ת בלי ת.ז (חשבונית ידנית) — המפתח לפי השם, אחרת כל חסרי הת.ז באותה מחלקה היו מתאחדים לשורה אחת
     const who = r.id || `#${r.name || r.firstName || ''}`;
-    const key = `${who}||${r.dept}||${r.payer || ''}||${r.instSymbol || ''}`;
+    const key = `${who}||${r.dept}||${r.payer || ''}||${r.instSymbol || ''}||${Number(r.vat) ? 1 : 0}`;
     const cur = m.get(key);
     if (!cur) {
       m.set(key, { ...r, components: 1, componentNames: r.component ? [r.component] : [], _roleHours: r.roleText ? { [r.roleText]: (Number(r.hours) || 0) + (Number(r.extHours) || 0) } : {} });
@@ -347,8 +347,15 @@ function effectiveGross(row) {
 /* העלות המוכרת של שורת עלות: עלות מעביד × מע"מ (ללקוח חייב), מוגבלת לתקרת
    ההכרה של המשרד — ברוטו אפקטיבי × 140% (זהה להגבלה השעתית: השעות מצטמצמות).
    משמש בכל השוואת "ביצוע מוכר" מול תקציב: מכתב, בקרת שכר, המלצות, ייצוא. */
+/* מקדם המע"מ של שורה: קובץ עלות שסומן "כולל מע"מ" (קבלן שמגיש חשבונית —
+   לביא/אביב 13.10) → 1.18 גם כשהלקוח לא חייב; אחרת מקדם הלקוח */
+function rowVatFactor(row, clientVatFactor = 1) {
+  return row && Number(row.vat) ? 1.18 : clientVatFactor;
+}
+
 function recognizedRowCost(row, vatFactor = 1) {
   if (row.cost == null) return 0;
+  vatFactor = rowVatFactor(row, vatFactor);
   const g = effectiveGross(row);
   // כמו בדוח הביצוע: העלות השעתית (אחרי תקרת 140%) נכתבת מעוגלת ל-2
   // ספרות, ועלות התקופה בקובץ היא המעוגל × שעות — משחזרים כדי להתאים לאגורה
@@ -360,7 +367,7 @@ function recognizedRowCost(row, vatFactor = 1) {
   const full = row.cost * vatFactor;
   return g > 0 ? Math.min(full, g * COST_MARKUP_LIMIT) : full;
 }
-function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOURS_CAP, vatFactor = 1, framework = null } = {}) {
+function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOURS_CAP, vatFactor: clientVatFactor = 1, framework = null } = {}) {
   // בבתי הספר מי שמעל 90 שעות הוא סגן (עד 93) או רכז (מעל 93) —
   // תקרת השעות לא חלה עליהם ואין מה להציף; בדיוק 90 = מורה רגילה
   const isCoordinator = (r) => {
@@ -377,6 +384,7 @@ function runChecks(recs, { grossCap = GROSS_CAP.schools_gardens, hoursCap = HOUR
   });
   return recs.map((r) => {
     const flags = [];
+    const vatFactor = rowVatFactor(r, clientVatFactor);
     const hourlyCost = r.hourlyCost ?? (r.cost !== null && r.hours ? r.cost / r.hours : null);
     const hourlyGross = r.hourlyGross ?? (r.gross !== null && r.hours ? r.gross / r.hours : null);
     if (!isValidIsraeliId(r.id)) flags.push({ level: 'err', text: 'ת.ז לא תקינה' });
@@ -609,5 +617,5 @@ function parseCostFile(buf, learned = {}) {
 module.exports = {
   FIELD_DEFS, SOFTWARE_SIGNATURES, norm, isValidIsraeliId,
   detectStructure, inferMissingColumns, normalizeRows, aggregateComponents, runChecks,
-  readWorkbookSheets, parseCostFile, EMPLOYER_FACTOR, HOURS_CAP, COST_MARKUP_LIMIT, GROSS_BUMP_LIMIT, recognizedRowCost, effectiveGross,
+  readWorkbookSheets, parseCostFile, EMPLOYER_FACTOR, HOURS_CAP, COST_MARKUP_LIMIT, GROSS_BUMP_LIMIT, recognizedRowCost, effectiveGross, rowVatFactor,
 };

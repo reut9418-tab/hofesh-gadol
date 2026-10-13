@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { T } from '../theme';
 import { btn, card, input } from '../ui';
 import {
-  uploadCostFile, getCostFileRouting, routeCostFile, listCostFiles, deleteCostFile, setCostFilePayer,
+  uploadCostFile, getCostFileRouting, routeCostFile, listCostFiles, deleteCostFile, setCostFilePayer, setCostFileVat,
   getCostFileColumns, remapCostFile, ColumnsInfo,
   CostFile, DeptRow, RouteTarget, RoutingResponse,
 } from '../api';
@@ -219,6 +219,7 @@ export default function CostReportsPanel({ clientId, onRouted }: { clientId: num
         last = await uploadCostFile(clientId, f);
         // המשלם שהוגדר לקובץ הישן עובר אוטומטית לגרסה החדשה
         if (existing?.payer && last?.file?.id) await setCostFilePayer(last.file.id, existing.payer);
+        if (existing?.vat && last?.file?.id) await setCostFileVat(last.file.id, true);
       }
       await load();
       if (last) setRouting(last);
@@ -266,6 +267,13 @@ export default function CostReportsPanel({ clientId, onRouted }: { clientId: num
               title='מי שילם לעובדים בקובץ זה — נרשם ב"הועסק ע&quot;י" ומפריד את הכרטסות'
               onBlur={async (e) => { const v = e.target.value.trim(); if (v !== (f.payer || '')) { await setCostFilePayer(f.id, v || null); load(); } }}
               style={{ ...input, padding: '3px 8px', fontSize: 11, width: 140, borderColor: f.payer ? T.green : T.line }} />
+            <label title='עובדי קבלן שמגיש חשבונית (למשל חברת אביב אצל לביא): העלות המוכרת לכל עובד/ת בקובץ זה היא הנמוך מבין עלות×1.18 לבין ברוטו שעתי×1.4 — גם כשהלקוח עצמו אינו חייב במע"מ'
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                color: f.vat ? T.amber : T.inkSoft, background: f.vat ? T.amberBg : 'transparent', borderRadius: 5, padding: '2px 7px' }}>
+              <input type="checkbox" checked={!!f.vat}
+                onChange={async (e) => { await setCostFileVat(f.id, e.target.checked); load(); onRouted(); }} />
+              כולל מע"מ
+            </label>
             {f.routed
               ? <span style={{ fontSize: 10.5, fontWeight: 700, color: T.green, background: T.greenBg, borderRadius: 5, padding: '2px 7px' }}>נותב · {f.routedRows} שורות בדוחות</span>
               : <span style={{ fontSize: 10.5, fontWeight: 700, color: T.amber, background: T.amberBg, borderRadius: 5, padding: '2px 7px' }}>ממתין לניתוב</span>}

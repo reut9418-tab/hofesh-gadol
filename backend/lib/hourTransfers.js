@@ -72,10 +72,10 @@ async function applyHourTransfers(db, fromReportId) {
     } else {
       await db.prepare(
         `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept, inst_symbol, inst_name,
-           component_names, hours, gross, cost, symbol_override, staff_type, role, role_text, moved_from_report)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           component_names, hours, gross, cost, symbol_override, staff_type, role, role_text, moved_from_report, vat)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(base.cost_file_id, base.client_id, t.toReportId, base.emp_id, base.emp_name, base.first_name, base.last_name,
-        `${base.dept} — ניוד להרחבה`, base.inst_symbol, base.inst_name, base.component_names || '[]', ...vals, base.role_text, fromReportId);
+        `${base.dept} — ניוד להרחבה`, base.inst_symbol, base.inst_name, base.component_names || '[]', ...vals, base.role_text, fromReportId, Number(base.vat) || 0);
     }
     applied++;
   }

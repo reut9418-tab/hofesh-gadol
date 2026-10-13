@@ -4,15 +4,16 @@
    שכר ברוטו שעתי בתוספת 40% (תקרת המשרד). מופק כדף HTML להדפסה/PDF. */
 
 const XLSX = require('xlsx');
-const { COST_MARKUP_LIMIT, effectiveGross } = require('./ingest');
+const { COST_MARKUP_LIMIT, effectiveGross, rowVatFactor } = require('./ingest');
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const fmt0 = (n) => (n == null ? '—' : Math.round(n).toLocaleString('he-IL'));
 const fmt2 = (n) => (n == null ? '—' : (Math.round(n * 100) / 100).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
 /* החישוב המשותף לשני הפורמטים (HTML/PDF ואקסל) */
-function computeCostMatch(rows, vatFactor) {
+function computeCostMatch(rows, clientVatFactor) {
   const calc = rows.map((r) => {
+    const vatFactor = rowVatFactor(r, clientVatFactor); // קובץ "כולל מע"מ" (קבלן) גובר על הלקוח
     // הברוטו האפקטיבי כולל התאמת ברוטו שאושרה (עד 5 ₪ לשעה)
     const hourlyGross = r.gross != null && r.hours ? effectiveGross(r) / r.hours : null;
     const hourlyCostNet = r.cost != null && r.hours ? r.cost / r.hours : null;
@@ -29,7 +30,7 @@ function computeCostMatch(rows, vatFactor) {
   const totals = calc.reduce((a, c) => ({
     hours: a.hours + (c.r.hours || 0),
     booksNet: a.booksNet + (c.r.cost || 0),
-    booksVat: a.booksVat + (c.r.cost || 0) * vatFactor,
+    booksVat: a.booksVat + (c.r.cost || 0) * rowVatFactor(c.r, clientVatFactor),
     reported: a.reported + (c.totalReported || 0),
     diff: a.diff + c.totalDiff,
   }), { hours: 0, booksNet: 0, booksVat: 0, reported: 0, diff: 0 });
@@ -37,8 +38,8 @@ function computeCostMatch(rows, vatFactor) {
 }
 
 function renderCostMatchHtml({ report, client, authority, rows, label }) {
-  const hasVat = !!(client && client.has_vat);
-  const vatFactor = hasVat ? 1.18 : 1;
+  const vatFactor = client && client.has_vat ? 1.18 : 1;
+  const hasVat = vatFactor > 1 || rows.some((r) => Number(r.vat)); // גם קובץ עלות שסומן "כולל מע"מ"
   const today = new Date().toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' });
   const who = (authority && authority.name) || (client && client.name) || '';
   const { calc, totals, cappedCount } = computeCostMatch(rows, vatFactor);
@@ -114,8 +115,8 @@ ${bodyRows}
    מעוצב: טבלה עם גבולות, כותרות בצבעי המותג, פסי-זברה ושורת סה"כ */
 const XLSXS = require('xlsx-js-style');
 function buildCostMatchXlsx({ report, client, authority, rows, label }) {
-  const hasVat = !!(client && client.has_vat);
-  const vatFactor = hasVat ? 1.18 : 1;
+  const vatFactor = client && client.has_vat ? 1.18 : 1;
+  const hasVat = vatFactor > 1 || rows.some((r) => Number(r.vat));
   const today = new Date().toLocaleDateString('he-IL');
   const who = (authority && authority.name) || (client && client.name) || '';
   const { calc, totals, cappedCount } = computeCostMatch(rows, vatFactor);

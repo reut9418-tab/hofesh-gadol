@@ -10,7 +10,7 @@ async function costDataForReport(db, report) {
   const client = await db.prepare('SELECT has_vat FROM clients WHERE id = ?').get(report.client_id);
   const vatFactor = client && client.has_vat ? 1.18 : 1;
   const raw = await db.prepare(
-    `SELECT cr.*, cf.filename, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id
+    `SELECT cr.*, cf.filename, cf.payer, cf.vat AS file_vat FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id
      WHERE cr.report_id = ? AND ${notClubSql('cr.')}`
   ).all(report.id);
 
@@ -19,6 +19,7 @@ async function costDataForReport(db, report) {
     dept: r.dept, instSymbol: r.inst_symbol, component: null,
     gross: r.gross, cost: r.cost, hours: r.hours, source: r.filename,
     payer: r.payer || null, // המשלם (מתנ"ס/רשות) — מוגדר ברמת הקובץ
+    vat: Number(r.vat) || Number(r.file_vat) ? 1 : 0, // קובץ "כולל מע"מ" (קבלן) — העלות המוכרת ×1.18
     staffType: r.staff_type || null, // רכז/סגן — שעותיהם מעל 90 תקינות מובנה
     // התאמת ברוטו שאושרה (₪ לשעה) כסכום — נצבר בקיבוץ ומוחזר כ-gross_bump לשעה,
     // כך שהעלות המוכרת במסך זהה לייצוא
@@ -33,7 +34,9 @@ async function costDataForReport(db, report) {
     workers: new Set(rows.map((r) => r.id)).size,
     rows: rows.length,
     totalCost,
-    vatFactor,
+    // 1.18 כשהלקוח חייב או כשיש בדוח קובץ עלות שסומן "כולל מע"מ" (לתצוגת "עלות מוכרת")
+    vatFactor: rows.some((r) => Number(r.vat)) ? 1.18 : vatFactor,
+    vatMixed: vatFactor === 1 && rows.some((r) => Number(r.vat)) && rows.some((r) => !Number(r.vat)),
     // העלות המוכרת מול המשרד: כולל מע"מ ללקוח חייב, מוגבלת פר-עובד ל-140% מהברוטו
     totalCostRecognized: rows.reduce((s, r) => s + recognizedRowCost(r, vatFactor), 0),
     totalGross: rows.reduce((s, r) => s + (r.gross || 0), 0),

@@ -132,10 +132,13 @@ export type RouteTarget = { id: number; label: string; authorityName: string | n
 export type DeptRow = { dept: string; workers: number; cost: number; hours: number; proposedReportId: number | null; learned?: boolean };
 export type CostFile = {
   id: number; filename: string; software: string | null; sheetsUsed: string[];
-  rowCount: number; routed: boolean; routedRows?: number; payer?: string | null; created_at?: string;
+  rowCount: number; routed: boolean; routedRows?: number; payer?: string | null; vat?: boolean; created_at?: string;
 };
 export const setCostFilePayer = (fileId: number, payer: string | null) =>
   api.put(`/cost-files/${fileId}/payer`, { payer }).then((r) => r.data);
+/* קובץ "כולל מע"מ" — עובדי קבלן שמגיש חשבונית (לביא/אביב): העלות המוכרת ×1.18 */
+export const setCostFileVat = (fileId: number, vat: boolean) =>
+  api.put(`/cost-files/${fileId}/vat`, { vat }).then((r) => r.data);
 export const setLedgerFilePayer = (fileId: number, payer: string | null) =>
   api.put(`/ledger-files/${fileId}/payer`, { payer }).then((r) => r.data);
 export type RoutingResponse = { file: CostFile; departments: DeptRow[]; reports: RouteTarget[] };

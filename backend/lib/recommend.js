@@ -96,7 +96,7 @@ async function recommendations(db, report, { withEstimate = false } = {}) {
   const { recognizedRowCost } = require('./ingest');
   const { schoolsRoleByHours, projectDays } = require('./salaryCheck');
   const workers = (await db.prepare(
-    `SELECT id, emp_name, dept, staff_type, symbol_override, cost, gross, hours, gross_bump FROM cost_rows WHERE report_id = ? AND COALESCE(move_declined,0) = 0 AND ${notClubSql()}`
+    `SELECT id, emp_name, dept, staff_type, symbol_override, cost, gross, hours, gross_bump, vat FROM cost_rows WHERE report_id = ? AND COALESCE(move_declined,0) = 0 AND ${notClubSql()}`
   ).all(report.id))
     .filter((r) => {
       const byHours = report.framework !== 'gardens' ? schoolsRoleByHours(r.hours, projectDays(report)) : null;

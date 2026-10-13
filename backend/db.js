@@ -189,6 +189,10 @@ async function migrate(db) {
     'moved_from_dept TEXT', 'moved_from_symbol TEXT', 'move_declined INTEGER DEFAULT 0']) await add('cost_rows', c);
   await add('cost_files', 'payer TEXT');
   await add('ledger_files', 'payer TEXT');
+  // מע"מ ברמת קובץ העלות (לביא/אביב 13.10): עובדי קבלן שמגיש חשבונית — העלות
+  // המוכרת כוללת מע"מ גם כשהלקוח עצמו לא חייב; הדגל מועתק לשורות הקובץ
+  await add('cost_files', 'vat INTEGER DEFAULT 0');
+  await add('cost_rows', 'vat INTEGER DEFAULT 0');
   // לשונית ניהול הלקוח: דריסת שלב ידנית + הערות (NULL = שלב אוטומטי)
   await add('clients', 'manage_status TEXT');
   await add('clients', 'manage_notes TEXT');

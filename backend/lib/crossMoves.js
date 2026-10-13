@@ -38,7 +38,7 @@ async function crossMoveRecommendations(db, clientId) {
     const cap = await salaryCapOf(db, r.id);
     if (!(cap > 0)) continue;
     const rows = await db.prepare(
-      `SELECT id, emp_name, dept, staff_type, cost, gross, hours, gross_bump, cross_declined FROM cost_rows WHERE report_id = ? AND ${notClubSql()}`
+      `SELECT id, emp_name, dept, staff_type, cost, gross, hours, gross_bump, cross_declined, vat FROM cost_rows WHERE report_id = ? AND ${notClubSql()}`
     ).all(r.id);
     if (!rows.length) continue;
     const actual = rows.reduce((s, x) => s + recognizedRowCost(x, vatFactor), 0);

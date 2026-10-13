@@ -15,7 +15,7 @@ const { fillMinistryReport, extractInstitutions, extractCoordinatorGardens, extr
   SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer, AUTHORITY_COORD, isAuthorityCoord } = require('../lib/fillMinistry');
 const { isClubOperator, notClubSql, salaryCheck, suggestRole, schoolsRoleByHours, demoteExtraSchoolRoles, coordinatorSiblingRows, defaultSchoolsStaff, coordHoursCapFor, projectDays, explicitStaff } = require('../lib/salaryCheck');
 const { applyFileAssignments, saveManualAssignments, applyManualAssignments } = require('../lib/applyAssignments');
-const { COST_MARKUP_LIMIT, GROSS_BUMP_LIMIT, effectiveGross } = require('../lib/ingest');
+const { COST_MARKUP_LIMIT, GROSS_BUMP_LIMIT, effectiveGross, rowVatFactor } = require('../lib/ingest');
 
 /* התאמת ברוטו אוטומטית (רעות 8.10): לכל שורה שהעלות השעתית (כולל מע"מ) שלה
    חורגת מ-140% מהברוטו — נרשמת התאמה (gross_bump, ₪ לשעה) שמיישרת את
@@ -23,11 +23,11 @@ const { COST_MARKUP_LIMIT, GROSS_BUMP_LIMIT, effectiveGross } = require('../lib/
    שהברוטו שנכתב לדוח הביצוע תקין בלי אישור ידני. התאמה קיימת שכבר מספיקה
    לא נדרסת; מעבר למגבלה — נשאר כפי שהוא (מוצג כחריגה) */
 async function autoApplyBumps(db, reportId, vatF) {
-  const rows = await db.prepare('SELECT id, gross, cost, hours, gross_bump FROM cost_rows WHERE report_id = ?').all(reportId);
+  const rows = await db.prepare('SELECT id, gross, cost, hours, gross_bump, vat FROM cost_rows WHERE report_id = ?').all(reportId);
   const updates = [];
   for (const r of rows) {
     if (!(r.gross > 0 && r.hours > 0 && r.cost != null)) continue;
-    const needed = ((r.cost / r.hours) * vatF) / COST_MARKUP_LIMIT - r.gross / r.hours;
+    const needed = ((r.cost / r.hours) * rowVatFactor(r, vatF)) / COST_MARKUP_LIMIT - r.gross / r.hours;
     if (!(needed > 0.01 && needed <= GROSS_BUMP_LIMIT)) continue;
     const bump = Math.ceil(needed * 100) / 100;
     if ((Number(r.gross_bump) || 0) >= bump - 0.001) continue;
@@ -525,7 +525,7 @@ router.get('/:id/prep', ah(async (req, res) => {
   const rawRows = await db.prepare(
     `SELECT cr.id, cr.emp_id, cr.emp_name, cr.first_name, cr.last_name, cr.dept,
             cr.inst_symbol, cr.inst_name, cr.symbol_override, cr.staff_type, cr.role,
-            cr.gross, cr.cost, cr.hours, cr.gross_bump, cr.manual_rates, cr.role_text, cr.moved_from_report, cf.payer
+            cr.gross, cr.cost, cr.hours, cr.gross_bump, cr.manual_rates, cr.role_text, cr.moved_from_report, cr.vat, cf.payer
      FROM cost_rows cr LEFT JOIN cost_files cf ON cf.id = cr.cost_file_id
      WHERE cr.report_id = ? ORDER BY cr.dept, cr.emp_name`
   ).all(id);
@@ -645,7 +645,7 @@ router.get('/:id/prep', ah(async (req, res) => {
       if (isClubOperator(r.role_text)) return null; // לא מדווחים — אין מה ליישר
       if (!(r.gross > 0 && r.hours > 0 && r.cost != null)) return null;
       const hourlyGross = r.gross / r.hours;
-      const hourlyCostVat = (r.cost / r.hours) * vatF;
+      const hourlyCostVat = (r.cost / r.hours) * rowVatFactor(r, vatF);
       const needed = hourlyCostVat / COST_MARKUP_LIMIT - hourlyGross;
       if (!(needed > 0.01 && needed <= GROSS_BUMP_LIMIT)) return null;
       return {
@@ -969,11 +969,11 @@ router.post('/:id/split-row', ah(async (req, res) => {
   for (let i = 1; i < parts.length; i++) {
     const ins = await db.prepare(
       `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept,
-         inst_symbol, inst_name, component_names, gross, cost, hours, staff_type, role, symbol_override, role_text)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         inst_symbol, inst_name, component_names, gross, cost, hours, staff_type, role, symbol_override, role_text, vat)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(src.cost_file_id, src.client_id, id, src.emp_id, src.emp_name, src.first_name, src.last_name, src.dept,
       src.inst_symbol, src.inst_name, src.component_names || '[]', gross[i], cost[i], hours[i],
-      src.staff_type, src.role, String(parts[i].symbol), src.role_text || null);
+      src.staff_type, src.role, String(parts[i].symbol), src.role_text || null, Number(src.vat) || 0);
     createdIds.push(ins.lastInsertRowid);
   }
   await db.prepare('UPDATE cost_rows SET symbol_override = ?, gross = ?, cost = ?, hours = ? WHERE id = ?')
@@ -1076,9 +1076,9 @@ router.post('/:id/apply-bumps', ah(async (req, res) => {
   const rowIds = (req.body && req.body.rowIds) || [];
   let applied = 0;
   for (const rowId of rowIds) {
-    const r = await db.prepare('SELECT id, gross, cost, hours FROM cost_rows WHERE id = ? AND report_id = ?').get(rowId, id);
+    const r = await db.prepare('SELECT id, gross, cost, hours, vat FROM cost_rows WHERE id = ? AND report_id = ?').get(rowId, id);
     if (!r || !(r.gross > 0 && r.hours > 0 && r.cost != null)) continue;
-    const needed = ((r.cost / r.hours) * vatF) / COST_MARKUP_LIMIT - r.gross / r.hours;
+    const needed = ((r.cost / r.hours) * rowVatFactor(r, vatF)) / COST_MARKUP_LIMIT - r.gross / r.hours;
     if (!(needed > 0 && needed <= GROSS_BUMP_LIMIT)) continue;
     await db.prepare('UPDATE cost_rows SET gross_bump = ? WHERE id = ?').run(Math.ceil(needed * 100) / 100, rowId);
     applied++;
@@ -1686,7 +1686,7 @@ router.get('/:id/export', ah(async (req, res) => {
   const execRows = rows.map((r) => {
     // הברוטו המדווח כולל התאמת ברוטו שאושרה (עד 5 ₪ לשעה) — מעלה את תקרת ה-140%
     const hourlyGross = r.gross != null && r.hours ? effectiveGross(r) / r.hours : null;
-    const rawHourlyCost = r.cost != null && r.hours ? (r.cost / r.hours) * vatFactor : null;
+    const rawHourlyCost = r.cost != null && r.hours ? (r.cost / r.hours) * rowVatFactor(r, vatFactor) : null;
     const cap140 = hourlyGross != null && hourlyGross > 0 ? hourlyGross * COST_MARKUP_LIMIT : null;
     const hourlyCost = rawHourlyCost != null && cap140 != null ? Math.min(rawHourlyCost, cap140) : rawHourlyCost;
     const sug = suggestRole(r.dept);
