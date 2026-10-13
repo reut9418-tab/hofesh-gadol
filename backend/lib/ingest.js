@@ -254,6 +254,16 @@ function normalizeRows(rows, headerIdx, mapping, defaultDept) {
     if (id === null && cost === null && gross === null) continue;
     const idStr = String(id ?? '').replace(/\D/g, '');
     if (!idStr) continue;
+    // שורת סיכום של הקובץ (לביא הרחבה 12.10: "סה"כ | 909 עובדים | 2,553,805") —
+    // "909" נקלט כת.ז עם סך השעות והעלות של כולם, והוכפל בדוח הביצוע. שורה
+    // שתא הת.ז שלה מכיל טקסט ("909 עובדים"), או שמתחילה ב"סה"כ"/"סיכום",
+    // או שהת.ז קצרה מ-5 ספרות בלי שם — אינה עובד/ת
+    const idRaw = String(id ?? '').trim();
+    const firstCell = norm(row[0]);
+    const nameRaw = mapping.fullName !== undefined
+      ? norm(get('fullName'))
+      : [norm(get('firstName')), norm(get('lastName'))].filter(Boolean).join(' ');
+    if (/[א-ת]/.test(idRaw) || /^(סהכ|סיכום|סה"כ|total)/i.test(firstCell) || (idStr.length < 5 && !nameRaw)) continue;
     const hours = num(get('hours'));
     const name = mapping.fullName !== undefined
       ? norm(get('fullName'))
