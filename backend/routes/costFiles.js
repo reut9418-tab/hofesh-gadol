@@ -153,6 +153,20 @@ router.post('/clients/:clientId/cost-files', upload.single('file'), ah(async (re
       const sib = baseProp != null ? extensionSibling(baseProp) : null;
       if (sib) proposed = sib;
     }
+    // לשוניות לתקופות ("103 - קדימה [גנים הרחבה]", רעות 13.10): שם הלשונית
+    // אומר מסגרת (גנים/בתי ספר/מכינות) ותקופה (15 יום/הרחבה) — ההצעה נגזרת ממנו
+    const tagM = /^(.*?)\s*\[([^\]]+)\]$/.exec(String(d.dept || ''));
+    if (tagM && !isLearned) {
+      const sheet = tagM[2];
+      const isExt = /הרחבה|המשך|מחזור ב|הארכה/.test(sheet);
+      const fw = /גן|גני/.test(sheet) ? 'gardens' : /בי.?ס|בית ספר|בתי ספר|יסודי/.test(sheet) ? 'schools' : /מכינ/.test(sheet) ? 'prep' : null;
+      const cands = reports.filter((r) => (!fw || r.framework === fw) && (isExt ? r.program === 'extension' : r.program !== 'extension'));
+      if (cands.length === 1) proposed = cands[0].id;
+      else if (tagM[1]) {
+        const baseProp = proposeFor(tagM[1]).proposed;
+        if (baseProp != null) proposed = isExt ? (extensionSibling(baseProp) || proposed) : baseProp;
+      }
+    }
     return { ...d, proposedReportId: proposed, learned: isLearned };
   });
 
