@@ -317,6 +317,7 @@ export const deleteCostRows = (reportId: number, rowIds: number[]): Promise<{ ok
 export type NewWorker = {
   name: string; empId?: string; dept?: string; symbol?: string | null;
   staffType?: string | null; role?: string | null; hours?: number; gross?: number; cost?: number;
+  hourlyGross?: number; hourlyCost?: number; // תעריפים לשעה — הסה"כ מחושב בשרת: תעריף × שעות
 };
 export const addWorker = (reportId: number, w: NewWorker) =>
   api.post(`/reports/${reportId}/workers`, w).then((r) => r.data);

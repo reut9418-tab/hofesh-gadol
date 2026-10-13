@@ -962,6 +962,8 @@ const addWorkerSchema = z.object({
   hours: z.number().nonnegative().optional(),
   gross: z.number().nonnegative().optional(),
   cost: z.number().nonnegative().optional(), // חשבונית: הסכום = העלות
+  hourlyGross: z.number().nonnegative().optional(), // ברוטו לשעה (כמו בטבלת ההכנה) — הסה"כ = תעריף × שעות
+  hourlyCost: z.number().nonnegative().optional(),  // עלות לשעה
 });
 router.post('/:id/workers', ah(async (req, res) => {
   const parsed = addWorkerSchema.safeParse(req.body);
@@ -979,8 +981,19 @@ router.post('/:id/workers', ah(async (req, res) => {
   }
   // תפקיד מוצמד לרשימת התבנית של הפרויקט (כלל 23.9)
   const c = clampStaffForFramework(report.framework, w.staffType || null, w.role || null);
-  const gross = w.gross ?? w.cost ?? null;
-  const cost = w.cost ?? w.gross ?? null;
+  // תעריפים שעתיים (כמו עמודות הטבלה) → סה"כ לשורה; אחרת סכומים כוללים (חשבונית)
+  const r2 = (n) => Math.round(n * 100) / 100;
+  let gross = w.gross ?? w.cost ?? null;
+  let cost = w.cost ?? w.gross ?? null;
+  if ((w.hourlyGross != null || w.hourlyCost != null) && (w.hours || 0) > 0) {
+    gross = w.hourlyGross != null ? r2(w.hourlyGross * w.hours) : (w.hourlyCost != null ? r2(w.hourlyCost * w.hours) : gross);
+    cost = w.hourlyCost != null ? r2(w.hourlyCost * w.hours) : (w.hourlyGross != null ? r2(w.hourlyGross * w.hours) : cost);
+  } else if ((w.hours || 0) >= 10 && gross != null && gross > 0 && gross < 200) {
+    // ברוטו "כולל" של פחות מ-200 ₪ ל-10+ שעות אינו אפשרי (שכר מינימום ~34 ₪/שעה) —
+    // הוקלד תעריף שעתי בשדה הסה"כ (ביתר 13.10: 33.7 × 90 שעות הפך ל-0.37 לשעה)
+    gross = r2(gross * w.hours);
+    cost = cost != null && cost < 200 ? r2(cost * w.hours) : cost;
+  }
   const nameParts = w.name.trim().split(/\s+/);
   const ins = await db.prepare(
     `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept,

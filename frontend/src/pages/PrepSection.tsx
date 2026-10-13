@@ -431,14 +431,20 @@ export default function PrepSection({ reportId }: { reportId: number }) {
             <input type="number" min={0} step="0.01" placeholder="שעות" value={nw.hours ?? ''}
               onChange={(e) => setNw({ ...nw, hours: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
               style={{ ...input, padding: '6px 8px', fontSize: 12, width: 70 }} />
-            <input type="number" min={0} step="0.01" placeholder="ברוטו ₪" value={nw.gross ?? ''}
-              onChange={(e) => setNw({ ...nw, gross: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
-              style={{ ...input, padding: '6px 8px', fontSize: 12, width: 90 }} />
-            <input type="number" min={0} step="0.01" placeholder="עלות ₪ (חשבונית)" value={nw.cost ?? ''}
+            {/* תעריפים לשעה — בדיוק כמו עמודות הטבלה; הסה"כ לשורה = תעריף × שעות (רעות 13.10, ביתר) */}
+            <input type="number" min={0} step="0.01" placeholder="ברוטו לשעה ₪" value={nw.hourlyGross ?? ''}
+              onChange={(e) => setNw({ ...nw, hourlyGross: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+              title="ברוטו לשעה (כמו בעמודת הטבלה) — הברוטו לשורה יחושב: תעריף × שעות"
+              style={{ ...input, padding: '6px 8px', fontSize: 12, width: 105 }} />
+            <input type="number" min={0} step="0.01" placeholder="עלות לשעה ₪" value={nw.hourlyCost ?? ''}
+              onChange={(e) => setNw({ ...nw, hourlyCost: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+              title="עלות מעביד לשעה (כמו בעמודת הטבלה) — העלות לשורה תחושב: תעריף × שעות"
+              style={{ ...input, padding: '6px 8px', fontSize: 12, width: 105 }} />
+            <input type="number" min={0} step="0.01" placeholder="או: סכום חשבונית כולל ₪" value={nw.cost ?? ''}
               onChange={(e) => setNw({ ...nw, cost: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
-              style={{ ...input, padding: '6px 8px', fontSize: 12, width: 110 }}
-              title="לעובד/ת בחשבונית — סכום החשבונית; אם רק שדה אחד מלא, הברוטו והעלות מושווים" />
-            <button disabled={busy || !nw.name || nw.name.trim().length < 2 || (nw.cost == null && nw.gross == null)}
+              style={{ ...input, padding: '6px 8px', fontSize: 12, width: 160 }}
+              title="לעובד/ת בחשבונית בלי תעריף שעתי — סכום החשבונית הכולל לתקופה (ברוטו = עלות)" />
+            <button disabled={busy || !nw.name || nw.name.trim().length < 2 || (nw.cost == null && nw.gross == null && !((nw.hourlyGross != null || nw.hourlyCost != null) && (nw.hours || 0) > 0))}
               onClick={async () => {
                 setBusy(true);
                 // שמירת העריכות שטרם נשמרו לפני ההוספה — הרענון אחרי ההוספה מאפס את הטבלה (רעות 13.10: "הנתונים משתבשים")
