@@ -201,18 +201,30 @@ async function ledgerReconcile(db, report, client) {
     }
   }
 
-  // בדיקה 2: מול דוח הביצוע של המשרד (אם נקלט ביצוע מהקובץ)
+  // בדיקה 2: מול דוח הביצוע של המשרד (אם נקלט ביצוע מהקובץ).
+  // הצפוי = לפי כללי קובץ המשרד כפי שהמכתב מחשב (סגן/ית מוכר/ת רק במוסד
+  // זכאי ועם רכז/ת, תקרת ריכוז, מע"מ, תקרת 140%) — לא סך העלות המוכרת
+  // הגולמי: בעכו 4 סגניות לא מוכרות הציגו "הפרש" של 34,598 שאינו טעות (רעות 13.10)
   if (execActual > 0 && costTotal > 0) {
-    const diff = execActual - expectedExec;
-    const capped = expectedExec < costTotal * vatFactor - 1;
-    const basis = [hasVat && 'כולל מע"מ 18%', capped && 'אחרי תקרת ברוטו+40%'].filter(Boolean);
+    let expectedRules = null;
+    try {
+      const { stage1Data } = require('./stage1');
+      const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
+      const s1 = await stage1Data(db, report, client, authority);
+      const sum = (s1.units || []).reduce((acc, u) => acc + (u.salaryActual || 0) - (u.authEstAmount || 0), 0);
+      if (sum > 0) expectedRules = Math.round(sum * 100) / 100;
+    } catch (e) { console.warn('exec check: stage1 units failed —', e.message); }
+    const expected = expectedRules ?? expectedExec;
+    const diff = execActual - expected;
+    const unrecognized = expectedRules != null ? Math.round((expectedExec - expectedRules) * 100) / 100 : 0;
+    const basis = [hasVat && 'כולל מע"מ 18%', 'תקרת ברוטו+40%', unrecognized > 200 && `בניכוי ₪${fmtN(unrecognized)} שהמשרד אינו מכיר בהם — סגנ/ית במוסד ללא זכאות או ללא רכז/ת`].filter(Boolean);
     const execBasisNote = basis.length ? ` (${basis.join(', ')})` : '';
     checks.push({
       id: 'exec_vs_cost',
       title: 'שכר — דוח ביצוע מול דוח העלות (והכרטסת)',
-      level: level(pct(diff, expectedExec), diff),
-      text: `שכר בדוח הביצוע ₪${fmtN(execActual)} מול העלות המוכרת מדוח העלות ₪${fmtN(expectedExec)}${execBasisNote} — ${Math.abs(diff) <= 200 ? 'תואם' : `הפרש ₪${fmtN(diff)}`}.`,
-      a: execActual, b: expectedExec, diff,
+      level: level(pct(diff, expected), diff),
+      text: `שכר בדוח הביצוע ₪${fmtN(execActual)} מול הצפוי מדוח העלות לפי כללי קובץ המשרד ₪${fmtN(expected)}${execBasisNote} — ${Math.abs(diff) <= 200 ? 'תואם' : `הפרש ₪${fmtN(diff)}; הורדת דוח ביצוע מעודכן תיישר`}.`,
+      a: execActual, b: expected, diff,
     });
   }
 
