@@ -862,8 +862,10 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
   const capHours = 6 * (report.program === 'extension' ? (report.extension_days || 6) : 15);
   let overCap = 0, capped = 0;
   const capFixes = []; // גננת שחורגת מהתקן עד 6 שעות — השעות מעודכנות לתקן (רעות 8.10, גנים בלבד)
+  // כלל רעות 13.10: הגננת היא בעלת השכר ברוטו הגבוה ביותר בגן (לא השעות) —
+  // גם כשהיא מקובץ הרשות (סייעות רשות); השאר סייעות לפי המשלם
   for (const [, list] of byGarden) {
-    list.sort((a, b) => (b.hours || 0) - (a.hours || 0) || (b.gross || 0) - (a.gross || 0));
+    list.sort((a, b) => (b.gross || 0) - (a.gross || 0) || (b.hours || 0) - (a.hours || 0));
     list.forEach((r, i) => {
       const want = i === 0
         ? { staffType: 'גננת', role: 'גננת של הגן' }

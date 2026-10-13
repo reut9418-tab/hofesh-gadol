@@ -282,7 +282,9 @@ function aggregateComponents(recs) {
     // עובד המשולם ע"י שני משלמים (מתנ"ס + רשות) נשאר בשורות נפרדות;
     // וכך גם עובד/ת שמופיע/ה בכמה מוסדות (סמל מוסד שונה) — שורה לכל מוסד,
     // כמו בדוח הביצוע (חבל יבנה הרחבה: סייעת מחליפה ב-5 גנים, רעות 12.10)
-    const key = `${r.id}||${r.dept}||${r.payer || ''}||${r.instSymbol || ''}`;
+    // עובד/ת בלי ת.ז (חשבונית ידנית) — המפתח לפי השם, אחרת כל חסרי הת.ז באותה מחלקה היו מתאחדים לשורה אחת
+    const who = r.id || `#${r.name || r.firstName || ''}`;
+    const key = `${who}||${r.dept}||${r.payer || ''}||${r.instSymbol || ''}`;
     const cur = m.get(key);
     if (!cur) {
       m.set(key, { ...r, components: 1, componentNames: r.component ? [r.component] : [], _roleHours: r.roleText ? { [r.roleText]: (Number(r.hours) || 0) + (Number(r.extHours) || 0) } : {} });

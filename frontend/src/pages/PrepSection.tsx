@@ -102,7 +102,8 @@ export default function PrepSection({ reportId }: { reportId: number }) {
     const preview = names.slice(0, 8).join(', ') + (names.length > 8 ? ` ועוד ${names.length - 8}` : '');
     if (!window.confirm(`למחוק ${ids.length} שורות מהדוח?\n${preview}\n\nהמחיקה מסירה את העובדים מהחישובים והייצוא; קליטה מחדש של קובץ העלות תחזיר את השורות.`)) return;
     setBusy(true);
-    try { const r = await deleteCostRows(reportId, ids); setSelected(new Set()); await load(); setMsg(`${r.deleted} שורות נמחקו.`); }
+    // העריכות שטרם נשמרו (שיוכים/תעריפים/ת.ז) נשמרות לפני הרענון — אחרת הרענון מאפס אותן (רעות 13.10)
+    try { await saveReportPrep(reportId, assign); const r = await deleteCostRows(reportId, ids); setSelected(new Set()); await load(); setMsg(`${r.deleted} שורות נמחקו.`); }
     catch (e: any) { setMsg(e?.response?.data?.error || 'המחיקה נכשלה.'); }
     finally { setBusy(false); }
   };
@@ -440,7 +441,8 @@ export default function PrepSection({ reportId }: { reportId: number }) {
             <button disabled={busy || !nw.name || nw.name.trim().length < 2 || (nw.cost == null && nw.gross == null)}
               onClick={async () => {
                 setBusy(true);
-                try { await addWorker(reportId, nw); setNw(emptyWorker); setAddOpen(false); await load(); setMsg('העובד/ת נוסף/ה לדוח.'); }
+                // שמירת העריכות שטרם נשמרו לפני ההוספה — הרענון אחרי ההוספה מאפס את הטבלה (רעות 13.10: "הנתונים משתבשים")
+                try { await saveReportPrep(reportId, assign); await addWorker(reportId, nw); setNw(emptyWorker); setAddOpen(false); await load(); setMsg('העובד/ת נוסף/ה לדוח (והעריכות הקודמות נשמרו).'); }
                 catch (e: any) { setMsg(e?.response?.data?.error || 'ההוספה נכשלה.'); }
                 finally { setBusy(false); }
               }} style={btn('dark')}>הוספה</button>
