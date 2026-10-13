@@ -206,6 +206,7 @@ router.post('/cost-files/:fileId/route', ah(async (req, res) => {
     await refreshReportFlag(db, rid);
     // שיוכי הקובץ שהועלה (ת"ז→סמל/תפקיד) מוחלים גם על שורות שנותבו עכשיו
     try { await applyStoredFileAssignments(db, rid); } catch { /* אין קובץ/שיוכים */ }
+    try { await require('../lib/hourTransfers').applyHourTransfers(db, rid); } catch (e) { console.error('ניוד שעות נכשל:', e.message); }
   }
   res.json({ ok: true, affectedReports: [...affected] });
 }));
@@ -423,6 +424,7 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
   for (const rid of affectedReports) {
     await refreshReportFlag(db, rid);
     try { await applyStoredFileAssignments(db, rid); } catch { /* אין קובץ/שיוכים */ }
+    try { await require('../lib/hourTransfers').applyHourTransfers(db, rid); } catch (e) { console.error('ניוד שעות נכשל:', e.message); }
   }
 
   res.json({ ok: true, rowCount: parsed.records.length, software: parsed.software });
