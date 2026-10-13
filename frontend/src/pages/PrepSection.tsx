@@ -402,6 +402,46 @@ export default function PrepSection({ reportId }: { reportId: number }) {
         {data.institutions.map((i) => <option key={i.symbol} value={i.symbol}>{i.name}</option>)}
       </datalist>
 
+      {/* דוח העלות מול לשונית כח האדם של קובץ הביצוע שהועלה (רעות 13.10) */}
+      {data.fileDiff && (() => {
+        const fd = data.fileDiff!;
+        const m = fd.missingInFile, x = fd.extraInFile;
+        const instName = (sym: string | null) => data.institutions.find((i) => String(i.symbol) === String(sym))?.name || sym || '—';
+        if (!m.length && !x.length) return (
+          <div style={{ fontSize: 12, color: T.green, background: T.greenBg, borderRadius: 8, padding: '6px 11px', marginBottom: 10 }}>
+            ✓ כל העובדים בדוח העלות נמצאים בלשונית כח האדם של קובץ הביצוע שהועלה, ולהפך ({fd.fileWorkers} עובדים).
+          </div>
+        );
+        return (
+          <details style={{ fontSize: 12, background: T.amberBg, borderRadius: 8, padding: '6px 11px', marginBottom: 10 }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 600, color: T.amber }}>
+              ⚠ דוח העלות מול קובץ הביצוע שהועלה: {m.length ? `${m.length} עובדים בדוח העלות שאינם בקובץ (₪${fmt(m.reduce((s, r) => s + (r.cost || 0), 0))})` : ''}{m.length && x.length ? ' · ' : ''}{x.length ? `${x.length} עובדים בקובץ שאינם בדוח העלות` : ''} · לחיצה לפירוט
+            </summary>
+            <div style={{ marginTop: 6, color: T.inkSoft, fontSize: 11.5 }}>
+              ההשוואה לפי ת.ז מול לשונית "כח האדם" של הקובץ שהועלה. קובץ ישן (שהורד לפני העדכון האחרון של דוח העלות) יראה הבדלים שייעלמו בייצוא הבא.
+            </div>
+            {m.length > 0 && (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginTop: 6 }}>
+                <thead><tr style={{ textAlign: 'right', color: T.inkSoft }}><th style={{ padding: '3px 6px' }}>בדוח העלות ולא בקובץ</th><th style={{ padding: '3px 6px' }}>ת.ז</th><th style={{ padding: '3px 6px' }}>מחלקה</th><th style={{ padding: '3px 6px' }}>מוסד במערכת</th><th style={{ padding: '3px 6px' }}>שעות</th><th style={{ padding: '3px 6px' }}>עלות</th></tr></thead>
+                <tbody>{m.map((r) => (
+                  <tr key={r.rowId} style={{ borderTop: `1px solid ${T.line}` }}>
+                    <td style={{ padding: '3px 6px', fontWeight: 600 }}>{r.name}</td><td style={{ padding: '3px 6px', direction: 'ltr', textAlign: 'right' }}>{r.empId}</td>
+                    <td style={{ padding: '3px 6px' }}>{r.dept}</td><td style={{ padding: '3px 6px' }}>{r.symbol ? `${instName(r.symbol)} (${r.symbol})` : <span style={{ color: T.red }}>ללא שיוך</span>}</td>
+                    <td style={{ padding: '3px 6px' }}>{fmt(r.hours)}</td><td style={{ padding: '3px 6px' }}>₪{fmt(r.cost)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            )}
+            {x.length > 0 && (
+              <div style={{ marginTop: 6 }}>
+                <b>בקובץ ולא בדוח העלות ({x.length}):</b>{' '}
+                {x.slice(0, 40).map((w) => `${w.empId}${w.symbol ? ` (${instName(w.symbol)})` : ''}${w.staffType ? ` ${w.staffType}` : ''}`).join(' · ')}{x.length > 40 ? ` ועוד ${x.length - 40}` : ''}
+              </div>
+            )}
+          </details>
+        );
+      })()}
+
       {/* הוספת עובד/ת ידנית — למשל עובד/ת בחשבונית שאינו/ה בדוח העלות */}
       <div style={{ marginBottom: 10 }}>
         <button onClick={() => setAddOpen((o) => !o)} style={btn('ghost')}

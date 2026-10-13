@@ -53,11 +53,10 @@ async function salaryMatchData(db, report, client, authority, { withExec = true 
   const fileWorkers = (meta && meta.workerSyms) || {};
   const hasFileWorkers = Object.keys(fileWorkers).length > 0;
   base.hasFileWorkers = hasFileWorkers;
+  const { inWorkers } = require('./idMatch');
   const inFile = (r) => {
-    const raw = String(r.emp_id || '').replace(/\D/g, '');
-    const id = raw.replace(/^0+/, '');
-    if (!id) return null; // ת.ז לא מספרית (דרכון) — אי אפשר להצליב
-    return [raw, id, id.slice(0, 8), id.padStart(9, '0')].some((k) => k && fileWorkers[k]);
+    if (!String(r.emp_id || '').replace(/\D/g, '')) return null; // ת.ז לא מספרית (דרכון) — אי אפשר להצליב
+    return inWorkers(fileWorkers, r.emp_id); // סובלני לספרת ביקורת חסרה / אפס מוביל
   };
   // דוח הביצוע (קובץ המשרד שהועלה): ביצוע השכר פר מוסד (הדרכה+רכזים+סגנים),
   // מול הצפוי מדוח העלות — העלות המוכרת (×מע"מ ללקוח חייב, תקרת ברוטו+40%)

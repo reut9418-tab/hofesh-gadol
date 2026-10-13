@@ -106,11 +106,14 @@ async function ministryData(db, report) {
 /* קובץ המשרד השמור של הדוח: מהדיסק אם קיים, אחרת מהמסד (הדיסק בענן מתאפס
    בכל פריסה — העותק במסד הוא הקבוע). כשמשחזרים מהמסד כותבים גם לדיסק. */
 async function budgetFileBuf(db, report) {
-  if (report.budget_file_path && fs.existsSync(report.budget_file_path)) {
-    return fs.readFileSync(report.budget_file_path);
-  }
+  // העותק במסד הוא מקור האמת: עותק דיסק מקומי מהעלאה קודמת באותו שם (נתניה
+  // 13.10 — 129 עובדים מקובץ ישן מול 70 בקובץ הנוכחי) הזין את מסך ההכנה
+  // בנתונים ישנים. הדיסק משמש רק כשאין עותק במסד
   const row = await db.prepare('SELECT data FROM report_files WHERE report_id = ?').get(report.id);
-  if (!row || !row.data) return null;
+  if (!row || !row.data) {
+    if (report.budget_file_path && fs.existsSync(report.budget_file_path)) return fs.readFileSync(report.budget_file_path);
+    return null;
+  }
   const buf = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
   try {
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -655,6 +658,23 @@ router.get('/:id/prep', ah(async (req, res) => {
     })
     .filter(Boolean);
 
+  // עובדים בדוח העלות שאינם בלשונית כח האדם של קובץ הביצוע שהועלה, ולהפך
+  // (רעות 13.10: "עובדים בדוח העלות שלא נמצאים בדוח הביצוע") — לפי ת.ז
+  const fileWorkers = md.workerSyms || {};
+  const fileDiff = (() => {
+    if (!Object.keys(fileWorkers).length) return null;
+    const { inWorkers, distinctWorkers, costIdSet, inCost } = require('../lib/idMatch');
+    const keyOf = (v) => String(v || '').replace(/\D/g, '');
+    const missingInFile = rawRows
+      .filter((r) => keyOf(r.emp_id) && !inWorkers(fileWorkers, r.emp_id) && !isClubOperator(r.role_text) && Number(r.cost) > 0)
+      .map((r) => ({ rowId: r.id, empId: r.emp_id, name: r.emp_name || [r.first_name, r.last_name].filter(Boolean).join(' '), dept: r.dept, symbol: prepSymOf(r), cost: r.cost, hours: r.hours }));
+    const costIds = costIdSet(rawRows.map((r) => r.emp_id));
+    const workers = distinctWorkers(fileWorkers);
+    const extraInFile = workers
+      .filter(({ id }) => !inCost(costIds, id))
+      .map(({ id, a }) => ({ empId: id, symbol: a.symbol || null, staffType: a.staffType || null, role: a.role || null }));
+    return { fileWorkers: workers.length, missingInFile, extraInFile };
+  })();
   // דוח ההרחבה המקביל (אותה מסגרת ורשות) — יעד כפתור "ניוד שעות להרחבה"
   const prepSibling = report.program !== 'extension'
     ? await db.prepare('SELECT id FROM reports WHERE client_id = ? AND framework = ? AND program = ? AND COALESCE(authority_id, 0) = COALESCE(?, 0) AND id <> ?')
@@ -663,6 +683,7 @@ router.get('/:id/prep', ah(async (req, res) => {
   res.json({
     rows, institutions,
     extensionReportId: prepSibling ? prepSibling.id : null,
+    fileDiff, // null כשבקובץ שהועלה אין לשונית כח אדם ממולאת
     // + "רכז רשותי" (רעות 8.10, בנימינה) — נכתב לשורה הייעודית בראש לשונית כח האדם
     staffTypes: [...(isSchools ? (schoolTypes || SCHOOL_STAFF_TYPES) : STAFF_TYPES), { type: AUTHORITY_COORD, roles: [AUTHORITY_COORD] }],
     employer: (authority && authority.name) || (client && client.name) || '',

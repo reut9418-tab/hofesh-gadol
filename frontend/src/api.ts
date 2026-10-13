@@ -207,6 +207,12 @@ export type Recommendations = {
 export type PrepData = {
   rows: PrepRow[]; institutions: { symbol: string; name: string }[]; staffTypes: StaffType[];
   extensionReportId?: number | null; // דוח ההרחבה המקביל — יעד ניוד שעות
+  // השוואה מול לשונית כח האדם של קובץ הביצוע שהועלה (null = אין לשונית ממולאת)
+  fileDiff?: {
+    fileWorkers: number;
+    missingInFile: { rowId: number; empId: string; name: string; dept: string; symbol: string | null; cost: number | null; hours: number | null }[];
+    extraInFile: { empId: string; symbol: string | null; staffType: string | null; role: string | null }[];
+  } | null;
   employer: string; hasBudgetFile: boolean; budgetFileName: string | null;
   salary: SalaryCheck; framework: string; recommendations: Recommendations;
   bumps?: BumpSuggestion[];
