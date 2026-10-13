@@ -136,7 +136,7 @@ function detectStructure(rows, learned = {}) {
   // ברוטו) שום עמודה, עמודה שסומנה 'none' ושמה תואם את השדה חוזרת לשימוש
   if (best.rowIdx >= 0) {
     const row = rows[best.rowIdx] || [];
-    for (const key of ['hours', 'cost', 'gross']) {
+    for (const key of ['id', 'hours', 'cost', 'gross']) { // גם ת.ז — בלי ת.ז הקובץ נדחה כולו
       if (best.mapping[key] !== undefined) continue;
       const f = FIELD_DEFS.find((x) => x.key === key);
       row.forEach((cell, c) => {
