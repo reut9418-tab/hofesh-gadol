@@ -506,8 +506,16 @@ function inferMissingColumns(rows, det) {
 
 function parseCostFile(buf, learned = {}) {
   const sheets = readWorkbookSheets(buf);
-  const detected = sheets.map((s) => ({ ...s, det: inferMissingColumns(s.rows, detectStructure(s.rows, learned)) }));
+  let detected = sheets.map((s) => ({ ...s, det: inferMissingColumns(s.rows, detectStructure(s.rows, learned)) }));
   let chosen = detected.filter((s) => isPayrollSheet(s.det));
+  // רשת ביטחון (קריית מוצקין 13.10): כותרות שסומנו "ללא שימוש" בקובץ קודם
+  // (תעודת זהות / ברוטו / עלות / שעות) חסמו קובץ חדש במבנה רגיל — "לא זוהו
+  // שורות שכר". כשאף לשונית לא זוהתה, מנסים שוב בלי סימוני ה"ללא שימוש"
+  if (!chosen.length && Object.values(learned).some((v) => v === 'none')) {
+    const relaxed = Object.fromEntries(Object.entries(learned).filter(([, v]) => v !== 'none'));
+    detected = sheets.map((s) => ({ ...s, det: inferMissingColumns(s.rows, detectStructure(s.rows, relaxed)) }));
+    chosen = detected.filter((s) => isPayrollSheet(s.det));
+  }
   // כשיש בקובץ גם לשוניות מלאות (ת"ז + שעות) וגם לשונית-מקור חלקית שמשכפלת
   // את אותם עובדים בלי שעות (כמו "דוח תמחיר מפוצל" של יבנה) — הלשוניות
   // המלאות הן שהוכנו לחופש הגדול; קליטת שתיהן תכפיל את העלויות
