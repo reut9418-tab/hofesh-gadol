@@ -531,9 +531,19 @@ function parseCostFile(buf, learned = {}) {
     // אז הסה"כ = בסיס + הרחבה; אחרת ("שעות עבודה") היא סה"כ שכולל את ההרחבה
     const hoursHeader = s.det.mapping.hours !== undefined ? norm((s.rows[s.det.rowIdx] || [])[s.det.mapping.hours]) : '';
     const periodHours = /רגיל|1-21|15 יום|15 ימים|מחזור א/.test(hoursHeader);
-    recs.forEach((r) => { r._periodCost = periodCost; r._periodHours = periodHours; });
+    recs.forEach((r) => { r._periodCost = periodCost; r._periodHours = periodHours; r._sheet = String(s.sheetName || '').trim(); });
     records.push(...recs);
   });
+  // לשוניות לתקופות (קדימה 13.10: "גנים 15 יום" / "גנים הרחבה"): אותה מחלקה
+  // מופיעה בשתי לשוניות — שם הלשונית מצורף למחלקה ("103 - קדימה [גנים הרחבה]")
+  // כדי שכל תקופה תנותב לדוח שלה; בלי זה שתי התקופות מתאחדות לשורה אחת
+  if (sheetsUsed.length > 1) {
+    const deptSheets = new Map();
+    for (const r of records) { const k = norm(r.dept); if (!deptSheets.has(k)) deptSheets.set(k, new Set()); deptSheets.get(k).add(r._sheet); }
+    if ([...deptSheets.values()].some((x) => x.size > 1)) {
+      for (const r of records) r.dept = `${r.dept ? `${r.dept} ` : ''}[${r._sheet}]`;
+    }
+  }
   const aggregated = aggregateComponents(records);
   // פיצול תקופות (כלל רעות 16.9): שורה עם עמודת "עבור X ימים" מתפצלת לשתי
   // תקופות. ההרחבה = סכום העמודה + "הרחבה שעות" כשמופתה; 15 הימים = עמודת
