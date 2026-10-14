@@ -128,13 +128,26 @@ async function applyManualAssignments(db, reportId) {
   // הצמדת התפקיד לרשימת תבנית הפרויקט (כלל רעות 23.9) — גם ערכים מהזיכרון
   const fwRow = await db.prepare('SELECT framework FROM reports WHERE id = ?').get(reportId);
   const framework = fwRow && fwRow.framework;
-  const rows = await db.prepare('SELECT id, emp_id, dept, symbol_override, staff_type, role FROM cost_rows WHERE report_id = ?').all(reportId);
+  const rows = await db.prepare('SELECT id, emp_id, dept, inst_symbol, symbol_override, staff_type, role FROM cost_rows WHERE report_id = ?').all(reportId);
+  // עובד/ת שדוח העלות מפצל/ת לכמה סמלים מפורשים (נבון חולון 14.10: תהילה פיצלה
+  // עובדות ל-2-7 גנים, והמסך הראה את כולן בגן הראשון): זיכרון פר-עובד/ת נוצר
+  // כשהייתה שורה אחת, ואסור למרוח את הסמל שלו על כל השורות — הסמל המפורש
+  // בקובץ גובר (כלל 22.9: דוח העלות האחרון); איש הצוות/התפקיד מהזיכרון נשארים
+  const fileSyms = new Map();
+  for (const r of rows) {
+    if (!r.inst_symbol) continue;
+    const e = digits(r.emp_id);
+    if (!fileSyms.has(e)) fileSyms.set(e, new Set());
+    fileSyms.get(e).add(String(r.inst_symbol));
+  }
   const updates = [];
   for (const r of rows) {
     const emp = digits(r.emp_id);
-    const a = byEmpDept.get(`${emp}|${normDept(r.dept)}`) || byEmp.get(emp);
+    const perDept = byEmpDept.get(`${emp}|${normDept(r.dept)}`);
+    const a = perDept || byEmp.get(emp);
     if (!a) continue;
-    const sym = a.symbol || r.symbol_override || null;
+    const splitWorker = !perDept && (fileSyms.get(emp) || new Set()).size > 1;
+    const sym = (splitWorker ? null : a.symbol) || r.symbol_override || null;
     let st = a.staffType || r.staff_type || null;
     let role = a.role || r.role || null;
     if (framework && (st || role)) ({ staffType: st, role } = clampStaffForFramework(framework, st, role));
