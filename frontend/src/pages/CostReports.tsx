@@ -8,11 +8,20 @@ import {
 } from '../api';
 
 /* ---------- שיוך עמודות ידני: כותרת מדוח העלות → שדה במערכת ---------- */
-function ColumnsModal({ fileId, info, onClose, onDone }: { fileId: number; info: ColumnsInfo; onClose: () => void; onDone: () => void }) {
-  const [assign, setAssign] = useState<Record<string, string | null>>(() => ({ ...info.mapping }));
+function ColumnsModal({ fileId, info: initial, onClose, onDone }: { fileId: number; info: ColumnsInfo; onClose: () => void; onDone: () => void }) {
+  const [info, setInfo] = useState<ColumnsInfo>(initial);
+  const [assign, setAssign] = useState<Record<string, string | null>>(() => ({ ...initial.mapping }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const headerOf = (key: string | null | undefined) => info.headers.find((h) => h.key === key);
+  // קובץ עם כמה לשוניות (קרית ביאליק 14.10): ברירת המחדל היא הלשונית שנקלטה,
+  // ואפשר לעבור ללשונית אחרת כדי לראות את העמודות שלה ולשייך לפיהן
+  const switchSheet = async (sheet: string) => {
+    setBusy(true); setErr(null);
+    try { const next = await getCostFileColumns(fileId, sheet); setInfo(next); setAssign({ ...next.mapping }); }
+    catch (e: any) { setErr(e?.response?.data?.error || 'טעינת הלשונית נכשלה.'); }
+    finally { setBusy(false); }
+  };
 
   const save = async () => {
     setBusy(true); setErr(null);
@@ -28,6 +37,13 @@ function ColumnsModal({ fileId, info, onClose, onDone }: { fileId: number; info:
       <div style={{ background: '#fff', borderRadius: 14, padding: '18px 22px', width: 'min(680px, 96vw)', maxHeight: '88vh', overflowY: 'auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
           <span style={{ fontWeight: 700, fontSize: 15 }}>שיוך עמודות — {info.sheet}</span>
+          {(info.sheets?.length || 0) > 1 && (
+            <select value={info.sheet} disabled={busy} onChange={(e) => switchSheet(e.target.value)}
+              title="הלשונית שהעמודות שלה מוצגות. ✓ = לשונית שנקלטה בפועל"
+              style={{ ...input, padding: '4px 8px', fontSize: 12 }}>
+              {info.sheets!.map((s) => <option key={s} value={s}>{info.sheetsUsed?.includes(s) ? '✓ ' : ''}{s}</option>)}
+            </select>
+          )}
           <button onClick={onClose} style={{ marginInlineStart: 'auto', border: 'none', background: 'transparent', fontSize: 16, cursor: 'pointer', color: T.inkSoft }}>✕</button>
         </div>
         <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 12 }}>

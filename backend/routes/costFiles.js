@@ -328,12 +328,19 @@ router.get('/cost-files/:fileId/columns', ah(async (req, res) => {
 
   const learned = await learnedColumns(db, file.client_id);
   const sheets = readWorkbookSheets(buf);
-  let best = null;
-  for (const s of sheets) {
-    const det = inferMissingColumns(s.rows, detectStructure(s.rows, learned));
-    if (!best || det.score > best.det.score) best = { s, det };
-  }
-  if (!best || best.det.rowIdx < 0) return res.status(422).json({ error: 'לא זוהתה שורת כותרות בקובץ.' });
+  const detected = sheets
+    .map((s) => ({ s, det: inferMissingColumns(s.rows, detectStructure(s.rows, learned)) }))
+    .filter((x) => x.det.rowIdx >= 0);
+  if (!detected.length) return res.status(422).json({ error: 'לא זוהתה שורת כותרות בקובץ.' });
+  // איזו לשונית מוצגת (רעות 14.10, קרית ביאליק): עד היום נבחרה הלשונית עם ציון
+  // הזיהוי הגבוה ביותר — בקובץ של 4 לשוניות הוצגו העמודות של "גיליון1" (עם שם
+  // הגן וסמל) במקום של "1-21.07" שנקלטה ונותבה. ברירת המחדל עכשיו: הלשונית
+  // הראשונה שנקלטה בפועל (sheets_used); ?sheet=<שם> מציג לשונית אחרת מהקובץ
+  const used = (() => { try { return JSON.parse(file.sheets_used || '[]'); } catch { return []; } })();
+  const wanted = String(req.query.sheet || '').trim();
+  const best = (wanted && detected.find((x) => x.s.sheetName === wanted))
+    || detected.find((x) => used.includes(x.s.sheetName))
+    || detected.reduce((a, b) => (b.det.score > a.det.score ? b : a));
 
   const headerRow = best.s.rows[best.det.rowIdx] || [];
   const sample = best.s.rows.slice(best.det.rowIdx + 1, best.det.rowIdx + 30);
@@ -359,6 +366,8 @@ router.get('/cost-files/:fileId/columns', ah(async (req, res) => {
     sheet: best.s.sheetName,
     fields: FIELD_DEFS.map((f) => ({ key: f.key, label: f.label })),
     headers, mapping,
+    sheets: detected.map((x) => x.s.sheetName), // כל הלשוניות עם שורת כותרות — לבחירה במסך
+    sheetsUsed: used,
   });
 }));
 

@@ -151,9 +151,13 @@ export const uploadCostFile = async (clientId: number, file: File): Promise<Rout
 };
 /* שיוך עמודות ידני: כותרת בדוח העלות → שדה במערכת (נלמד ללקוח) */
 export type ColumnHeader = { index: number; key: string; label: string; samples: string[] };
-export type ColumnsInfo = { sheet: string; fields: { key: string; label: string }[]; headers: ColumnHeader[]; mapping: Record<string, string> };
-export const getCostFileColumns = (fileId: number): Promise<ColumnsInfo> =>
-  api.get(`/cost-files/${fileId}/columns`).then((r) => r.data);
+export type ColumnsInfo = {
+  sheet: string; fields: { key: string; label: string }[]; headers: ColumnHeader[]; mapping: Record<string, string>;
+  sheets?: string[]; // כל הלשוניות בקובץ עם שורת כותרות — אפשר להחליף את הלשונית המוצגת
+  sheetsUsed?: string[]; // הלשוניות שנקלטו בפועל
+};
+export const getCostFileColumns = (fileId: number, sheet?: string): Promise<ColumnsInfo> =>
+  api.get(`/cost-files/${fileId}/columns`, { params: sheet ? { sheet } : {} }).then((r) => r.data);
 export const remapCostFile = (fileId: number, assign: Record<string, string | null>) =>
   api.post(`/cost-files/${fileId}/remap`, { assign }).then((r) => r.data);
 
