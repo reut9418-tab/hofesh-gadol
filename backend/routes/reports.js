@@ -527,9 +527,18 @@ router.get('/:id/prep', ah(async (req, res) => {
   const md = await ministryData(db, report);
   const tMinistry = Date.now();
   const prepNoLead = noLeadGardens(report, md); // גנים שמסומנים 1 — "גננת" = תפקיד סייעת (כלל 14.10)
-  const institutions = md.institutions;
   const prepBuf = md.buf;
-  const validSymbols = new Set(institutions.map((i) => i.symbol));
+  // גנים שבלשונית "גנים - דוח ביצוע" (5) אך לא בלשונית "מצבת והרשמה" (4) —
+  // לביא 14.10: 25 גנים (חטיבות צעירות, "בנות הדסה 7-14") נוספו ידנית ללשונית
+  // הביצוע בלי הרשמה; השיוך האוטומטי קיבל אותם (לפי לשונית 5) אבל המסך הציג
+  // את 40 העובדים שלהם כ"חסרי סמל". הסמל תקף גם כאן, ומסומן "ללא הרשמה"
+  const regSymbols = new Set(md.institutions.map((i) => String(i.symbol)));
+  const execOnlyGardens = report.framework === 'gardens' ? (md.execGardens || []).map(String).filter((s) => !regSymbols.has(s)) : [];
+  const institutions = execOnlyGardens.length
+    ? [...md.institutions, ...execOnlyGardens.map((s) => ({ symbol: s, name: '(בלשונית הביצוע בלבד — ללא הרשמה)' }))]
+    : md.institutions;
+  const validSymbols = new Set(institutions.map((i) => String(i.symbol)));
+  const execOnlySet = new Set(execOnlyGardens);
   const toActivity = (s) => (s ? (md.redirect.get(String(s)) || s) : s);
 
   // התאמות ברוטו אוטומטיות (עד 20 ₪ לשעה) — לפני טעינת השורות, כך שהמסך
@@ -623,6 +632,8 @@ router.get('/:id/prep', ah(async (req, res) => {
       symbol: symVal,
       // גן שמסומן 1 בקובץ המשרד (המובילה אינה גננת) — "גננת" רק בתפקיד סייעת
       noLead: !isSchools && !!symVal && prepNoLead.has(String(symVal)),
+      // גן שבלשונית הביצוע בלבד (אין לו הרשמה בלשונית 4 — ולכן גם לא תקציב)
+      execOnly: !!symVal && execOnlySet.has(String(symVal)),
       staffType: stVal,
       role: roleVal,
       saved: !!(r.symbol_override || r.staff_type || r.role),
@@ -701,6 +712,7 @@ router.get('/:id/prep', ah(async (req, res) => {
   res.json({
     rows, institutions,
     noLeadGardens: [...prepNoLead], // סמלי הגנים שמסומנים 1 (כלל 14.10)
+    execOnlyGardens, // גנים בלשונית הביצוע (5) שאינם בלשונית ההרשמה (4)
     extensionReportId: prepSibling ? prepSibling.id : null,
     fileDiff, // null כשבקובץ שהועלה אין לשונית כח אדם ממולאת
     // + "רכז רשותי" (רעות 8.10, בנימינה) — נכתב לשורה הייעודית בראש לשונית כח האדם
@@ -1539,7 +1551,8 @@ router.get('/:id/cost-match-xlsx', ah(async (req, res) => {
    הלקוח (ת"ז) ← התאמת שם. מחזיר גם את מקור השיוך לתצוגה. */
 async function makeSymbolResolver(db, report, exMd, rows) {
   const exInstitutions = exMd.institutions;
-  const exValid = new Set(exInstitutions.map((i) => i.symbol));
+  // גם גנים שבלשונית הביצוע (5) בלבד — כמו במסך ההכנה ובשיוך האוטומטי (לביא 14.10)
+  const exValid = new Set([...exInstitutions.map((i) => String(i.symbol)), ...(report.framework === 'gardens' ? (exMd.execGardens || []).map(String) : [])]);
   const exNameSymbol = exInstitutions.length
     ? matchDeptsToInstitutions(exInstitutions, [...new Set(rows.map((r) => r.inst_name).filter(Boolean))]) : {};
   const exDeptSymbol = exInstitutions.length && report.framework !== 'gardens'

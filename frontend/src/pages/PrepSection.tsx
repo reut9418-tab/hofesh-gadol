@@ -418,6 +418,17 @@ export default function PrepSection({ reportId }: { reportId: number }) {
       </datalist>
 
       {/* דוח העלות מול לשונית כח האדם של קובץ הביצוע שהועלה (רעות 13.10) */}
+      {/* גנים שבלשונית הביצוע (5) בלי הרשמה בלשונית (4) — לביא 14.10: 25 גנים, 40 עובדים */}
+      {(data.execOnlyGardens?.length || 0) > 0 && (() => {
+        const workers = data.rows.filter((r) => r.execOnly && !r.clubOperator && !r.zeroCost).length;
+        return (
+          <div style={{ border: `1px solid ${T.amber}`, background: T.amberBg, borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 12 }}>
+            <b>⚠ {data.execOnlyGardens!.length} גנים מופיעים בלשונית "גנים - דוח ביצוע" אבל לא בלשונית "מצבת והרשמה"</b> ({workers} עובדים משויכים אליהם).
+            בלי הרשמה אין להם ילדים לתקצוב — יש להוסיף אותם ללשונית ההרשמה בקובץ המשרד (או להוציא את העובדים מהדוח).
+            <span style={{ color: T.inkSoft }}> סמלים: {data.execOnlyGardens!.join(', ')}</span>
+          </div>
+        );
+      })()}
       {data.fileDiff && (() => {
         const fd = data.fileDiff!;
         const m = fd.missingInFile, x = fd.extraInFile;

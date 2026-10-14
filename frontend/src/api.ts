@@ -195,6 +195,7 @@ export type PrepRow = {
   zeroCost?: boolean; // עלות מעביד 0 — לא נכתב לדוח הביצוע
   expNote?: string | null; // הסבר לשורה בקובץ המשרד
   noLead?: boolean; // הגן מסומן 1 בקובץ המשרד (המובילה אינה גננת) — "גננת" רק בתפקיד סייעת (כלל 14.10)
+  execOnly?: boolean; // הגן בלשונית הביצוע (5) בלבד — אין לו הרשמה בלשונית (4) ולכן גם לא תקציב
   gross: number | null; cost: number | null; hours: number | null; hourlyGross: number | null; hourlyCost: number | null;
   movedFromReport?: number | null; // שורה שנוצרה מניוד שעות מדוח אחר
   transferHours?: number; // שעות שנוידו מהשורה הזו לדוח ההרחבה
@@ -215,6 +216,7 @@ export type Recommendations = {
 export type PrepData = {
   rows: PrepRow[]; institutions: { symbol: string; name: string }[]; staffTypes: StaffType[];
   noLeadGardens?: string[]; // סמלי גנים שמסומנים 1 בקובץ המשרד — "גננת" בהם = תפקיד סייעת בלבד (כלל 14.10)
+  execOnlyGardens?: string[]; // גנים שבלשונית הביצוע (5) אך לא בלשונית ההרשמה (4)
   extensionReportId?: number | null; // דוח ההרחבה המקביל — יעד ניוד שעות
   // השוואה מול לשונית כח האדם של קובץ הביצוע שהועלה (null = אין לשונית ממולאת)
   fileDiff?: {
