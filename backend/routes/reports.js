@@ -103,6 +103,19 @@ async function ministryData(db, report) {
   return entry;
 }
 
+/* כלל רעות 14.10: גן שמסומן 1 בלשונית "גנים - דוח ביצוע" ("המובילה אינה
+   גננת. סייעת=1") — הגננת שם הייתה בלי תעודה ואינה גננת הגן. בשיוך לגן כזה
+   איש הצוות "גננת" חייב את התפקיד "סייעת" — לא "גננת של הגן" ולא "בעל/ת
+   תעודת הוראה". נאכף במסך ההכנה, בשמירה, בשיוך האוטומטי ובייצוא. */
+const NO_LEAD_ROLE = 'סייעת';
+function noLeadGardens(report, md) {
+  return report.framework === 'gardens' ? new Set((md.coordGardens || []).map(String)) : new Set();
+}
+function enforceNoLead(noLead, symbol, staffType, role) {
+  if (symbol && noLead.has(String(symbol)) && String(staffType || '').trim() === 'גננת' && role !== NO_LEAD_ROLE) return NO_LEAD_ROLE;
+  return role;
+}
+
 /* קובץ המשרד השמור של הדוח: מהדיסק אם קיים, אחרת מהמסד (הדיסק בענן מתאפס
    בכל פריסה — העותק במסד הוא הקבוע). כשמשחזרים מהמסד כותבים גם לדיסק. */
 async function budgetFileBuf(db, report) {
@@ -513,6 +526,7 @@ router.get('/:id/prep', ah(async (req, res) => {
   // רשימת המוסדות מקובץ המשרד השמור (מצבת והרשמה) — לבחירת סמל מקום פעילות
   const md = await ministryData(db, report);
   const tMinistry = Date.now();
+  const prepNoLead = noLeadGardens(report, md); // גנים שמסומנים 1 — "גננת" = תפקיד סייעת (כלל 14.10)
   const institutions = md.institutions;
   const prepBuf = md.buf;
   const validSymbols = new Set(institutions.map((i) => i.symbol));
@@ -601,10 +615,14 @@ router.get('/:id/prep', ah(async (req, res) => {
     if (isSchools && !stVal) ({ staffType: stVal, role: roleVal } = defaultSchoolsStaff(r.gross != null && r.hours ? r.gross / r.hours : 0));
     if (isSchools) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, schoolTypes));
     else if (stVal) ({ staffType: stVal, role: roleVal } = mapGardensStaff(stVal, roleVal, aideTypeForPayer(r.payer || prepEmployer, prepAuth && prepAuth.name)));
+    const symVal = prepSymOf(r);
+    if (!isSchools) roleVal = enforceNoLead(prepNoLead, symVal, stVal, roleVal);
     return {
       rowId: r.id, empId: r.emp_id, name: r.emp_name,
       firstName: r.first_name, lastName: r.last_name, dept: r.dept, instName: r.inst_name,
-      symbol: prepSymOf(r),
+      symbol: symVal,
+      // גן שמסומן 1 בקובץ המשרד (המובילה אינה גננת) — "גננת" רק בתפקיד סייעת
+      noLead: !isSchools && !!symVal && prepNoLead.has(String(symVal)),
       staffType: stVal,
       role: roleVal,
       saved: !!(r.symbol_override || r.staff_type || r.role),
@@ -682,6 +700,7 @@ router.get('/:id/prep', ah(async (req, res) => {
     : null;
   res.json({
     rows, institutions,
+    noLeadGardens: [...prepNoLead], // סמלי הגנים שמסומנים 1 (כלל 14.10)
     extensionReportId: prepSibling ? prepSibling.id : null,
     fileDiff, // null כשבקובץ שהועלה אין לשונית כח אדם ממולאת
     // + "רכז רשותי" (רעות 8.10, בנימינה) — נכתב לשורה הייעודית בראש לשונית כח האדם
@@ -790,6 +809,7 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
 
   let gardens = aaMd.execGardens.length ? aaMd.execGardens : aaMd.institutions.map((i) => i.symbol);
   if (!gardens.length) return res.status(422).json({ error: 'לא נמצאו סמלי גנים בלשונית "גנים - דוח ביצוע" של הקובץ.' });
+  const aaNoLead = noLeadGardens(report, aaMd); // גנים שמסומנים 1 — הגננת בתפקיד סייעת (כלל 14.10)
 
   const rows = await db.prepare(`SELECT * FROM cost_rows WHERE report_id = ? AND ${notClubSql()}`).all(id);
   const exNameSymbol = aaMd.institutions.length
@@ -865,7 +885,7 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
   const CHUNK = 10;
   for (let i = 0; i < updates.length; i += CHUNK) {
     await Promise.all(updates.slice(i, i + CHUNK).map(([g, u]) => {
-      const role = u.r.role || (/סייע/.test(u.st) ? 'סייעת' : 'גננת של הגן');
+      const role = enforceNoLead(aaNoLead, g, u.st, u.r.role || (/סייע/.test(u.st) ? 'סייעת' : 'גננת של הגן'));
       assigned++;
       return db.prepare('UPDATE cost_rows SET symbol_override = ?, staff_type = COALESCE(staff_type, ?), role = COALESCE(role, ?) WHERE id = ?')
         .run(g, u.st, role, u.r.id);
@@ -881,27 +901,36 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
   const aaEmployer = (aaAuth && aaAuth.name) || (aaClient && aaClient.name) || '';
   const fresh = await db.prepare(`SELECT cr.*, cf.payer FROM cost_rows cr JOIN cost_files cf ON cf.id = cr.cost_file_id WHERE cr.report_id = ? AND ${notClubSql('cr.')}`).all(id);
   const byGarden = new Map();
+  const roleUpdates = [];
+  let noLeadFixed = 0;
   for (const r of fresh) {
     const sym = symbolOf(r);
     if (!sym || !staffed.has(sym)) continue;
     if (/רכזת גן/.test(String(r.staff_type || ''))) continue;
     const fa = fileAssignOf(r);
-    if (r.role_text || (fa && fa.staffType)) continue; // מקור מוסמך — לא נוגעים
+    if (r.role_text || (fa && fa.staffType)) {
+      // מקור מוסמך — לא נוגעים בסיווג; אבל כלל 14.10 גובר: בגן שמסומן 1
+      // "גננת" היא בתפקיד סייעת גם כשהקובץ/דוח השכר אמרו "גננת של הגן"
+      if (aaNoLead.has(String(sym)) && String(r.staff_type || '').trim() === 'גננת' && r.role !== NO_LEAD_ROLE) {
+        roleUpdates.push({ r, staffType: 'גננת', role: NO_LEAD_ROLE }); noLeadFixed++;
+      }
+      continue;
+    }
     if (!byGarden.has(sym)) byGarden.set(sym, []);
     byGarden.get(sym).push(r);
   }
-  const roleUpdates = [];
   let leads = 0, aides = 0;
   const capHours = 6 * (report.program === 'extension' ? (report.extension_days || 6) : 15);
   let overCap = 0, capped = 0;
   const capFixes = []; // גננת שחורגת מהתקן עד 6 שעות — השעות מעודכנות לתקן (רעות 8.10, גנים בלבד)
   // כלל רעות 13.10: הגננת היא בעלת השכר ברוטו הגבוה ביותר בגן (לא השעות) —
   // גם כשהיא מקובץ הרשות (סייעות רשות); השאר סייעות לפי המשלם
-  for (const [, list] of byGarden) {
+  for (const [gSym, list] of byGarden) {
     list.sort((a, b) => (b.gross || 0) - (a.gross || 0) || (b.hours || 0) - (a.hours || 0));
     list.forEach((r, i) => {
+      // כלל 14.10: בגן שמסומן 1 הגננת (בלי תעודה, לא גננת הגן) = "גננת" בתפקיד סייעת
       const want = i === 0
-        ? { staffType: 'גננת', role: 'גננת של הגן' }
+        ? { staffType: 'גננת', role: aaNoLead.has(String(gSym)) ? NO_LEAD_ROLE : 'גננת של הגן' }
         : { staffType: aideTypeForPayer(r.payer || aaEmployer, aaAuth && aaAuth.name), role: 'סייעת' };
       if (i === 0 && (r.hours || 0) > capHours + 0.01) {
         if ((r.hours || 0) <= capHours + 6) capFixes.push(r.id); else overCap++;
@@ -927,7 +956,7 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
       await saveManualAssignments(db, id, roleUpdates.map((u) => ({ empId: u.r.emp_id, dept: u.r.dept, symbol: symbolOf(u.r), staffType: u.staffType, role: u.role })));
     } catch { /* זיכרון בלבד */ }
   }
-  res.json({ ok: true, assigned, gardens: gardens.length, coordinators: coordDesignated, coordPositions, leads, aides, capped, overCap, capHours });
+  res.json({ ok: true, assigned, gardens: gardens.length, coordinators: coordDesignated, coordPositions, leads, aides, capped, overCap, capHours, noLeadFixed, noLeadGardens: aaNoLead.size });
 }));
 
 /* ---------- פיצול שורת עובד/ת בין מוסדות (כלל רעות 17.9: "פיצול שורות
@@ -1130,8 +1159,9 @@ router.put('/:id/prep', ah(async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'מבנה שיוך לא תקין' });
   const db = getDB();
   const id = parseInt(req.params.id);
-  const putReport = await db.prepare('SELECT id, framework FROM reports WHERE id = ?').get(id);
+  const putReport = await db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
   if (!putReport) return res.status(404).json({ error: 'דוח לא נמצא' });
+  const putNoLead = noLeadGardens(putReport, await ministryData(db, putReport));
   // עדכון ישיר עם תנאי report_id (בלי SELECT מקדים) ובמקביל בקבוצות —
   // כל סבב-רשת ל-DB בענן עולה ~50ms, ושמירת 90 שיוכים לקחה שניות
   let updated = 0;
@@ -1143,6 +1173,8 @@ router.put('/:id/prep', ah(async (req, res) => {
       const c = clampStaffForFramework(putReport.framework, a.staffType || null, a.role || null);
       a.staffType = c.staffType; a.role = c.role;
     }
+    // כלל 14.10: בגן שמסומן 1 — "גננת" נשמרת תמיד בתפקיד סייעת
+    if (a.symbol !== undefined) a.role = enforceNoLead(putNoLead, a.symbol, a.staffType, a.role);
   }
   const CHUNK = 10;
   for (let i = 0; i < entries.length; i += CHUNK) {
@@ -1659,6 +1691,7 @@ router.get('/:id/export', ah(async (req, res) => {
   if (!rows.length) return res.status(422).json({ error: 'אין שורות שכר מנותבות לדוח זה.' });
 
   const { resolveSymbol } = await makeSymbolResolver(db, report, exMd, rows);
+  const exNoLead = noLeadGardens(report, exMd); // כלל 14.10 — נאכף גם בכתיבה לקובץ
 
   const round2 = (n) => (n == null ? null : Math.round(n * 100) / 100);
   // רשימות איש-צוות/תפקיד של תבנית בתי הספר — מהקובץ עצמו (מחרוזות מדויקות)
@@ -1710,6 +1743,7 @@ router.get('/:id/export', ah(async (req, res) => {
     if (isSch && !stVal) ({ staffType: stVal, role: roleVal } = defaultSchoolsStaff(hourlyGross || 0));
     if (isSch) ({ staffType: stVal, role: roleVal } = mapSchoolsStaff(stVal, roleVal, exSchoolTypes));
     else if (stVal) ({ staffType: stVal, role: roleVal } = mapGardensStaff(stVal, roleVal, aideTypeForPayer(r.payer || employer, authority && authority.name)));
+    if (!isSch) roleVal = enforceNoLead(exNoLead, resolveSymbol(r), stVal, roleVal);
     // עמודת התפקיד בקובץ היא נוסחת משרד שגוזרת לבד את התפקיד לסוגי הצוות
     // החד-תפקידיים — שם משאירים אותה; כותבים תפקיד רק לסוגים שהנוסחה לא
     // מכסה (גננת/מורה/תוספת כח אדם...), אחרת התא נשאר ריק ונעול

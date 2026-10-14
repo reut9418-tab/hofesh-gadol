@@ -74,11 +74,14 @@ export default function PrepSection({ reportId }: { reportId: number }) {
       const next = { ...p };
       shown.forEach((r) => {
         // שימור עריכות קיימות בשורה (תעריפים ידניים / תיקון ת.ז) בעת שיוך קבוצתי
+        const symbol = bulk.symbol ?? next[r.rowId]?.symbol ?? null;
+        const staffType = bulk.staffType ?? next[r.rowId]?.staffType ?? null;
+        const role = bulk.role ?? next[r.rowId]?.role ?? null;
         next[r.rowId] = {
           ...next[r.rowId],
-          symbol: bulk.symbol ?? next[r.rowId]?.symbol ?? null,
-          staffType: bulk.staffType ?? next[r.rowId]?.staffType ?? null,
-          role: bulk.role ?? next[r.rowId]?.role ?? null,
+          symbol, staffType,
+          // כלל 14.10: "גננת" בגן שמסומן 1 — תמיד סייעת, גם בשיוך קבוצתי
+          role: staffType === 'גננת' && isNoLead(symbol) ? 'סייעת' : role,
         };
       });
       return next;
@@ -134,8 +137,20 @@ export default function PrepSection({ reportId }: { reportId: number }) {
     } finally { setExporting(false); }
   };
 
-  const rolesFor = (staffType: string | null) =>
-    (data.staffTypes.find((s) => s.type === staffType) || { roles: [] as string[] }).roles;
+  // כלל רעות 14.10: גן שמסומן 1 בקובץ המשרד ("המובילה אינה גננת. סייעת=1") —
+  // הגננת שם בלי תעודה ואינה גננת הגן, ולכן "גננת" בו מקבלת רק את התפקיד "סייעת"
+  const noLeadSet = new Set(data.noLeadGardens || []);
+  const isNoLead = (symbol: string | null | undefined) => !!symbol && noLeadSet.has(String(symbol));
+  const rolesFor = (staffType: string | null, symbol?: string | null) => {
+    const roles = (data.staffTypes.find((s) => s.type === staffType) || { roles: [] as string[] }).roles;
+    return staffType === 'גננת' && isNoLead(symbol) ? roles.filter((r) => r === 'סייעת') : roles;
+  };
+  // תפקיד ברירת מחדל אחרי שינוי איש צוות/סמל — רשימה של אחד = נבחר אוטומטית
+  const autoRole = (staffType: string | null, symbol: string | null | undefined, current: string | null) => {
+    const roles = rolesFor(staffType, symbol);
+    if (roles.length === 1) return roles[0];
+    return current && roles.includes(current) ? current : null;
+  };
 
   return (
     <section style={card}>
@@ -458,7 +473,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
               style={{ ...input, padding: '6px 8px', fontSize: 12, width: 120 }} />
             <select value={nw.staffType || ''} onChange={(e) => {
               const st = e.target.value || null;
-              setNw({ ...nw, staffType: st, role: st && rolesFor(st).length === 1 ? rolesFor(st)[0] : null });
+              setNw({ ...nw, staffType: st, role: st ? autoRole(st, nw.symbol, null) : null });
             }} style={{ ...input, padding: '6px 8px', fontSize: 12 }}>
               <option value="">איש צוות…</option>
               {data.staffTypes.map((s) => <option key={s.type} value={s.type}>{s.type}</option>)}
@@ -466,7 +481,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
             <select value={nw.role || ''} onChange={(e) => setNw({ ...nw, role: e.target.value || null })}
               style={{ ...input, padding: '6px 8px', fontSize: 12 }}>
               <option value="">תפקיד…</option>
-              {rolesFor(nw.staffType || null).map((ro) => <option key={ro} value={ro}>{ro}</option>)}
+              {rolesFor(nw.staffType || null, nw.symbol).map((ro) => <option key={ro} value={ro}>{ro}</option>)}
             </select>
             <input type="number" min={0} step="0.01" placeholder="שעות" value={nw.hours ?? ''}
               onChange={(e) => setNw({ ...nw, hours: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
@@ -558,14 +573,18 @@ export default function PrepSection({ reportId }: { reportId: number }) {
                   <td style={{ padding: '5px 8px', color: T.inkSoft, fontSize: 11 }}>{r.dept}</td>
                   <td style={{ padding: '5px 8px' }}>
                     <input list={`inst-${reportId}`} value={a.symbol || ''} placeholder="סמל…"
-                      onChange={(e) => set(r.rowId, { symbol: e.target.value || null })}
-                      title={instName || ''}
-                      style={{ ...input, padding: '4px 6px', fontSize: 11.5, width: '100%', borderColor: a.symbol ? T.green : T.line }} />
+                      onChange={(e) => {
+                        const sym = e.target.value || null;
+                        // מעבר לגן שמסומן 1 (או ממנו) מתקן את התפקיד של "גננת" בהתאם
+                        set(r.rowId, a.staffType === 'גננת' ? { symbol: sym, role: autoRole(a.staffType, sym, a.role) } : { symbol: sym });
+                      }}
+                      title={(instName || '') + (isNoLead(a.symbol) ? ' — מסומן 1 בקובץ המשרד: המובילה אינה גננת (גננת = תפקיד סייעת)' : '')}
+                      style={{ ...input, padding: '4px 6px', fontSize: 11.5, width: '100%', borderColor: a.symbol ? T.green : T.line, background: isNoLead(a.symbol) ? '#FDF6EC' : undefined }} />
                   </td>
                   <td style={{ padding: '5px 8px' }}>
                     <select value={a.staffType || ''} onChange={(e) => {
                       const st = e.target.value || null;
-                      set(r.rowId, { staffType: st, role: st && rolesFor(st).length === 1 ? rolesFor(st)[0] : null });
+                      set(r.rowId, { staffType: st, role: st ? autoRole(st, a.symbol, null) : null });
                     }} style={{ ...input, padding: '4px 6px', fontSize: 11.5, width: '100%', borderColor: a.staffType ? T.green : T.line }}>
                       <option value="">—</option>
                       {data.staffTypes.map((s) => <option key={s.type} value={s.type}>{s.type}</option>)}
@@ -573,9 +592,10 @@ export default function PrepSection({ reportId }: { reportId: number }) {
                   </td>
                   <td style={{ padding: '5px 8px' }}>
                     <select value={a.role || ''} onChange={(e) => set(r.rowId, { role: e.target.value || null })}
+                      title={a.staffType === 'גננת' && isNoLead(a.symbol) ? 'גן שמסומן 1 — הגננת בלי תעודה ואינה גננת הגן: התפקיד היחיד המותר הוא סייעת' : ''}
                       style={{ ...input, padding: '4px 6px', fontSize: 11.5, width: '100%', borderColor: a.role ? T.green : T.line }}>
                       <option value="">—</option>
-                      {rolesFor(a.staffType).map((ro) => <option key={ro} value={ro}>{ro}</option>)}
+                      {rolesFor(a.staffType, a.symbol).map((ro) => <option key={ro} value={ro}>{ro}</option>)}
                     </select>
                   </td>
                   {/* תעריפים ידניים (כלל 22.9): מה שנקבע כאן הוא הקובע — במכתב, בבקרות ובייצוא */}
