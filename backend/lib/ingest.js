@@ -56,6 +56,9 @@ function isValidIsraeliId(raw) {
 }
 
 /* ---------- זיהוי מבנה הקובץ ---------- */
+/* כותרת שמכריזה שאינה מדווחת לתכנית ("צהרונים - שעות (לא מדווח)" בקובץ אביב/
+   לביא) — לעולם לא מזוהה אוטומטית כעמודת שכר; שיוך ידני מפורש עדיין אפשרי */
+const unreportedHeader = (cellN) => /לא מדווח|צהרון/.test(cellN);
 function detectStructure(rows, learned = {}) {
   let best = { rowIdx: -1, mapping: {}, score: 0 };
   const scanLimit = Math.min(rows.length, 12);
@@ -82,6 +85,7 @@ function detectStructure(rows, learned = {}) {
       const learnedKey = learned[cellN];
       if (learnedKey === 'none') return; // המשתמשת סימנה: לא להשתמש בעמודה הזו
       if (learnedKey && FIELD_DEFS.some((f) => f.key === learnedKey)) return; // כבר טופל במעבר 1
+      if (unreportedHeader(cellN)) return; // "צהרונים - שעות (לא מדווח)" — לא עמודת שכר של התכנית
       if (Object.values(mapping).includes(c)) return;
       for (const f of FIELD_DEFS) {
         if (mapping[f.key] !== undefined) continue;
@@ -111,12 +115,23 @@ function detectStructure(rows, learned = {}) {
       if (!cellN) return;
       const lk = learned[cellN];
       if (lk === 'none' || (lk && FIELD_DEFS.some((f) => f.key === lk))) return;
+      if (unreportedHeader(cellN)) return;
       if (Object.values(mapping).includes(c)) return;
       for (const f of FIELD_DEFS) {
         if (mapping[f.key] !== undefined) continue;
         if (f.syn.some((s) => cellN === norm(s) || cellN.includes(norm(s)))) { mapping[f.key] = c; break; }
       }
     });
+    // מעבר 4 (לביא/אביב 14.10): "ללא שימוש" שנלמד בקובץ במבנה אחר ("שעות" סומן
+    // כך בקובץ לביא שיש בו "שעות 15 יום") השאיר את קובץ הקבלן בלי שעות — ו-169
+    // עובדות הוצגו בלי נתוני שכר. כששדה חיוני (ת"ז/שעות/ברוטו/עלות) נשאר ריק
+    // וכותרת שסומנה "ללא שימוש" היא שמו המדויק — היא חוזרת לשימוש בקובץ הזה
+    for (const key of ['id', 'hours', 'gross', 'cost']) {
+      if (mapping[key] !== undefined) continue;
+      const f = FIELD_DEFS.find((x) => x.key === key);
+      const c = row.findIndex((cell) => learned[norm(cell)] === 'none' && f.syn.some((s) => norm(s) === norm(cell)));
+      if (c >= 0 && !Object.values(mapping).includes(c)) { mapping[key] = c; score++; }
+    }
     if (score > best.score) best = { rowIdx: r, mapping, score, learnedFields };
   }
   if (best.rowIdx < 0) {

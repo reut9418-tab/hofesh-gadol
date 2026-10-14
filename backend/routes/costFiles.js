@@ -437,7 +437,8 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
       r.instSymbol, r.instName || null, JSON.stringify(r.componentNames || []), r.gross, r.cost, r.hours,
       (old && old.staff_type) || (staff ? staff.staffType : null),
       (old && old.role) || (staff ? staff.role : null),
-      old ? old.symbol_override : null, old ? old.gross_bump : 0,
+      // כלל 14.10: סמל שכתוב בקובץ גובר על שיוך ידני קודם — הזיכרון רק משלים
+      old && !r.instSymbol ? old.symbol_override : null, old ? old.gross_bump : 0,
       old ? old.moved_from_dept : null, old ? old.moved_from_symbol : null, old ? old.move_declined : 0,
       old ? old.moved_from_report : null, old ? old.cross_declined : 0,
       r.roleText ? String(r.roleText).trim() : (deptRoleTag(r.dept) || null)];
