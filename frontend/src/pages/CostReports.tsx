@@ -235,7 +235,8 @@ export default function CostReportsPanel({ clientId, onRouted }: { clientId: num
         last = await uploadCostFile(clientId, f);
         // המשלם שהוגדר לקובץ הישן עובר אוטומטית לגרסה החדשה
         if (existing?.payer && last?.file?.id) await setCostFilePayer(last.file.id, existing.payer);
-        if (existing?.vat && last?.file?.id) await setCostFileVat(last.file.id, true);
+        // גם "ללא מע"מ" (קובץ רשות אצל לקוח חייב) עובר לגרסה החדשה
+        if (existing && last?.file?.id) await setCostFileVat(last.file.id, !!existing.vat);
       }
       await load();
       if (last) setRouting(last);
@@ -283,7 +284,7 @@ export default function CostReportsPanel({ clientId, onRouted }: { clientId: num
               title='מי שילם לעובדים בקובץ זה — נרשם ב"הועסק ע&quot;י" ומפריד את הכרטסות'
               onBlur={async (e) => { const v = e.target.value.trim(); if (v !== (f.payer || '')) { await setCostFilePayer(f.id, v || null); load(); } }}
               style={{ ...input, padding: '3px 8px', fontSize: 11, width: 140, borderColor: f.payer ? T.green : T.line }} />
-            <label title='עובדי קבלן שמגיש חשבונית (למשל חברת אביב אצל לביא): העלות המוכרת לכל עובד/ת בקובץ זה היא הנמוך מבין עלות×1.18 לבין ברוטו שעתי×1.4 — גם כשהלקוח עצמו אינו חייב במע"מ'
+            <label title='האם העלות בקובץ זה מוכרת כולל מע"מ (×1.18). מסומן: קבלן שמגיש חשבונית (אביב אצל לביא) או עובדי לקוח חייב במע"מ. לא מסומן אצל לקוח חייב: קובץ של הרשות/המועצה — ללא מע"מ'
               style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, cursor: 'pointer',
                 color: f.vat ? T.amber : T.inkSoft, background: f.vat ? T.amberBg : 'transparent', borderRadius: 5, padding: '2px 7px' }}>
               <input type="checkbox" checked={!!f.vat}

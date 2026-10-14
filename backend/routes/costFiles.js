@@ -216,6 +216,8 @@ router.get('/clients/:clientId/cost-files', ah(async (req, res) => {
   const db = getDB();
   const clientId = parseInt(req.params.clientId);
   const files = await db.prepare('SELECT * FROM cost_files WHERE client_id = ? ORDER BY id DESC').all(clientId);
+  const listClient = await db.prepare('SELECT has_vat FROM clients WHERE id = ?').get(clientId);
+  const clientVat = !!(listClient && Number(listClient.has_vat));
   const out = [];
   for (const f of files) {
     const routedCount = Number((await db.prepare('SELECT COUNT(*) c FROM cost_rows WHERE cost_file_id = ? AND report_id IS NOT NULL').get(f.id)).c);
@@ -224,7 +226,10 @@ router.get('/clients/:clientId/cost-files', ah(async (req, res) => {
       sheetsUsed: JSON.parse(f.sheets_used || '[]'),
       rowCount: f.row_count, routed: !!f.routed, routedRows: routedCount,
       payer: f.payer || null,
-      vat: !!Number(f.vat), // קובץ "כולל מע"מ" (קבלן שמגיש חשבונית — לביא/אביב)
+      // האם העלות בקובץ מוכרת כולל מע"מ בפועל: סומן "כולל" (1), או ברירת המחדל
+      // של לקוח חייב (0) — אלא אם סומן "ללא מע"מ" (-1, קובץ רשות אצל לקוח חייב)
+      vat: Number(f.vat) > 0 || (!(Number(f.vat) < 0) && clientVat),
+      vatExplicit: Number(f.vat) || 0,
       created_at: f.created_at,
     });
   }
@@ -247,11 +252,15 @@ router.put('/cost-files/:fileId/payer', ah(async (req, res) => {
 router.put('/cost-files/:fileId/vat', ah(async (req, res) => {
   const db = getDB();
   const fileId = parseInt(req.params.fileId);
-  if (!(await db.prepare('SELECT id FROM cost_files WHERE id = ?').get(fileId))) return res.status(404).json({ error: 'קובץ לא נמצא' });
-  const vat = req.body.vat ? 1 : 0;
+  const vatFile = await db.prepare('SELECT id, client_id FROM cost_files WHERE id = ?').get(fileId);
+  if (!vatFile) return res.status(404).json({ error: 'קובץ לא נמצא' });
+  // תלת-מצבי (נבון חולון 14.10): אצל לקוח חייב מע"מ ביטול הסימון פירושו "ללא
+  // מע"מ" (-1) — קובצי הרשות/המועצה — ולא חזרה לברירת המחדל של הלקוח (1.18)
+  const vatClient = await db.prepare('SELECT has_vat FROM clients WHERE id = ?').get(vatFile.client_id);
+  const vat = req.body.vat ? 1 : (vatClient && Number(vatClient.has_vat) ? -1 : 0);
   await db.prepare('UPDATE cost_files SET vat = ? WHERE id = ?').run(vat, fileId);
   await db.prepare('UPDATE cost_rows SET vat = ? WHERE cost_file_id = ?').run(vat, fileId);
-  res.json({ ok: true, vat: !!vat });
+  res.json({ ok: true, vat: vat > 0 });
 }));
 
 /* ---------- מחלקות של קובץ + הצעת ניתוב (לפתיחה מחדש של מסך הניתוב) ---------- */
@@ -444,8 +453,8 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
   }
   await db.prepare('UPDATE cost_files SET software = ?, sheets_used = ?, row_count = ? WHERE id = ?')
     .run(parsed.software, JSON.stringify(parsed.sheetsUsed), parsed.records.length, fileId);
-  // השורות נוצרו מחדש — דגל "כולל מע"מ" של הקובץ חוזר אליהן
-  if (Number(file.vat)) await db.prepare('UPDATE cost_rows SET vat = 1 WHERE cost_file_id = ?').run(fileId);
+  // השורות נוצרו מחדש — דגל המע"מ של הקובץ (כולל / ללא / לפי הלקוח) חוזר אליהן
+  if (Number(file.vat)) await db.prepare('UPDATE cost_rows SET vat = ? WHERE cost_file_id = ?').run(Number(file.vat), fileId);
   for (const rid of affectedReports) {
     await refreshReportFlag(db, rid);
     try { await applyStoredFileAssignments(db, rid); } catch { /* אין קובץ/שיוכים */ }
