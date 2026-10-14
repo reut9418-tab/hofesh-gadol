@@ -1,11 +1,11 @@
 {
-  "savedAt": "2026-10-14T10:25:31.552Z",
+  "savedAt": "2026-10-14T19:36:09.659Z",
   "db": {
-    "unrouted_rows": 1058,
-    "totals_like_rows": 2,
+    "unrouted_rows": 1178,
+    "totals_like_rows": 96,
     "dup_rows": 14,
-    "reports_with_rows": 118,
-    "clients": 51,
+    "reports_with_rows": 119,
+    "clients": 50,
     "rls_tables_off": 0,
     "tables": 15
   },
@@ -41,7 +41,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 26765
+      "ms": 20815
     },
     "70": {
       "label": "קריית מוצקין גנים 15 יום",
@@ -74,7 +74,7 @@
       "export_no_symbol": 230,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 20272
+      "ms": 12691
     },
     "87": {
       "label": "נבון חבל יבנה גנים הרחבה",
@@ -107,7 +107,7 @@
       "export_no_symbol": 45,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 17946
+      "ms": 12065
     },
     "88": {
       "label": "נבון יואב גנים 15 יום",
@@ -125,8 +125,8 @@
       "prep_dup_workers": 0,
       "file_missing": null,
       "file_extra": null,
-      "salary_overflow": 7027,
-      "salary_unfunded": 2995,
+      "salary_overflow": 5278,
+      "salary_unfunded": 1246,
       "stage1_status": 200,
       "stage1_kb": 7,
       "stage1_has_total": true,
@@ -140,7 +140,7 @@
       "export_no_symbol": 6,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 17777
+      "ms": 8611
     },
     "92": {
       "label": "עכו בתי ספר 15 יום",
@@ -173,7 +173,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 27495
+      "ms": 17924
     },
     "105": {
       "label": "מעלה אדומים בתי ספר 15 יום",
@@ -205,7 +205,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 31662
+      "ms": 18119
     },
     "114": {
       "label": "לביא גנים 15 יום",
@@ -213,7 +213,7 @@
       "prep_rows": 1368,
       "prep_hours": 79852,
       "prep_cost": 6076891,
-      "prep_no_symbol": 40,
+      "prep_no_symbol": 0,
       "prep_zero_cost": 4,
       "prep_staff": {
         "גננת": 623,
@@ -239,7 +239,7 @@
       "export_no_symbol": 1364,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 29636
+      "ms": 13320
     },
     "115": {
       "label": "לביא גנים הרחבה",
@@ -247,7 +247,7 @@
       "prep_rows": 1126,
       "prep_hours": 32730,
       "prep_cost": 2409364,
-      "prep_no_symbol": 22,
+      "prep_no_symbol": 0,
       "prep_zero_cost": 1,
       "prep_staff": {
         "גננת": 581,
@@ -272,7 +272,7 @@
       "export_no_symbol": 1125,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 31616
+      "ms": 13795
     },
     "116": {
       "label": "לביא בתי ספר 15 יום",
@@ -305,7 +305,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 1,
       "salary_match_status": 200,
-      "ms": 127904
+      "ms": 129797
     },
     "117": {
       "label": "לביא בתי ספר הרחבה",
@@ -338,7 +338,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 1,
       "salary_match_status": 200,
-      "ms": 73297
+      "ms": 55421
     },
     "127": {
       "label": "קדימה גנים 15 יום",
@@ -373,7 +373,7 @@
       "export_no_symbol": 85,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 18839
+      "ms": 8916
     },
     "136": {
       "label": "אלקנה גנים 15 יום",
@@ -407,7 +407,7 @@
       "export_no_symbol": 46,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 18957
+      "ms": 15819
     },
     "137": {
       "label": "אלקנה גנים הרחבה",
@@ -442,7 +442,7 @@
       "export_no_symbol": 23,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 19484
+      "ms": 11559
     }
   }
 }
