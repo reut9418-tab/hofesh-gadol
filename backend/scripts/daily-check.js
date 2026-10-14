@@ -200,7 +200,12 @@ async function checkDb() {
 
   const dups = await q("SELECT r.report_id, COUNT(*) n FROM (SELECT report_id, emp_id, dept, COALESCE(symbol_override, inst_symbol, '') s FROM cost_rows WHERE report_id IS NOT NULL AND emp_id IS NOT NULL GROUP BY 1,2,3,4 HAVING COUNT(*) > 1) r GROUP BY 1 ORDER BY 2 DESC LIMIT 5");
   metrics.dup_rows = dups.reduce((s, t) => s + Number(t.n), 0);
-  if (dups.length) add('data.dups', 'data', 'warn', `${metrics.dup_rows} עובדים כפולים (אותה ת.ז + מחלקה + סמל) בדוח`, dups.map((d) => `דוח ${d.report_id}: ${d.n}`).join('; '), 'לבדוק במסך ההכנה של הדוח — כפילות מקליטה כפולה או שני קבצים לאותה תקופה');
+  if (dups.length) {
+    // מי בדיוק כפול (עד 10) — כדי שאפשר יהיה לטפל מהדוח בלי לחפש
+    const who = await q("SELECT report_id, emp_name, dept, COUNT(*) n, COUNT(DISTINCT cost_file_id) files FROM cost_rows WHERE report_id IS NOT NULL AND emp_id IS NOT NULL GROUP BY report_id, emp_id, emp_name, dept, COALESCE(symbol_override, inst_symbol, '') HAVING COUNT(*) > 1 ORDER BY 1 LIMIT 10");
+    const whoTxt = who.map((w) => `דוח ${w.report_id}: ${w.emp_name} (${w.dept || '-'}) ×${w.n}${Number(w.files) > 1 ? ' משני קבצים' : ' מאותו קובץ'}`).join('; ');
+    add('data.dups', 'data', 'warn', `${metrics.dup_rows} עובדים כפולים (אותה ת.ז + מחלקה + סמל) בדוח`, dups.map((d) => `דוח ${d.report_id}: ${d.n}`).join('; ') + '. ' + whoTxt, 'לבדוק במסך ההכנה של הדוח — כפילות מקליטה כפולה או שני קבצים לאותה תקופה');
+  }
 
   const orphans = await n('SELECT COUNT(*) n FROM cost_rows WHERE report_id IS NOT NULL AND report_id NOT IN (SELECT id FROM reports)');
   if (orphans) add('data.orphans', 'data', 'warn', `${orphans} שורות עובדים משויכות לדוח שנמחק`, '', 'DELETE FROM cost_rows WHERE report_id NOT IN (SELECT id FROM reports) — אחרי אישור');
@@ -238,7 +243,11 @@ async function checkDb() {
 
   const wildHours = await q('SELECT r.report_id, COUNT(*) n FROM cost_rows r WHERE r.report_id IS NOT NULL AND (r.hours > 250 OR r.cost < 0 OR r.gross < 0) GROUP BY 1 ORDER BY 2 DESC LIMIT 5');
   metrics.wild_rows = wildHours.reduce((s, t) => s + Number(t.n), 0);
-  if (wildHours.length) add('data.wild_values', 'data', 'warn', `${metrics.wild_rows} שורות עם ערכים חשודים (מעל 250 שעות או עלות שלילית)`, wildHours.map((d) => `דוח ${d.report_id}: ${d.n}`).join('; '), 'לבדוק שיוך עמודות של הקובץ — שעות שנקראו מעמודת סכום?');
+  if (wildHours.length) {
+    const who = await q('SELECT r.report_id, r.emp_name, r.hours, r.gross, r.cost FROM cost_rows r WHERE r.report_id IS NOT NULL AND (r.hours > 250 OR r.cost < 0 OR r.gross < 0) ORDER BY 1 LIMIT 10');
+    const whoTxt = who.map((w) => `דוח ${w.report_id}: ${w.emp_name} — ${r0(w.hours)} שעות, ברוטו ${r0(w.gross)}, עלות ${r0(w.cost)}`).join('; ');
+    add('data.wild_values', 'data', 'warn', `${metrics.wild_rows} שורות עם ערכים חשודים (מעל 250 שעות או עלות שלילית)`, wildHours.map((d) => `דוח ${d.report_id}: ${d.n}`).join('; ') + '. ' + whoTxt, 'לבדוק שיוך עמודות של הקובץ — שעות שנקראו מעמודת סכום?');
+  }
 
   // פעילות אחרונה — כדי לדעת שהמערכת בשימוש ושהקליטה עובדת
   const last = await one('SELECT (SELECT MAX(created_at) FROM cost_rows) rows_at, (SELECT MAX(created_at) FROM cost_files) files_at, (SELECT MAX(created_at) FROM reports) rep_at');
@@ -260,9 +269,18 @@ function checkRepo() {
   const tracked = sh('git ls-files', ROOT).split('\n').filter(Boolean);
   if (tracked.some((f) => /(^|\/)\.env$/.test(f))) add('sec.env_tracked', 'security', 'crit', 'קובץ .env נמצא בגיט', 'מחרוזת החיבור למסד חשופה בריפו', 'git rm --cached backend/.env, להחליף את סיסמת המסד ב-Supabase');
   else add('sec.env_tracked', 'security', 'ok', '.env לא בגיט');
-  const secretRe = /(postgres(ql)?:\/\/[^\s'"]+:[^\s'"]+@|eyJhbGciOi[A-Za-z0-9_-]{20,}|sb_secret_|service_role)/;
+  // התבניות מורכבות מחלקים כדי שהסקריפט הזה עצמו (שנמצא בגיט) לא יזהה את
+  // עצמו כדליפה (14.10: הממצא הקריטי הראשון היה בדיוק זה)
+  const secretRe = new RegExp([
+    'postgres(ql)?:\\/\\/[^\\s\'"]+:[^\\s\'"]+@', // מחרוזת חיבור עם סיסמה
+    'eyJhbGci' + 'Oi[A-Za-z0-9_-]{20,}',          // JWT של Supabase
+    'sb_' + 'secret_',                              // מפתח סודי חדש של Supabase
+    'serv' + 'ice_role',                            // שם התפקיד — מופיע רק יחד עם המפתח
+  ].join('|'));
+  const SELF = path.relative(ROOT, __filename).replace(/\\/g, '/');
   const leaks = [];
   for (const f of tracked) {
+    if (f === SELF) continue;
     if (!/\.(js|ts|tsx|json|jsonc|md|yml|yaml|html|bat|toml|env\.example)$/i.test(f)) continue;
     try { const txt = fs.readFileSync(path.join(ROOT, f), 'utf8'); if (secretRe.test(txt) && !/\.example$/.test(f)) leaks.push(f); } catch { /* */ }
   }
