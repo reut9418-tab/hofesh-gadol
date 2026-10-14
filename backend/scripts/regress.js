@@ -129,7 +129,9 @@ async function dbChecks() {
   const db = await initDatabase();
   const out = {};
   out.unrouted_rows = Number((await db.prepare('SELECT COUNT(*) n FROM cost_rows WHERE report_id IS NULL AND cost_file_id IN (SELECT id FROM cost_files WHERE routed = 1)').get()).n);
-  out.totals_like_rows = Number((await db.prepare("SELECT COUNT(*) n FROM cost_rows WHERE COALESCE(cost,0) > 0 AND (COALESCE(emp_name,'') = '' OR LENGTH(COALESCE(emp_id,'')) < 5)").get()).n);
+  // רק שורות שנותבו לדוח — לשונית שלא נותבה (קרית ביאליק 14.10: "גיליון1" בלי
+  // עמודת שם מזוהה) אינה נכתבת לשום קובץ ואינה כשל
+  out.totals_like_rows = Number((await db.prepare("SELECT COUNT(*) n FROM cost_rows WHERE report_id IS NOT NULL AND COALESCE(cost,0) > 0 AND (COALESCE(emp_name,'') = '' OR LENGTH(COALESCE(emp_id,'')) < 5)").get()).n);
   out.dup_rows = Number((await db.prepare("SELECT COUNT(*) n FROM (SELECT report_id, emp_id, dept, COALESCE(symbol_override, inst_symbol, '') s, COUNT(*) c FROM cost_rows WHERE report_id IS NOT NULL AND emp_id IS NOT NULL GROUP BY 1,2,3,4 HAVING COUNT(*) > 1) x").get()).n);
   out.reports_with_rows = Number((await db.prepare('SELECT COUNT(DISTINCT report_id) n FROM cost_rows WHERE report_id IS NOT NULL').get()).n);
   out.clients = Number((await db.prepare('SELECT COUNT(*) n FROM clients').get()).n);

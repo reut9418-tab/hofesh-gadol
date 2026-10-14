@@ -2,7 +2,7 @@
   "savedAt": "2026-10-14T19:36:09.659Z",
   "db": {
     "unrouted_rows": 1178,
-    "totals_like_rows": 96,
+    "totals_like_rows": 2,
     "dup_rows": 14,
     "reports_with_rows": 119,
     "clients": 50,

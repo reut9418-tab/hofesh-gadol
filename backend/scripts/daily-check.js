@@ -194,7 +194,7 @@ async function checkDb() {
   metrics.unrouted_files = unroutedBy.length;
   if (unrouted) add('data.unrouted', 'data', 'warn', `${unrouted} שורות עובדים ב-${unroutedBy.length} קבצים מנותבים לא שייכות לאף דוח`, 'השורות לא מופיעות באף מסך הכנה. ' + unroutedBy.slice(0, 6).map((t) => `${t.client} — ${t.filename}: ${t.n}`).join('; ') + (unroutedBy.length > 6 ? '…' : ''), 'חלקן מכוונות (מחלקות שלא בתכנית, קבצים של חודשים קודמים). במסך "דוחות עלות" של הלקוח — לנתב מחדש, או למחוק קובץ ישן שהוחלף');
 
-  const totals = await q("SELECT cf.client_id, c.name client, cf.filename, COUNT(*) n FROM cost_rows r JOIN cost_files cf ON cf.id = r.cost_file_id JOIN clients c ON c.id = cf.client_id WHERE COALESCE(r.cost,0) > 0 AND (COALESCE(r.emp_name,'') = '' OR LENGTH(COALESCE(r.emp_id,'')) < 5) GROUP BY 1,2,3 ORDER BY 4 DESC LIMIT 5");
+  const totals = await q("SELECT cf.client_id, c.name client, cf.filename, COUNT(*) n FROM cost_rows r JOIN cost_files cf ON cf.id = r.cost_file_id JOIN clients c ON c.id = cf.client_id WHERE r.report_id IS NOT NULL AND COALESCE(r.cost,0) > 0 AND (COALESCE(r.emp_name,'') = '' OR LENGTH(COALESCE(r.emp_id,'')) < 5) GROUP BY 1,2,3 ORDER BY 4 DESC LIMIT 5");
   metrics.totals_like_rows = totals.reduce((s, t) => s + Number(t.n), 0);
   if (totals.length) add('data.totals', 'data', 'warn', `${metrics.totals_like_rows} שורות שנראות כשורת סיכום (בלי שם / ת.ז קצרה)`, totals.map((t) => `${t.client} — ${t.filename}: ${t.n}`).join('; '), 'לקלוט מחדש את הקובץ (הקליטה החדשה מדלגת על שורות סיכום) או למחוק את השורות');
 
