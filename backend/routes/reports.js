@@ -1236,7 +1236,7 @@ router.put('/:id/prep', ah(async (req, res) => {
       .map(([rowId, a]) => {
         const r = rowOf.get(String(parseInt(rowId)));
         return { empId: r.emp_id, dept: r.dept, symbol: a.symbol, staffType: a.staffType, role: a.role };
-      }));
+      }), { manual: true }); // שמירה של המשתמשת במסך — גוברת על הסמל שבקובץ בקליטה מחדש
   } catch (e) { console.error('שמירת זיכרון שיוכים נכשלה:', e.message); }
   res.json({ ok: true, updated });
 }));

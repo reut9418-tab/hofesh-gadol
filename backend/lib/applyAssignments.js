@@ -71,8 +71,13 @@ async function applyStoredFileAssignments(db, reportId) {
    לזהות איזו שורה לאיזה יעד אחרי החלפת קובץ, ועדיף לא לדרוס. */
 const normDept = (d) => String(d ?? '').replace(/["'״׳]/g, '').replace(/\s+/g, ' ').trim();
 
-/* שמירה: נקראת מכל שמירת שיוכים ידנית. entries: [{empId, dept, symbol, staffType, role}] */
-async function saveManualAssignments(db, reportId, entries) {
+/* שמירה: נקראת מכל שמירת שיוכים. entries: [{empId, dept, symbol, staffType, role}].
+   opts.manual = true כשהמשתמשת שמרה בעצמה במסך ההכנה (m:1 בזיכרון) — שיוך ידני
+   כזה גובר על הסמל שבקובץ (רעות 15.10: שני בתי ספר באותו שם בלביא); זיכרון
+   שנוצר מכללים אוטומטיים (השלמת שיוך, גננת/סייעת) נכנע לדוח העלות האחרון */
+async function saveManualAssignments(db, reportId, entries, opts = {}) {
+  const manual = !!(opts && opts.manual);
+  const val = (e) => JSON.stringify({ symbol: e.symbol || null, staffType: e.staffType || null, role: e.role || null, ...(manual ? { m: 1 } : {}) });
   const rep = await db.prepare('SELECT client_id FROM reports WHERE id = ?').get(reportId);
   if (!rep) return;
   const put = (key, val) => db.prepare(
@@ -96,7 +101,7 @@ async function saveManualAssignments(db, reportId, entries) {
     if (uniform) {
       const e = list[0];
       if (!e.symbol && !e.staffType && !e.role) { await del(`${reportId}:${emp}`); continue; }
-      await put(`${reportId}:${emp}`, JSON.stringify({ symbol: e.symbol || null, staffType: e.staffType || null, role: e.role || null }));
+      await put(`${reportId}:${emp}`, val(e));
       continue;
     }
     // פיצול בין מחלקות: מפתח פר (עובד, מחלקה) — רק כשהמחלקה עצמה אחידה
@@ -111,7 +116,7 @@ async function saveManualAssignments(db, reportId, entries) {
       if (new Set(dl.map(sig)).size !== 1) continue; // פיצול בתוך מחלקה — לא נשמר
       const e = dl[0];
       if (!e.symbol && !e.staffType && !e.role) { await del(`${reportId}:${emp}:${dk}`); continue; }
-      await put(`${reportId}:${emp}:${dk}`, JSON.stringify({ symbol: e.symbol || null, staffType: e.staffType || null, role: e.role || null }));
+      await put(`${reportId}:${emp}:${dk}`, val(e));
     }
   }
 }
@@ -140,12 +145,26 @@ async function applyManualAssignments(db, reportId) {
   // הזיכרון, וגם תפקיד שכתוב בקובץ (עמודת תפקיד / תגית המחלקה) גובר על
   // הזיכרון; הזיכרון משלים רק מה שאין בקובץ
   const { staffFromRoleText } = require('./salaryCheck');
+  // עובד/ת שהקובץ מפצל/ת לכמה סמלים — זיכרון פר-עובד/ת (סמל אחד) לא נמרח על כולן
+  const fileSyms = new Map();
+  for (const r of rows) {
+    if (!r.inst_symbol) continue;
+    const e = digits(r.emp_id);
+    if (!fileSyms.has(e)) fileSyms.set(e, new Set());
+    fileSyms.get(e).add(String(r.inst_symbol));
+  }
   const updates = [];
   for (const r of rows) {
     const emp = digits(r.emp_id);
-    const a = byEmpDept.get(`${emp}|${normDept(r.dept)}`) || byEmp.get(emp);
+    const perDept = byEmpDept.get(`${emp}|${normDept(r.dept)}`);
+    const a = perDept || byEmp.get(emp);
     if (!a) continue;
-    const sym = r.inst_symbol ? (r.symbol_override || null) : (a.symbol || r.symbol_override || null);
+    const split = !perDept && (fileSyms.get(emp) || new Set()).size > 1;
+    // שיוך ידני של המשתמשת (m:1) גובר על הסמל שבקובץ (אלא אם הקובץ מפצל/ת
+    // את העובד/ת לכמה סמלים); זיכרון אוטומטי — הקובץ קובע, הזיכרון רק משלים
+    const sym = a.m && !split
+      ? (a.symbol || r.symbol_override || null)
+      : (r.inst_symbol ? (r.symbol_override || null) : (a.symbol || r.symbol_override || null));
     const fileStaff = r.role_text ? staffFromRoleText(r.role_text) : null;
     let st = fileStaff ? fileStaff.staffType : (a.staffType || r.staff_type || null);
     let role = fileStaff ? fileStaff.role : (a.role || r.role || null);
