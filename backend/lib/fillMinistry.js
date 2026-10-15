@@ -115,6 +115,11 @@ function extractWorkerAssignments(bufOrWb) {
   const head = scanCells(ws).find((x) => x.v.startsWith('סמל') && x.v.includes('מקום פעילות'));
   if (!head || !ws['!ref']) return {};
   const range = XLSX.utils.decode_range(ws['!ref']);
+  // "הסבר במידה ולא תקין" — לפי הכותרת (בתבנית תשפ"ו היסט 20, אחרי עמודות הבקרה);
+  // הערה שנכתבה בקובץ (למשל "אזרחית אמריקאית" לת.ז לא תקנית) נלמדת חזרה
+  // למערכת כדי שההערות יישארו מעודכנות לפי הקובץ האחרון (כלל רעות 15.10)
+  const explHead = scanCells(ws).find((x) => x.r === head.r && x.c > head.c && x.v.includes('הסבר'));
+  const explOff = explHead ? explHead.c - head.c : -1;
   const out = {};
   for (let r = head.r + 1; r <= range.e.r; r++) {
     const get = (off) => {
@@ -124,10 +129,7 @@ function extractWorkerAssignments(bufOrWb) {
     const id = get(2).replace(/\D/g, ''); // ת"ז (היסט 2 מעמודת הסמל)
     if (!id) continue;
     const symbol = get(0).replace(/\D/g, '');
-    // "הסבר במידה ולא תקין" (היסט 19) — הערה שנכתבה בקובץ (למשל "אזרחית
-    // אמריקאית" לת.ז לא תקנית); נלמדת חזרה למערכת כדי שההערות יישארו מעודכנות
-    // לפי הקובץ האחרון (כלל רעות 15.10)
-    const note = get(19);
+    const note = explOff > 0 ? get(explOff) : '';
     // רכז רשותי — בלי סמל מוסד (שורת הרשות); שאר השורות דורשות סמל
     if (!symbol && !isAuthorityCoord(get(6))) continue;
     if (out[id]) { if (note && !out[id].note) out[id].note = note; continue; } // השורה הראשונה של העובד קובעת
