@@ -7,6 +7,9 @@ function idVariants(v) {
   const raw = digits(v);
   const k = raw.replace(/^0+/, '');
   if (!k) return [];
+  // ת.ז לא תקנית (דרכון / מספר קצר — "5624" של אזרחית אמריקאית אצל לביא, 15.10):
+  // נכתבת לדוח כמו שהיא, ולכן מוצלבת רק בהתאמה מדויקת
+  if (k.length < 5) return [...new Set([raw, k])];
   return [...new Set([raw, k, k.slice(0, 8), k.slice(0, -1), k.padStart(9, '0'), k.padStart(8, '0')].filter((x) => x && x.length >= 5))];
 }
 /* העובד/ת מדוח העלות נמצא/ת בקובץ? */

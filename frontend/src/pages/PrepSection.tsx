@@ -570,14 +570,16 @@ export default function PrepSection({ reportId }: { reportId: number }) {
                   {(() => {
                     const shownId = a.empId !== undefined && a.empId !== null ? a.empId : (r.empId || '');
                     const idOk = isValidIsraeliId(shownId);
+                    // ת.ז לא תקנית עם הסבר (דרכון / אזרחות זרה) — נכתבת לדוח כמו שהיא; מוצג כ"מוסבר" ולא כשגיאה (כלל רעות 15.10)
+                    const explained = !idOk && !!((a.expNote !== undefined ? a.expNote : r.expNote) || '').trim();
                     return (
                       <td style={{ padding: '5px 8px' }}>
                         <input value={shownId} dir="ltr" inputMode="numeric"
                           onChange={(e) => set(r.rowId, { empId: e.target.value.replace(/\D/g, '') } as any)}
-                          title={idOk ? 'ת.ז תקינה' : 'ת.ז לא תקינה (ספרת ביקורת) — ניתן לתקן כאן; השמירה מעדכנת את כל שורות העובד'}
+                          title={idOk ? 'ת.ז תקינה' : explained ? 'ת.ז לא תקנית — יש הסבר בעמודת ההסבר, נכתבת לדוח כמו שהיא' : 'ת.ז לא תקינה (ספרת ביקורת) — ניתן לתקן כאן, או לכתוב הסבר בעמודת "הסבר" (דרכון / אזרחות זרה); השמירה מעדכנת את כל שורות העובד'}
                           style={{ ...input, padding: '4px 6px', fontSize: 11.5, width: '100%', textAlign: 'center',
-                            borderColor: idOk ? (a.empId !== undefined ? T.amber : T.line) : '#B3261E',
-                            background: idOk ? undefined : '#FBECEA', color: idOk ? undefined : '#B3261E' }} />
+                            borderColor: idOk ? (a.empId !== undefined ? T.amber : T.line) : explained ? T.amber : '#B3261E',
+                            background: idOk ? undefined : explained ? '#FDF6EC' : '#FBECEA', color: idOk || explained ? undefined : '#B3261E' }} />
                       </td>
                     );
                   })()}

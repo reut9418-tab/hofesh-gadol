@@ -124,9 +124,14 @@ function extractWorkerAssignments(bufOrWb) {
     const id = get(2).replace(/\D/g, ''); // ת"ז (היסט 2 מעמודת הסמל)
     if (!id) continue;
     const symbol = get(0).replace(/\D/g, '');
+    // "הסבר במידה ולא תקין" (היסט 19) — הערה שנכתבה בקובץ (למשל "אזרחית
+    // אמריקאית" לת.ז לא תקנית); נלמדת חזרה למערכת כדי שההערות יישארו מעודכנות
+    // לפי הקובץ האחרון (כלל רעות 15.10)
+    const note = get(19);
     // רכז רשותי — בלי סמל מוסד (שורת הרשות); שאר השורות דורשות סמל
-    if ((!symbol && !isAuthorityCoord(get(6))) || out[id]) continue; // השורה הראשונה של העובד קובעת
-    const a = { symbol, staffType: get(6) || null, role: get(7) || null };
+    if (!symbol && !isAuthorityCoord(get(6))) continue;
+    if (out[id]) { if (note && !out[id].note) out[id].note = note; continue; } // השורה הראשונה של העובד קובעת
+    const a = { symbol, staffType: get(6) || null, role: get(7) || null, note: note || null };
     out[id] = a;
     // קבצי שכר מסוימים (עיריית יבנה) נותנים ת"ז בלי ספרת ביקורת — מפתח
     // נוסף ללא הספרה האחרונה כדי שההצלבה מול דוח העלות תתפוס

@@ -25,12 +25,15 @@ async function applyFileAssignments(db, reportId, buf) {
   const framework = rep && rep.framework;
   let schoolTypes = null;
   if (framework && framework !== 'gardens') { try { schoolTypes = extractSchoolStaffTypes(buf); } catch { /* ברירת מחדל */ } }
-  const rows = await db.prepare('SELECT id, emp_id, inst_symbol, staff_type, role, symbol_override FROM cost_rows WHERE report_id = ?').all(reportId);
+  const rows = await db.prepare('SELECT id, emp_id, inst_symbol, staff_type, role, symbol_override, exp_note FROM cost_rows WHERE report_id = ?').all(reportId);
   const updates = [];
+  const noteUpdates = [];
   for (const r of rows) {
     const id = String(r.emp_id || '').replace(/\D/g, '');
     const a = ws[id] || (id.length === 9 ? ws[id.slice(0, 8)] : null) || ws['0' + id];
     if (!a) continue;
+    // הערת "הסבר במידה ולא תקין" מהקובץ — הקובץ האחרון קובע (כלל רעות 15.10)
+    if (a.note && a.note !== (r.exp_note || '')) noteUpdates.push([a.note, r.id]);
     // ההיררכיה (כלל 22.9): ידני (override קיים) גובר על הכול — קובץ הביצוע
     // לא דורס אותו (באג ביתר: קליטת קובץ קרסה פיצול רכזים לסמל יחיד);
     // דוח העלות האחרון (inst_symbol) גובר על קובץ ביצוע ישן
@@ -45,6 +48,9 @@ async function applyFileAssignments(db, reportId, buf) {
   for (let i = 0; i < updates.length; i += CHUNK) {
     await Promise.all(updates.slice(i, i + CHUNK).map((u) =>
       db.prepare('UPDATE cost_rows SET symbol_override = ?, staff_type = ?, role = ? WHERE id = ?').run(...u)));
+  }
+  for (let i = 0; i < noteUpdates.length; i += CHUNK) {
+    await Promise.all(noteUpdates.slice(i, i + CHUNK).map((u) => db.prepare('UPDATE cost_rows SET exp_note = ? WHERE id = ?').run(...u)));
   }
   // השיוך הידני של המשתמשת מוחל אחרון — גובר על הקובץ
   await applyManualAssignments(db, reportId);
