@@ -128,19 +128,21 @@ async function applyManualAssignments(db, reportId) {
   // הצמדת התפקיד לרשימת תבנית הפרויקט (כלל רעות 23.9) — גם ערכים מהזיכרון
   const fwRow = await db.prepare('SELECT framework FROM reports WHERE id = ?').get(reportId);
   const framework = fwRow && fwRow.framework;
-  const rows = await db.prepare('SELECT id, emp_id, dept, inst_symbol, symbol_override, staff_type, role FROM cost_rows WHERE report_id = ?').all(reportId);
-  // כלל רעות 14.10 (נבון חולון — תהילה פיצלה עובדות ל-2-7 גנים והמסך הראה את
-  // כולן בגן הראשון): דוח העלות האחרון הוא הקובע. סמל שכתוב בקובץ גובר על
-  // הזיכרון; הזיכרון משלים סמל רק לשורה שאין לה סמל בקובץ. איש הצוות/התפקיד
-  // מהזיכרון ממשיכים לחול (ההחלטות הידניות על תפקידים נשמרות)
+  const rows = await db.prepare('SELECT id, emp_id, dept, inst_symbol, symbol_override, staff_type, role, role_text FROM cost_rows WHERE report_id = ?').all(reportId);
+  // כלל רעות 14-15.10 (נבון חולון — תהילה פיצלה עובדות ל-2-7 גנים והמסך הראה
+  // את כולן בגן הראשון): דוח העלות האחרון הוא הקובע. סמל שכתוב בקובץ גובר על
+  // הזיכרון, וגם תפקיד שכתוב בקובץ (עמודת תפקיד / תגית המחלקה) גובר על
+  // הזיכרון; הזיכרון משלים רק מה שאין בקובץ
+  const { staffFromRoleText } = require('./salaryCheck');
   const updates = [];
   for (const r of rows) {
     const emp = digits(r.emp_id);
     const a = byEmpDept.get(`${emp}|${normDept(r.dept)}`) || byEmp.get(emp);
     if (!a) continue;
     const sym = r.inst_symbol ? (r.symbol_override || null) : (a.symbol || r.symbol_override || null);
-    let st = a.staffType || r.staff_type || null;
-    let role = a.role || r.role || null;
+    const fileStaff = r.role_text ? staffFromRoleText(r.role_text) : null;
+    let st = fileStaff ? fileStaff.staffType : (a.staffType || r.staff_type || null);
+    let role = fileStaff ? fileStaff.role : (a.role || r.role || null);
     if (framework && (st || role)) ({ staffType: st, role } = clampStaffForFramework(framework, st, role));
     if (sym === (r.symbol_override || null) && st === (r.staff_type || null) && role === (r.role || null)) continue;
     updates.push([sym, st, role, r.id]);

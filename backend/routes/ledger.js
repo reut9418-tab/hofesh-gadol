@@ -12,8 +12,14 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 /* מיפוי נלמד: מפתח חשבון → סל, לכל לקוח ולכל מסגרת (אותו כרטיס יכול להיות
-   "שכר" בבתי"ס ו"לא רלוונטי" בגנים). map_value 'none' = "לא רלוונטי" במפורש. */
+   "שכר" בבתי"ס ו"לא רלוונטי" בגנים). map_value 'none' = "לא רלוונטי" במפורש.
+   מאז 15.10 (אור יהודה — כרטסת מאוחדת ל-15 יום ולהרחבה) הסל נלמד גם פר תקופה:
+   מפתח "<מסגרת>:<תקופה>:<כרטיס>" קודם, ומפתח המסגרת הישן כגיבוי. */
 const aliasKey = (framework, cardKey) => `${framework}:${cardKey}`;
+const aliasKeyProg = (framework, program, cardKey) => `${framework}:${program || 'base15'}:${cardKey}`;
+/* כרטיס של תקופת ההרחבה — לפי שם הכרטסת (כלל רעות 15.10: בכרטסת מאוחדת,
+   בדוח 15 יום כרטיסי "הרחבה" אינם רלוונטיים, ובדוח ההרחבה — להפך) */
+const EXTENSION_CARD_RE = /הרחבה|מחזור ב|הארכ|המשך/;
 async function learnedAliases(db, clientId) {
   const m = {};
   (await db.prepare("SELECT map_key, map_value FROM client_mappings WHERE client_id = ? AND mapping_type = 'ledger_alias'")
@@ -35,12 +41,14 @@ async function saveCardSymbol(db, clientId, framework, cardKey, symbol) {
   ).run(clientId, aliasKey(framework, cardKey), symbol == null ? 'none' : String(symbol));
 }
 
-async function saveAlias(db, clientId, framework, cardKey, basket) {
-  await db.prepare(
+async function saveAlias(db, clientId, framework, cardKey, basket, program) {
+  const put = (key) => db.prepare(
     `INSERT INTO client_mappings (client_id, mapping_type, map_key, map_value)
      VALUES (?, 'ledger_alias', ?, ?)
      ON CONFLICT(client_id, mapping_type, map_key) DO UPDATE SET map_value = excluded.map_value`
-  ).run(clientId, aliasKey(framework, cardKey), basket == null ? 'none' : basket);
+  ).run(clientId, key, basket == null ? 'none' : basket);
+  await put(aliasKeyProg(framework, program, cardKey)); // ההחלטה לתקופה הזו
+  await put(aliasKey(framework, cardKey)); // גיבוי למסגרת (קבצים של תקופה בלי זיכרון משלה)
 }
 
 /* המשלמים שהוגדרו בקבצי העלות שנותבו לדוח */
@@ -84,10 +92,21 @@ router.post('/reports/:id/ledger-file', upload.single('file'), ah(async (req, re
   const autoPayer = costPayers.length === 1 ? costPayers[0] : null;
   const fileId = (await db.prepare('INSERT INTO ledger_files (report_id, filename, card_count, payer) VALUES (?, ?, ?, ?)')
     .run(id, originalName, parsed.cards.length, autoPayer)).lastInsertRowid;
+  // כרטסת מאוחדת לשתי התקופות (כלל רעות 15.10, אור יהודה): בדוח 15 יום כרטיסי
+  // "הרחבה" לא רלוונטיים; בדוח ההרחבה — כשיש בקובץ כרטיסי הרחבה — כל השאר לא
+  // רלוונטיים (קובץ הרחבה בלי המילה בשמות הכרטיסים נשאר רלוונטי כולו)
+  const isExt = report.program === 'extension';
+  const hasExtCards = parsed.cards.some((c) => EXTENSION_CARD_RE.test(c.name || ''));
+  const otherPeriod = (c) => (isExt ? hasExtCards && !EXTENSION_CARD_RE.test(c.name || '') : EXTENSION_CARD_RE.test(c.name || ''));
+  let periodSkipped = 0;
   for (const c of parsed.cards) {
-    // עדיפות: מיפוי נלמד (גם "לא רלוונטי") ← מילות מפתח משם הכרטסת
-    const learned = aliases[aliasKey(report.framework, c.key)];
-    let basket = learned !== undefined ? (learned === 'none' ? null : learned) : basketForCardName(c.name);
+    // עדיפות: זיכרון לתקופה הזו ← כלל התקופה ← זיכרון המסגרת (גם "לא רלוונטי") ← מילות מפתח משם הכרטסת
+    const learnedProg = aliases[aliasKeyProg(report.framework, report.program, c.key)];
+    const learned = learnedProg !== undefined ? learnedProg : aliases[aliasKey(report.framework, c.key)];
+    let basket;
+    if (learnedProg !== undefined) basket = learnedProg === 'none' ? null : learnedProg;
+    else if (otherPeriod(c)) { basket = null; periodSkipped++; }
+    else basket = learned !== undefined ? (learned === 'none' ? null : learned) : basketForCardName(c.name);
     // סל שאינו ברשימת הפרויקט (למשל 'deputy' ממילת המפתח "סגן" במכינות) —
     // נשאר לא-משויך במקום ערך שהמסך לא מציג
     if (basket && !basketOptionsFor(report.framework).some((o) => o.value === basket)) basket = null;
@@ -108,7 +127,7 @@ router.post('/reports/:id/ledger-file', upload.single('file'), ah(async (req, re
     }
   }
   await refreshLedgerFlag(db, id);
-  res.status(201).json({ ok: true, fileId, cards: parsed.cards.length });
+  res.status(201).json({ ok: true, fileId, cards: parsed.cards.length, periodSkipped });
 }));
 
 /* ---------- כרטסות הדוח + התאמה ---------- */
@@ -210,8 +229,8 @@ router.put('/ledger-cards/:cardId', ah(async (req, res) => {
   if (!card) return res.status(404).json({ error: 'כרטיס לא נמצא' });
   const basket = parsed.data.basket_type && BASKET_HE[parsed.data.basket_type] ? parsed.data.basket_type : null;
   await db.prepare('UPDATE ledger_cards SET basket_type = ? WHERE id = ?').run(basket, cardId);
-  const report = await db.prepare('SELECT client_id, framework FROM reports WHERE id = ?').get(card.report_id);
-  if (report) await saveAlias(db, report.client_id, report.framework, card.card_key, basket);
+  const report = await db.prepare('SELECT client_id, framework, program FROM reports WHERE id = ?').get(card.report_id);
+  if (report) await saveAlias(db, report.client_id, report.framework, card.card_key, basket, report.program);
   await refreshLedgerFlag(db, card.report_id);
   res.json({ ok: true });
 }));

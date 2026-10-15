@@ -435,8 +435,9 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
     if (reportId) affectedReports.add(reportId);
     return [fileId, file.client_id, reportId, r.id, r.name || null, r.firstName, r.lastName, r.dept,
       r.instSymbol, r.instName || null, JSON.stringify(r.componentNames || []), r.gross, r.cost, r.hours,
-      (old && old.staff_type) || (staff ? staff.staffType : null),
-      (old && old.role) || (staff ? staff.role : null),
+      // כלל רעות 15.10: תפקיד שכתוב בקובץ גובר על שיוך ידני קודם — הידני רק משלים
+      staff ? staff.staffType : ((old && old.staff_type) || null),
+      staff ? staff.role : ((old && old.role) || null),
       // כלל 14.10: סמל שכתוב בקובץ גובר על שיוך ידני קודם — הזיכרון רק משלים
       old && !r.instSymbol ? old.symbol_override : null, old ? old.gross_bump : 0,
       old ? old.moved_from_dept : null, old ? old.moved_from_symbol : null, old ? old.move_declined : 0,
