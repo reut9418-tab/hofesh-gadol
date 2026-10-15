@@ -850,4 +850,5 @@ module.exports = {
   SCHOOL_TYPE_MAP, mapGardensStaff, mapSchoolsStaff, clampStaffForFramework, aideTypeForPayer,
   detectExpenseSheet, EXPENSE_LABEL_HE,
   STAFF_TYPES, MINISTRY_SHEET_HINT, COORD_SHEET_HINT,
+  setCellsInSheetXml, resolveSheetPath, // גם להורדת דוח העלות עם השינויים הידניים (lib/costFilePatch.js)
 };

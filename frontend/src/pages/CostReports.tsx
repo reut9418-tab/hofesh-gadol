@@ -3,7 +3,7 @@ import { T } from '../theme';
 import { btn, card, input } from '../ui';
 import {
   uploadCostFile, getCostFileRouting, routeCostFile, listCostFiles, deleteCostFile, setCostFilePayer, setCostFileVat,
-  getCostFileColumns, remapCostFile, ColumnsInfo,
+  getCostFileColumns, remapCostFile, ColumnsInfo, downloadCostFileAssigned,
   CostFile, DeptRow, RouteTarget, RoutingResponse,
 } from '../api';
 
@@ -208,6 +208,7 @@ export default function CostReportsPanel({ clientId, onRouted }: { clientId: num
   const [columns, setColumns] = useState<{ fileId: number; info: ColumnsInfo } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null); // הודעת הצלחה (הורדת הקובץ עם השיוכים)
   const inputRef = useRef<HTMLInputElement>(null);
 
   const openColumns = async (fileId: number) => {
@@ -273,6 +274,7 @@ export default function CostReportsPanel({ clientId, onRouted }: { clientId: num
       </div>
 
       {err && <div style={{ fontSize: 12.5, color: T.red, marginTop: 8 }}>{err}</div>}
+      {msg && <div style={{ fontSize: 12.5, color: T.green, marginTop: 8 }}>{msg}</div>}
 
       <div style={{ display: 'grid', gap: 6, marginTop: 12 }}>
         {files.length === 0 && <div style={{ fontSize: 13, color: T.inkSoft }}>טרם הועלו דוחות עלות.</div>}
@@ -299,6 +301,13 @@ export default function CostReportsPanel({ clientId, onRouted }: { clientId: num
                 title="שיוך ידני: כותרת מדוח העלות → שדה במערכת (ת&quot;ז, ברוטו, עלות, שעות...). נלמד ללקוח.">
                 🔗 שיוך עמודות
               </button>
+              <button title='הקובץ המקורי בדיוק כפי שהועלה, רק עם השינויים הידניים שנעשו בתוכנה: סמל מוסד, תיקון ת.ז, שעות שנערכו. מתאים להעלאה מחדש ולשליחה ללקוח'
+                onClick={async () => {
+                  try {
+                    const p = await downloadCostFileAssigned(f.id);
+                    setMsg(p ? `✓ ירד הקובץ המקורי עם השינויים הידניים: ${p.symbol} סמלים, ${p.id} תיקוני ת.ז, ${p.hours} שעות.` : '✓ הקובץ ירד.');
+                  } catch (e: any) { setMsg(e?.response?.data?.error || 'ההורדה נכשלה.'); }
+                }} style={btn('ghost')}>⬇ הקובץ עם השיוכים</button>
               <button onClick={() => openRouting(f.id)} style={btn(f.routed ? 'ghost' : 'dark')}>{f.routed ? 'עריכת ניתוב' : 'ניתוב'}</button>
               <button title="מחיקת הקובץ" onClick={() => removeFile(f)}
                 style={{ border: 'none', background: 'transparent', color: T.red, cursor: 'pointer', fontSize: 14, fontWeight: 700, padding: 0 }}>✕</button>

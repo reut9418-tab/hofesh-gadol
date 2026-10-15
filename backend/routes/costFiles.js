@@ -380,6 +380,30 @@ router.get('/cost-files/:fileId/columns', ah(async (req, res) => {
   });
 }));
 
+/* ---------- הורדת דוח העלות המקורי עם השינויים הידניים (רעות 15.10) ----------
+   הקובץ שהועלה, באותו עיצוב, ורק סמל/ת.ז/שעות שהמשתמשת שינתה בתוכנה מתעדכנים בו */
+router.get('/cost-files/:fileId/assigned-xlsx', ah(async (req, res) => {
+  const db = getDB();
+  const fileId = parseInt(req.params.fileId);
+  const file = await db.prepare('SELECT * FROM cost_files WHERE id = ?').get(fileId);
+  if (!file) return res.status(404).json({ error: 'קובץ לא נמצא' });
+  const buf = await costFileBlob(db, fileId);
+  if (!buf) return res.status(422).json({ error: 'אין עותק מקור לקובץ — יש להעלות אותו מחדש.' });
+  const learned = await learnedColumns(db, file.client_id);
+  const idFixes = {};
+  (await db.prepare("SELECT map_key, map_value FROM client_mappings WHERE client_id = ? AND mapping_type = 'emp_id_fix'").all(file.client_id))
+    .forEach((m) => { idFixes[String(m.map_key)] = String(m.map_value); });
+  const rows = await db.prepare('SELECT id, emp_id, dept, inst_symbol, symbol_override, hours, manual_rates FROM cost_rows WHERE cost_file_id = ?').all(fileId);
+  let sheetsUsed = [];
+  try { sheetsUsed = JSON.parse(file.sheets_used || '[]'); } catch { /* ריק */ }
+  const { patchCostFile } = require('../lib/costFilePatch');
+  const { buffer, patched } = await patchCostFile(Buffer.isBuffer(buf) ? buf : Buffer.from(buf), { learned, rows, idFixes, sheetsUsed });
+  const fname = file.filename.replace(/\.xlsx?$/i, '') + ' - עם השיוכים.xlsx';
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`);
+  res.setHeader('X-Patched', JSON.stringify(patched));
+  res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(buffer);
+}));
+
 /* שמירת השיוך + קליטת הקובץ מחדש. assign: { fieldKey: headerKey|null }.
    השיוך נלמד ללקוח — קבצים הבאים באותו פורמט ייקלטו נכון אוטומטית. */
 router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
