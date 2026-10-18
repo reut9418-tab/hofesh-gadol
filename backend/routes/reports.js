@@ -1498,6 +1498,26 @@ router.get('/:id/salary-match-doc', ah(async (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(renderSalaryMatchHtml(x.d));
 }));
+/* מסמך "התאמת כרטסות משותפות לסמלי מוסד" (רעות 18.10): הכרטסות שמתפרסות על
+   כמה בתי ספר והסה"כ שלהן, מתחת הסמלים והסכום לכל אחד, ובסוף סה"כ תואם */
+router.get('/:id/shared-cards-doc', ah(async (req, res) => {
+  const x = await salaryMatchFor(req, res);
+  if (!x) return;
+  const { renderSharedCardsHtml } = require('../lib/salaryMatch');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderSharedCardsHtml(x.d));
+}));
+router.get('/:id/shared-cards-xlsx', ah(async (req, res) => {
+  const x = await salaryMatchFor(req, res);
+  if (!x) return;
+  if (!x.d.hasCards) return res.status(422).json({ error: 'לא נקלטו כרטסות שכר לדוח זה.' });
+  const { buildSharedCardsXlsx } = require('../lib/salaryMatch');
+  const { reportLabel } = require('../lib/domain');
+  const outName = `התאמת כרטסות משותפות - ${downloadWho(x.client, x.authority)} - ${reportLabel(x.report.framework, x.report.program)}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="shared_cards_${x.report.id}.xlsx"; filename*=UTF-8''${encodeURIComponent(outName)}`);
+  res.send(buildSharedCardsXlsx(x.d));
+}));
 router.get('/:id/salary-match-xlsx', ah(async (req, res) => {
   const x = await salaryMatchFor(req, res);
   if (!x) return;

@@ -369,6 +369,10 @@ export const downloadEnrichMatchXlsx = (reportId: number) =>
   downloadXlsx(`/reports/${reportId}/enrich-match-xlsx`, `דוח התאמת העשרה - ${reportId}.xlsx`);
 /* דוח התאמת שכר לבתי ספר (כרטסת השכר מול דוח העלות פר סמל מוסד) — דף להדפסה + אקסל */
 export const salaryMatchDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/salary-match-doc`;
+/* התאמת כרטסות משותפות לסמלי מוסד: הכרטסות שמתפרסות על כמה בתי ספר, הסכום לכל סמל, וסה"כ תואם */
+export const sharedCardsDocUrl = (reportId: number) => `${API_BASE}/reports/${reportId}/shared-cards-doc`;
+export const downloadSharedCardsXlsx = (reportId: number) =>
+  downloadXlsx(`/reports/${reportId}/shared-cards-xlsx`, `התאמת כרטסות משותפות - ${reportId}.xlsx`);
 export const downloadSalaryMatchXlsx = (reportId: number) =>
   downloadXlsx(`/reports/${reportId}/salary-match-xlsx`, `דוח התאמת שכר לבתי ספר - ${reportId}.xlsx`);
 

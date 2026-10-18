@@ -379,8 +379,7 @@ function renderSalaryMatchHtml(d) {
         <div class="check ${cls(levelOf(g.totals.diff, g.totals.cost))}">${levelOf(g.totals.diff, g.totals.cost) === 'ok' ? `✓ סה"כ כרטסות השכר ₪${fmt(g.totals.ledger)} מול דוח העלות ₪${fmt(g.totals.cost)} — תואם${Math.abs(g.totals.diff) > 0.5 ? ` (הפרש זניח ₪${fmt(g.totals.diff)})` : ''}.` : `⚠ סה"כ כרטסות השכר ₪${fmt(g.totals.ledger)} מול דוח העלות ₪${fmt(g.totals.cost)} — הפרש ₪${fmt(g.totals.diff)}.`}</div>
       </section>`;
     }
-    // הרכב הכרטסת לכל בית ספר + ייחוס הכרטיסים — שקיפות: איך כל כרטיס שויך
-    body += compositionBlock(g);
+    // ייחוס הכרטיסים — שקיפות: איך כל כרטיס שויך (ההרכב לפי סמל — במסמך "התאמת כרטסות משותפות")
     body += `<details><summary>איך שויך כל כרטיס (${g.cards.length})</summary><table class="small"><thead><tr><th>מפתח</th><th>כרטסת</th><th class="num">נטו</th><th>שיוך</th></tr></thead><tbody>
       ${g.cards.map((c) => `<tr><td>${esc(c.key)}</td><td>${esc(c.name)}</td><td class="num">₪${fmt(c.net)}</td><td>${c.attribution === 'school' ? `${esc(c.schoolName)} (${esc(c.symbol)}) — ${c.method === 'manual' ? 'שיוך ידני' : 'לפי השם'}`
         : c.attribution === 'split' ? `מפוצל לפי סמל באסמכתא: ${c.parts.map((p) => `${esc(p.name || p.symbol)} ₪${fmt(p.amount)}`).join(', ')}${c.unassigned ? ` · ${c.unassigned.count} תנועות ללא סמל ₪${fmt(c.unassigned.amount)}` : ''}`
@@ -516,13 +515,6 @@ function buildSalaryMatchXlsx(d) {
       aoa.push([cell('✓ כל העובדים מדוח העלות נמצאים בקובץ המשרד השמור (לשונית כח האדם)', S.ok)]); mergeLast();
     }
     aoa.push([]);
-    const comp = g.schools.filter((s) => (s.parts && s.parts.length) || s.coveredByGeneral > 0);
-    if (comp.length) {
-      aoa.push([cell('הרכב כרטסת השכר לכל בית ספר', S.sub)]); mergeLast();
-      aoa.push([cell('בית ספר', S.head), cell('כרטיסים שמרכיבים את "כרטסת שכר"', S.head), cell('סה"כ כרטסת', S.head), cell('מהכרטיסים הכלליים', S.head)]);
-      comp.forEach((s, i) => aoa.push([cell(`${s.name} (${s.symbol})`, S.cellR(i % 2)), cell(s.parts.map((p) => `${p.key} ${p.name}: ₪${fmt(p.amount)} (${p.how})`).join(' | ') || '—', S.cellR(i % 2)), cell(s.ledger || '', S.cellN(i % 2)), cell(s.coveredByGeneral || '', S.cellN(i % 2))]));
-      aoa.push([]);
-    }
     aoa.push([cell('איך שויך כל כרטיס', S.sub)]); mergeLast();
     aoa.push([cell('מפתח חשבון', S.head), cell('כרטסת', S.head), cell('נטו', S.head), cell('שיוך', S.head)]);
     g.cards.forEach((c, i) => aoa.push([cell(c.key, S.cellR(i % 2)), cell(c.name, S.cellR(i % 2)), cell(c.net, S.cellN(i % 2)),
@@ -541,4 +533,132 @@ function buildSalaryMatchXlsx(d) {
   return XLSXS.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
 
-module.exports = { salaryMatchData, renderSalaryMatchHtml, buildSalaryMatchXlsx };
+/* ---------- מסמך "התאמת כרטסות משותפות לסמלי מוסד" (רעות 18.10, ביתר) ----------
+   למעלה: מספרי הכרטסות שמתפרסות על כמה בתי ספר והסה"כ שלהן; מתחת: סמלי המוסד
+   והסכום המשויך לכל אחד; בסוף: סה"כ שתואם לסה"כ הכרטסות. */
+function sharedCardsGroups(d) {
+  const out = [];
+  for (const g of d.groups || []) {
+    const pre = g.payer ? `${g.payer}: ` : '';
+    const push = (title, cards, rows, note) => {
+      const cardsTotal = r2(cards.reduce((s, c) => s + (c.net || 0), 0));
+      const rowsTotal = r2(rows.reduce((s, r) => s + (r.amount || 0), 0));
+      out.push({ title: pre + title, cards, rows, note: note || null, cardsTotal, rowsTotal, diff: r2(rowsTotal - cardsTotal) });
+    };
+    if (g.mode === 'single' && g.generalCheck) {
+      const gc = g.generalCheck;
+      const rows = g.schools.map((s) => ({ symbol: s.symbol, name: s.name, amount: s.cost }));
+      if (g.unassignedCount) rows.push({ symbol: '—', name: `ללא שיוך לבית ספר (${g.unassignedCount} עובדים)`, amount: g.unassignedCost });
+      for (const o of gc.shared) rows.push({ symbol: '—', name: `${o.label} (אותה כרטסת, פרויקט אחר)`, amount: o.cost });
+      push('כרטסת שכר אחת לכל בתי הספר', gc.cards, rows);
+    }
+    for (const c of g.cards) {
+      if (c.attribution !== 'split') continue;
+      const rows = c.parts.map((p) => ({ symbol: p.symbol, name: p.name, amount: p.amount }));
+      push('כרטיס מפוצל לפי סמל המוסד באסמכתא', [c], rows, c.unassigned ? `${c.unassigned.count} תנועות ללא סמל באסמכתא (₪${fmt(c.unassigned.amount)}) — לא משויכות` : null);
+    }
+    if (g.mode === 'mixed' && g.generalCheck) {
+      const gc = g.generalCheck;
+      // אותו בסיס כמו בבדיקת הכרטיסים הכלליים: 'all' — יתרת השכר בכל בית ספר
+      // שהכרטיס הייעודי שלו קטן מדוח העלות; 'noCard' — כל השכר בבתי ספר בלי כרטיס
+      const rows = (gc.pattern === 'all'
+        ? g.schools.filter((s) => s.remainder > 0).map((s) => ({ symbol: s.symbol, name: s.name, amount: s.remainder }))
+        : g.schools.filter((s) => s.ledger === 0).map((s) => ({ symbol: s.symbol, name: s.name, amount: s.cost })));
+      if (g.unassignedCount) rows.push({ symbol: '—', name: `ללא שיוך לבית ספר (${g.unassignedCount} עובדים)`, amount: g.unassignedCost });
+      push('כרטיסים כלליים — ' + (gc.pattern === 'all' ? 'השכר שאינו מכוסה בכרטיסים הייעודיים של בתי הספר' : 'השכר בבתי הספר ללא כרטיס ייעודי'), gc.cards, rows,
+        gc.pattern === 'all' ? 'הסכום לכל בית ספר = השכר בדוח העלות פחות הכרטיס הייעודי שלו' : 'הסכום לכל בית ספר = השכר בדוח העלות (אין לו כרטיס ייעודי)');
+    }
+  }
+  return out;
+}
+
+function renderSharedCardsHtml(d) {
+  const today = new Date().toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' });
+  const clientName = (d.client && d.client.name) || '';
+  const authorityName = (d.authority && d.authority.name) || '';
+  const who = authorityName && authorityName !== clientName ? `${clientName} — ${authorityName}` : clientName;
+  const label = reportLabel(d.report.framework, d.report.program);
+  const groups = sharedCardsGroups(d);
+  const blocks = groups.map((it) => `<section class="block">
+    <h2>${esc(it.title)}</h2>
+    <table class="cards"><thead><tr><th>מפתח חשבון</th><th>כרטסת</th><th class="num">סה"כ בכרטסת</th></tr></thead><tbody>
+      ${it.cards.map((c) => `<tr><td>${esc(c.key)}</td><td>${esc(c.name)}</td><td class="num">₪${fmt(c.net)}</td></tr>`).join('')}
+      <tr class="total"><td colspan="2">סה"כ בכרטסות</td><td class="num">₪${fmt(it.cardsTotal)}</td></tr>
+    </tbody></table>
+    <table><thead><tr><th>סמל מוסד</th><th>שם בית הספר</th><th class="num">סכום משויך</th></tr></thead><tbody>
+      ${it.rows.map((r, i) => `<tr${i % 2 ? ' class="z"' : ''}><td>${esc(r.symbol)}</td><td>${esc(r.name)}</td><td class="num">₪${fmt(r.amount)}</td></tr>`).join('')}
+      <tr class="total"><td colspan="2">סה"כ משויך לסמלי המוסד</td><td class="num">₪${fmt(it.rowsTotal)}</td></tr>
+    </tbody></table>
+    <div class="check ${Math.abs(it.diff) <= 1 ? 'ok' : levelOf(it.diff, it.cardsTotal) === 'ok' ? 'warn' : 'err'}">${Math.abs(it.diff) <= 1 ? '✓ סה"כ המשויך תואם לסה"כ הכרטסות.' : `הפרש ₪${fmt(it.diff)} בין המשויך לסה"כ הכרטסות${levelOf(it.diff, it.cardsTotal) === 'ok' ? ' (זניח)' : ''}.`}</div>
+    ${it.note ? `<div class="note">${esc(it.note)}</div>` : ''}
+  </section>`).join('');
+  return `<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
+<title>התאמת כרטסות משותפות לסמלי מוסד — ${esc(who)} — ${esc(label)}</title>
+<style>
+  body{font-family:'Segoe UI',Arial,sans-serif;color:#37322A;max-width:820px;margin:0 auto;padding:30px;line-height:1.7;font-size:13.5px}
+  h1{font-size:19px;margin:14px 0 2px} h2{font-size:14.5px;color:#9A7B2F;margin:0 0 8px}
+  .letterhead{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #9A7B2F;padding-bottom:8px;font-size:12.5px;color:#7A7062}
+  .sub{font-size:12.5px;color:#7A7062;margin-bottom:18px}
+  .block{border:1px solid #EAE1CF;border-radius:10px;padding:14px 18px;margin-bottom:16px;background:#FDFBF6;page-break-inside:avoid}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0 10px}
+  table.cards{background:#FAF6EE}
+  th{background:#9A7B2F;color:#fff;text-align:right;padding:6px 10px;font-size:12px} th.num,td.num{text-align:center}
+  td{border-bottom:1px solid #EAE1CF;padding:6px 10px} tr.z td{background:#FBF7EC}
+  tr.total td{background:#F4ECDA;font-weight:700;border-top:2px solid #9A7B2F}
+  .check{font-size:12.5px;font-weight:600} .check.ok{color:#4C7A45}.check.warn{color:#A8711E}.check.err{color:#B3362B}
+  .note{font-size:12px;color:#7A7062;margin-top:4px}
+  @media print { body{padding:10px} }
+</style></head><body>
+<div class="letterhead"><span><b>גוטליב את ביטון, רו"ח</b></span><span>${today}</span></div>
+<h1>התאמת כרטסות שכר משותפות לסמלי מוסד</h1>
+<div class="sub">${esc(who)} · ${esc(label)} · כרטסות שמתפרסות על כמה בתי ספר, והסכום המשויך לכל סמל מוסד (עלות מעביד בספרים, נטו)</div>
+${!d.applicable ? '<p>בגנים הדיווח מרוכז לכל הגנים — אין חלוקה לפי מוסד.</p>'
+  : !d.hasCards ? '<p>לא נקלטו כרטסות שכר לדוח זה.</p>'
+  : !groups.length ? '<p>לכל בית ספר כרטסת שכר ייעודית משלו — אין כרטסות משותפות לחלק.</p>'
+  : blocks}
+</body></html>`;
+}
+
+function buildSharedCardsXlsx(d) {
+  const GOLD = '9A7B2F', CHAMP = 'F4ECDA', SOFT = 'FBF7EC', LINE = 'D9CDB3', INK = '37322A';
+  const border = { top: { style: 'thin', color: { rgb: LINE } }, bottom: { style: 'thin', color: { rgb: LINE } }, left: { style: 'thin', color: { rgb: LINE } }, right: { style: 'thin', color: { rgb: LINE } } };
+  const S = {
+    title: { font: { bold: true, sz: 14, color: { rgb: INK } }, alignment: { horizontal: 'right' } },
+    sub: { font: { bold: true, sz: 11, color: { rgb: GOLD } }, alignment: { horizontal: 'right' } },
+    head: { font: { bold: true, sz: 10, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: GOLD } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: true }, border },
+    cellR: (z) => ({ font: { sz: 10, color: { rgb: INK } }, alignment: { horizontal: 'right' }, border, ...(z ? { fill: { fgColor: { rgb: SOFT } } } : {}) }),
+    cellN: (z) => ({ font: { sz: 10, color: { rgb: INK } }, alignment: { horizontal: 'center' }, border, numFmt: '#,##0.00', ...(z ? { fill: { fgColor: { rgb: SOFT } } } : {}) }),
+    total: { font: { bold: true, sz: 10, color: { rgb: INK } }, fill: { fgColor: { rgb: CHAMP } }, alignment: { horizontal: 'center' }, border, numFmt: '#,##0.00' },
+    totalR: { font: { bold: true, sz: 10, color: { rgb: INK } }, fill: { fgColor: { rgb: CHAMP } }, alignment: { horizontal: 'right' }, border },
+    ok: { font: { bold: true, sz: 10, color: { rgb: '4C7A45' } } }, bad: { font: { bold: true, sz: 10, color: { rgb: 'B3362B' } } },
+  };
+  const cell = (v, s) => ({ v: v == null ? '' : v, t: typeof v === 'number' ? 'n' : 's', s });
+  const clientName = (d.client && d.client.name) || '';
+  const authorityName = (d.authority && d.authority.name) || '';
+  const who = authorityName && authorityName !== clientName ? `${clientName} — ${authorityName}` : clientName;
+  const aoa = [[cell('התאמת כרטסות שכר משותפות לסמלי מוסד', S.title)], [cell(`${who} — ${reportLabel(d.report.framework, d.report.program)} · ${new Date().toLocaleDateString('he-IL')}`, S.sub)], []];
+  const merges = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 2 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 2 } }];
+  const mergeLast = () => merges.push({ s: { r: aoa.length - 1, c: 0 }, e: { r: aoa.length - 1, c: 2 } });
+  for (const it of sharedCardsGroups(d)) {
+    aoa.push([cell(it.title, S.sub)]); mergeLast();
+    aoa.push([cell('מפתח חשבון', S.head), cell('כרטסת', S.head), cell('סה"כ בכרטסת', S.head)]);
+    it.cards.forEach((c, i) => aoa.push([cell(c.key, S.cellR(i % 2)), cell(c.name, S.cellR(i % 2)), cell(c.net, S.cellN(i % 2))]));
+    aoa.push([cell('סה"כ בכרטסות', S.totalR), cell('', S.totalR), cell(it.cardsTotal, S.total)]);
+    aoa.push([]);
+    aoa.push([cell('סמל מוסד', S.head), cell('שם בית הספר', S.head), cell('סכום משויך', S.head)]);
+    it.rows.forEach((r, i) => aoa.push([cell(r.symbol, S.cellR(i % 2)), cell(r.name, S.cellR(i % 2)), cell(r.amount, S.cellN(i % 2))]));
+    aoa.push([cell('סה"כ משויך לסמלי המוסד', S.totalR), cell('', S.totalR), cell(it.rowsTotal, S.total)]);
+    aoa.push([cell(Math.abs(it.diff) <= 1 ? '✓ סה"כ המשויך תואם לסה"כ הכרטסות' : `הפרש ₪${fmt(it.diff)} בין המשויך לסה"כ הכרטסות`, Math.abs(it.diff) <= 1 ? S.ok : S.bad)]); mergeLast();
+    if (it.note) { aoa.push([cell(it.note, S.cellR(0))]); mergeLast(); }
+    aoa.push([]);
+  }
+  const ws = XLSXS.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 16 }, { wch: 44 }, { wch: 16 }];
+  ws['!merges'] = merges;
+  const wb = XLSXS.utils.book_new();
+  wb.Workbook = { Views: [{ RTL: true }] };
+  XLSXS.utils.book_append_sheet(wb, ws, 'כרטסות משותפות');
+  return XLSXS.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+module.exports = { salaryMatchData, renderSalaryMatchHtml, buildSalaryMatchXlsx, sharedCardsGroups, renderSharedCardsHtml, buildSharedCardsXlsx };

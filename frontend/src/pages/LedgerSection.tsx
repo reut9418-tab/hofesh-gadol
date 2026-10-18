@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { T } from '../theme';
 import { btn, card } from '../ui';
-import { getReportLedger, uploadLedgerFile, setLedgerCardBasket, setLedgerCardSymbol, setLedgerTxSymbol, deleteLedgerFile, setLedgerFilePayer, enrichMatchDocUrl, downloadEnrichMatchXlsx, salaryMatchDocUrl, downloadSalaryMatchXlsx, LedgerData } from '../api';
+import { getReportLedger, uploadLedgerFile, setLedgerCardBasket, setLedgerCardSymbol, setLedgerTxSymbol, deleteLedgerFile, setLedgerFilePayer, enrichMatchDocUrl, downloadEnrichMatchXlsx, salaryMatchDocUrl, downloadSalaryMatchXlsx, sharedCardsDocUrl, downloadSharedCardsXlsx, LedgerData } from '../api';
 
 // סלי השכר — כרטיס שכר משויך לבית ספר (לפי השם / ידנית) לצורך ההתאמה לפי בתי ספר
 const SALARY_BASKETS = ['instruction', 'coordinator', 'deputy', 'salary_combined'];
@@ -61,6 +61,16 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
                 style={btn('ghost')}>🏫 דוח התאמת שכר לבתי ספר (אקסל)</button>
               <button onClick={() => window.open(salaryMatchDocUrl(reportId), '_blank')}
                 title="דוח התאמת השכר לבתי ספר כדף להדפסה / שמירה כ-PDF"
+                style={btn('ghost')}>🖨 PDF</button>
+              <button onClick={async () => {
+                setErr(null);
+                try { await downloadSharedCardsXlsx(reportId); }
+                catch (e: any) { setErr(e?.response?.data?.error || 'הורדת ההתאמה נכשלה.'); }
+              }}
+                title='כרטסות שכר שמתפרסות על כמה בתי ספר: מספרי הכרטסות והסה"כ, מתחת סמלי המוסד והסכום לכל אחד, ובסוף סה"כ תואם (אקסל)'
+                style={btn('ghost')}>🧾 התאמת כרטסות משותפות (אקסל)</button>
+              <button onClick={() => window.open(sharedCardsDocUrl(reportId), '_blank')}
+                title="התאמת כרטסות משותפות כדף להדפסה / שמירה כ-PDF"
                 style={btn('ghost')}>🖨 PDF</button>
             </>
           )}
