@@ -1,10 +1,10 @@
 {
-  "savedAt": "2026-10-18T09:06:11.216Z",
+  "savedAt": "2026-10-18T20:33:00.802Z",
   "db": {
-    "unrouted_rows": 1215,
+    "unrouted_rows": 1226,
     "totals_like_rows": 0,
-    "dup_rows": 14,
-    "reports_with_rows": 128,
+    "dup_rows": 24,
+    "reports_with_rows": 132,
     "clients": 50,
     "rls_tables_off": 0,
     "tables": 15
@@ -14,34 +14,34 @@
       "label": "נתניה בתי ספר 15 יום",
       "prep_status": 200,
       "prep_rows": 71,
-      "prep_hours": 5210,
-      "prep_cost": 410779,
+      "prep_hours": 5099,
+      "prep_cost": 413129,
       "prep_no_symbol": 0,
       "prep_zero_cost": 0,
       "prep_staff": {
-        "מורה": 60,
-        "רכזת תכנית בבית הספר": 8,
+        "מורה": 62,
+        "רכזת תכנית בבית הספר": 6,
         "סגנית רכזת מעל 150": 3
       },
       "prep_dup_workers": 0,
       "file_missing": 0,
       "file_extra": 0,
-      "salary_overflow": 15919,
+      "salary_overflow": 7047,
       "salary_unfunded": 0,
       "stage1_status": 200,
-      "stage1_kb": 16,
+      "stage1_kb": 17,
       "stage1_has_total": true,
       "ledger_status": 200,
       "ledger_cards": 24,
-      "ledger_checks": "enrich_fill:ok exec_vs_cost:warn income_vs_ledger:err ledger_vs_cost:err school_salary_match:err",
+      "ledger_checks": "enrich_fill:ok exec_vs_cost:err income_vs_ledger:err ledger_vs_cost:err school_salary_match:err",
       "export_status": 200,
       "export_kb": 2048,
       "export_rows": 71,
-      "export_hours": 5210,
+      "export_hours": 5099,
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 24975
+      "ms": 19192
     },
     "70": {
       "label": "קריית מוצקין גנים 15 יום",
@@ -74,7 +74,7 @@
       "export_no_symbol": 230,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 22232
+      "ms": 10413
     },
     "87": {
       "label": "נבון חבל יבנה גנים הרחבה",
@@ -108,7 +108,7 @@
       "export_no_symbol": 45,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 18012
+      "ms": 11240
     },
     "88": {
       "label": "נבון יואב גנים 15 יום",
@@ -141,7 +141,7 @@
       "export_no_symbol": 6,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 18666
+      "ms": 10292
     },
     "92": {
       "label": "עכו בתי ספר 15 יום",
@@ -174,7 +174,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 25130
+      "ms": 17258
     },
     "105": {
       "label": "מעלה אדומים בתי ספר 15 יום",
@@ -207,7 +207,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 25222
+      "ms": 18057
     },
     "114": {
       "label": "לביא גנים 15 יום",
@@ -240,7 +240,7 @@
       "export_no_symbol": 1442,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 32416
+      "ms": 14822
     },
     "115": {
       "label": "לביא גנים הרחבה",
@@ -273,7 +273,7 @@
       "export_no_symbol": 1258,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 32299
+      "ms": 16530
     },
     "116": {
       "label": "לביא בתי ספר 15 יום",
@@ -306,7 +306,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 155482
+      "ms": 128559
     },
     "117": {
       "label": "לביא בתי ספר הרחבה",
@@ -339,7 +339,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 78441
+      "ms": 57629
     },
     "127": {
       "label": "קדימה גנים 15 יום",
@@ -374,7 +374,7 @@
       "export_no_symbol": 85,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 17197
+      "ms": 8630
     },
     "136": {
       "label": "אלקנה גנים 15 יום",
@@ -408,7 +408,7 @@
       "export_no_symbol": 46,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 19642
+      "ms": 11646
     },
     "137": {
       "label": "אלקנה גנים הרחבה",
@@ -443,7 +443,7 @@
       "export_no_symbol": 23,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 18954
+      "ms": 12038
     }
   }
 }
