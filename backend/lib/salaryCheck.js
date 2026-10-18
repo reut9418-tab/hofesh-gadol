@@ -159,15 +159,16 @@ function demoteExtraSchoolRoles(schoolRows, coordCap = COORD_HOURS_PER_DAY * 15,
 /* מפעיל/ת חוג (לפי עמודת התפקיד בדוח השכר) — אינם מדווחים בדוח הביצוע
    (כלל רעות 5.10: "להוציא מכל הדוחות ביצוע את מי שרשום כמפעילת חוג") */
 function isClubOperator(roleText) {
-  const t = String(roleText || '');
-  return /מפעיל/.test(t) && /חוג/.test(t);
+  const t = String(roleText || '').trim();
+  // גם "מדריכ/ת חוגים" (טירת הכרמל 18.10) ותפקיד שהוא רק "חוגים" (גוש עציון)
+  return /חוג/.test(t) && (/מפעיל|מדריכ/.test(t) || /^חוגים?$/.test(t));
 }
 /* אותו כלל כתנאי SQL — מוציא מפעילי/ות חוג מכל חישובי השכר (מסך, מכתב,
    בקרות, המלצות) ולא רק מהייצוא (רעות 5.10). alias: "cr." כשיש JOIN */
 /* וגם עובד/ת בלי עלות מעביד חיובית (0, חסרה או שלילית — זיכוי של אגורות בלי
    שעות, לביא 8.10) — לא נכנס/ת לדוח הביצוע ולחישובים (רעות 7-8.10) */
 const notClubSql = (alias = '') =>
-  `NOT (COALESCE(${alias}role_text,'') LIKE '%מפעיל%' AND COALESCE(${alias}role_text,'') LIKE '%חוג%') AND COALESCE(${alias}cost,0) > 0`;
+  `NOT (COALESCE(${alias}role_text,'') LIKE '%חוג%' AND (COALESCE(${alias}role_text,'') LIKE '%מפעיל%' OR COALESCE(${alias}role_text,'') LIKE '%מדריכ%' OR TRIM(COALESCE(${alias}role_text,'')) IN ('חוג','חוגים'))) AND COALESCE(${alias}cost,0) > 0`;
 
 /* תפקיד כפי שמופיע בדוח השכר עצמו (עמודת "תפקיד") → איש צוות + תפקיד לפי רשימות המשרד */
 function staffFromRoleText(text) {
