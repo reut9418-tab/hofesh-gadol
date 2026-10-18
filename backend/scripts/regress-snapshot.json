@@ -1,10 +1,10 @@
 {
-  "savedAt": "2026-10-14T19:36:09.659Z",
+  "savedAt": "2026-10-18T09:06:11.216Z",
   "db": {
-    "unrouted_rows": 1178,
-    "totals_like_rows": 2,
+    "unrouted_rows": 1215,
+    "totals_like_rows": 0,
     "dup_rows": 14,
-    "reports_with_rows": 119,
+    "reports_with_rows": 128,
     "clients": 50,
     "rls_tables_off": 0,
     "tables": 15
@@ -19,8 +19,8 @@
       "prep_no_symbol": 0,
       "prep_zero_cost": 0,
       "prep_staff": {
-        "מורה": 61,
-        "רכזת תכנית בבית הספר": 7,
+        "מורה": 60,
+        "רכזת תכנית בבית הספר": 8,
         "סגנית רכזת מעל 150": 3
       },
       "prep_dup_workers": 0,
@@ -41,7 +41,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 20815
+      "ms": 24975
     },
     "70": {
       "label": "קריית מוצקין גנים 15 יום",
@@ -74,7 +74,7 @@
       "export_no_symbol": 230,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 12691
+      "ms": 22232
     },
     "87": {
       "label": "נבון חבל יבנה גנים הרחבה",
@@ -86,8 +86,9 @@
       "prep_zero_cost": 0,
       "prep_staff": {
         "רכזת גן": 1,
-        "סייעת חדשה": 25,
-        "גננת": 19
+        "סייעת ממשיכה": 16,
+        "גננת": 19,
+        "סייעת חדשה": 9
       },
       "prep_dup_workers": 0,
       "file_missing": 12,
@@ -98,8 +99,8 @@
       "stage1_kb": 7,
       "stage1_has_total": true,
       "ledger_status": 200,
-      "ledger_cards": 0,
-      "ledger_checks": "",
+      "ledger_cards": 6,
+      "ledger_checks": "enrich_fill:ok exec_vs_cost:err ledger_vs_cost:ok",
       "export_status": 200,
       "export_kb": 1995,
       "export_rows": 45,
@@ -107,7 +108,7 @@
       "export_no_symbol": 45,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 12065
+      "ms": 18012
     },
     "88": {
       "label": "נבון יואב גנים 15 יום",
@@ -140,7 +141,7 @@
       "export_no_symbol": 6,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 8611
+      "ms": 18666
     },
     "92": {
       "label": "עכו בתי ספר 15 יום",
@@ -173,7 +174,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 17924
+      "ms": 25130
     },
     "105": {
       "label": "מעלה אדומים בתי ספר 15 יום",
@@ -184,7 +185,8 @@
       "prep_no_symbol": 0,
       "prep_zero_cost": 0,
       "prep_staff": {
-        "מורה": 106,
+        "מורה": 90,
+        "מדצ": 16,
         "רכזת תכנית בבית הספר": 12
       },
       "prep_dup_workers": 0,
@@ -205,53 +207,52 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 18119
+      "ms": 25222
     },
     "114": {
       "label": "לביא גנים 15 יום",
       "prep_status": 200,
-      "prep_rows": 1368,
-      "prep_hours": 79852,
-      "prep_cost": 6076891,
+      "prep_rows": 1446,
+      "prep_hours": 80667,
+      "prep_cost": 6135860,
       "prep_no_symbol": 0,
       "prep_zero_cost": 4,
       "prep_staff": {
-        "גננת": 623,
-        "סייעת ממשיכה": 621,
-        "רכזת גן": 110,
-        "סייעת חדשה": 14
+        "גננת": 646,
+        "סייעת ממשיכה": 693,
+        "רכזת גן": 107
       },
       "prep_dup_workers": 0,
-      "file_missing": 40,
-      "file_extra": 0,
+      "file_missing": null,
+      "file_extra": null,
       "salary_overflow": 0,
       "salary_unfunded": 0,
       "stage1_status": 200,
-      "stage1_kb": 7,
+      "stage1_kb": 6,
       "stage1_has_total": true,
       "ledger_status": 200,
-      "ledger_cards": 0,
-      "ledger_checks": "",
+      "ledger_cards": 2,
+      "ledger_checks": "enrich_fill:ok ledger_vs_cost:err",
       "export_status": 200,
-      "export_kb": 3164,
-      "export_rows": 1364,
-      "export_hours": 79852,
-      "export_no_symbol": 1364,
+      "export_kb": 3170,
+      "export_rows": 1442,
+      "export_hours": 80667,
+      "export_no_symbol": 1442,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 13320
+      "ms": 32416
     },
     "115": {
       "label": "לביא גנים הרחבה",
       "prep_status": 200,
-      "prep_rows": 1126,
-      "prep_hours": 32730,
-      "prep_cost": 2409364,
+      "prep_rows": 1259,
+      "prep_hours": 33554,
+      "prep_cost": 2472693,
       "prep_no_symbol": 0,
       "prep_zero_cost": 1,
       "prep_staff": {
-        "גננת": 581,
-        "סייעת חדשה": 510,
+        "גננת": 617,
+        "סייעת חדשה": 607,
         "רכזת גן": 35
       },
       "prep_dup_workers": 0,
@@ -263,23 +264,23 @@
       "stage1_kb": 6,
       "stage1_has_total": true,
       "ledger_status": 200,
-      "ledger_cards": 0,
-      "ledger_checks": "",
+      "ledger_cards": 2,
+      "ledger_checks": "enrich_fill:ok ledger_vs_cost:err",
       "export_status": 200,
-      "export_kb": 3857,
-      "export_rows": 1125,
-      "export_hours": 32730,
-      "export_no_symbol": 1125,
+      "export_kb": 3863,
+      "export_rows": 1258,
+      "export_hours": 33554,
+      "export_no_symbol": 1258,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 13795
+      "ms": 32299
     },
     "116": {
       "label": "לביא בתי ספר 15 יום",
       "prep_status": 200,
       "prep_rows": 2263,
-      "prep_hours": 166963,
-      "prep_cost": 15241177,
+      "prep_hours": 176828,
+      "prep_cost": 15251385,
       "prep_no_symbol": 0,
       "prep_zero_cost": 2,
       "prep_staff": {
@@ -288,30 +289,30 @@
         "רכזת תכנית בבית הספר": 382
       },
       "prep_dup_workers": 0,
-      "file_missing": 81,
+      "file_missing": 0,
       "file_extra": 0,
-      "salary_overflow": 1426379,
+      "salary_overflow": 1517016,
       "salary_unfunded": 0,
       "stage1_status": 200,
-      "stage1_kb": 453,
+      "stage1_kb": 433,
       "stage1_has_total": true,
       "ledger_status": 200,
       "ledger_cards": 2,
-      "ledger_checks": "enrich_fill:ok exec_vs_cost:err ledger_vs_cost:אביב:err ledger_vs_cost:לביא:err split_unassigned:1094:warn split_unassigned:1095:warn",
+      "ledger_checks": "enrich_fill:ok exec_vs_cost:warn ledger_vs_cost:אביב:err ledger_vs_cost:לביא:err split_unassigned:1094:warn split_unassigned:1095:warn",
       "export_status": 200,
-      "export_kb": 5073,
+      "export_kb": 5096,
       "export_rows": 2261,
-      "export_hours": 166963,
+      "export_hours": 176828,
       "export_no_symbol": 0,
-      "export_short_ids": 1,
+      "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 129797
+      "ms": 155482
     },
     "117": {
       "label": "לביא בתי ספר הרחבה",
       "prep_status": 200,
       "prep_rows": 1277,
-      "prep_hours": 32193,
+      "prep_hours": 35823,
       "prep_cost": 3146327,
       "prep_no_symbol": 0,
       "prep_zero_cost": 2,
@@ -321,24 +322,24 @@
         "סגנית רכזת מעל 150": 64
       },
       "prep_dup_workers": 0,
-      "file_missing": null,
-      "file_extra": null,
-      "salary_overflow": 526029,
+      "file_missing": 0,
+      "file_extra": 0,
+      "salary_overflow": 395174,
       "salary_unfunded": 0,
       "stage1_status": 200,
-      "stage1_kb": 300,
+      "stage1_kb": 277,
       "stage1_has_total": true,
       "ledger_status": 200,
       "ledger_cards": 0,
       "ledger_checks": "",
       "export_status": 200,
-      "export_kb": 4781,
+      "export_kb": 4927,
       "export_rows": 1275,
-      "export_hours": 32193,
+      "export_hours": 35823,
       "export_no_symbol": 0,
-      "export_short_ids": 1,
+      "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 55421
+      "ms": 78441
     },
     "127": {
       "label": "קדימה גנים 15 יום",
@@ -373,7 +374,7 @@
       "export_no_symbol": 85,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 8916
+      "ms": 17197
     },
     "136": {
       "label": "אלקנה גנים 15 יום",
@@ -407,7 +408,7 @@
       "export_no_symbol": 46,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 15819
+      "ms": 19642
     },
     "137": {
       "label": "אלקנה גנים הרחבה",
@@ -442,7 +443,7 @@
       "export_no_symbol": 23,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 11559
+      "ms": 18954
     }
   }
 }
