@@ -139,6 +139,23 @@ function extractWorkerAssignments(bufOrWb) {
     // נוסף ללא הספרה האחרונה כדי שההצלבה מול דוח העלות תתפוס
     if (id.length === 9 && !out[id.slice(0, 8)]) out[id.slice(0, 8)] = a;
   }
+  // גם הסייעות הרפואיות/אישיות מלשונית (7) — כדי שלא ייספרו כ"חסרות בדוח הביצוע"
+  try {
+    const aDet = detectAidesSheet(wb);
+    if (!aDet.error) {
+      const aws = wb.Sheets[aDet.sheetName];
+      const idCol = aDet.colSpecs.find((c) => c.src === AIDE_SRC.id);
+      const symCol = aDet.colSpecs.find((c) => c.src === AIDE_SRC.symbol);
+      const aRange = XLSX.utils.decode_range(aws['!ref']);
+      for (let r = aDet.startRow - 1; r <= aRange.e.r; r++) {
+        const idCell = aws[`${idCol.col}${r + 1}`];
+        const id = idCell ? norm(idCell.v ?? idCell.w ?? '').replace(/\D/g, '') : '';
+        if (!id || out[id]) continue;
+        const symCell = symCol ? aws[`${symCol.col}${r + 1}`] : null;
+        out[id] = { symbol: symCell ? norm(symCell.v ?? symCell.w ?? '').replace(/\D/g, '') : '', staffType: 'סייעת רפואית או אישית', role: 'סייעת', note: null };
+      }
+    }
+  } catch { /* אין לשונית */ }
   return out;
 }
 
@@ -302,7 +319,7 @@ function stripOrphanSharedFormulas(xml) {
    expenses (אופציונלי): { aggregate: {basketKey: {amount, cards, source}} } לגנים,
    או { perSchool: [[סמל, מהות, סכום, כרטיס, מקור], ...] } לבתי"ס — ללשונית הוצאות בפועל.
    מחזיר Buffer של ה-xlsx הממולא. */
-async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, income = null, authorityCoord = null) {
+async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, income = null, authorityCoord = null, aides = null) {
   const det = detectStartRow(buf);
   if (det.error) throw new Error(det.error);
 
@@ -353,6 +370,19 @@ async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, 
         let cxml = await zip.file(coordPath).async('string');
         cxml = stripOrphanSharedFormulas(applyRowsToSheetXml(cxml, COORD_COLS, coordDet.startRow, coordRows));
         zip.file(coordPath, cxml);
+      }
+    }
+  }
+
+  // לשונית "סייעות רפואיות או אישיות (7)" — גנים: סייעות צמודות לילד, מחוץ לכח האדם
+  if (aides && aides.length) {
+    const aDet = detectAidesSheet(buf);
+    if (!aDet.error && aDet.layout !== 'unknown') {
+      const aPath = resolveSheetPath(wbXml, relsXml, AIDES_SHEET_HINT);
+      if (aPath) {
+        let axml = await zip.file(aPath).async('string');
+        axml = stripOrphanSharedFormulas(applyRowsToSheetXml(axml, aDet.colSpecs, aDet.startRow, aides, 400, unlockStyle));
+        zip.file(aPath, axml);
       }
     }
   }
@@ -690,7 +720,42 @@ const STAFF_TYPES = [
   { type: 'מדצ', roles: ['מדצ/ית'] },
   { type: 'רכזת גן', roles: ['רכז/ת גן'] },
   { type: 'תוספת כח אדם', roles: ['יועצ/ת', 'קלינאי/ת תקשורת', 'מנתח/ת התנהגות', 'מרפא/ה בעיסוק', 'גננת שילוב', 'אחר'] },
+  // סייעת צמודה לילד — לשונית "סייעות רפואיות או אישיות (7)", לא כח אדם (טירת הכרמל 18.10)
+  { type: 'סייעת רפואית או אישית', roles: ['סייעת'] },
 ];
+
+/* ---------- לשונית "סייעות רפואיות או אישיות (7)" — גנים ----------
+   שתי תבניות: 15 יום — "שכר ברוטו ליום" × "מס' ימי העסקה"; הרחבה — "שכר ברוטו
+   שעתי" / "עלות שכר שעתית" × "סך שעות" (רעות 18.10: "ב-15 יום ברוטו, בהרחבה עלות").
+   עמודות הקלט מזוהות לפי הכותרות; "מעמד" ושאר העמודות הן נוסחאות של המשרד. */
+const AIDES_SHEET_HINT = 'סייעות רפואיות';
+const AIDE_SRC = { symbol: 0, student: 1, id: 2, first: 3, last: 4, dailyGross: 5, days: 6, hourlyGross: 7, hourlyCost: 8, hours: 9 };
+function detectAidesSheet(buf) {
+  const wb = asWb(buf);
+  const sheetName = wb.SheetNames.find((n) => n.includes(AIDES_SHEET_HINT));
+  if (!sheetName) return { error: 'אין לשונית סייעות רפואיות' };
+  const ws = wb.Sheets[sheetName];
+  const cells = scanCells(ws);
+  const idHead = cells.find((x) => x.v.includes('ת.ז סייעת'));
+  if (!idHead) return { error: 'לא נמצאה שורת הכותרות בלשונית הסייעות הרפואיות' };
+  const rowCells = cells.filter((x) => x.r === idHead.r);
+  const find = (re) => { const c = rowCells.find((x) => re.test(x.v)); return c ? colLetter(c.c) : null; };
+  const specs = [];
+  const add = (src, col, kind) => { if (col) specs.push({ src, col, kind }); };
+  add(AIDE_SRC.symbol, find(/^סמל/), 'num');
+  add(AIDE_SRC.student, find(/ת\.?ז\.? תלמיד/), 'text');
+  add(AIDE_SRC.id, colLetter(idHead.c), 'text');
+  add(AIDE_SRC.first, find(/^שם פרטי/), 'text');
+  add(AIDE_SRC.last, find(/^שם משפחה/), 'text');
+  const daily = find(/ברוטו ליום/);
+  const hourlyG = find(/ברוטו שעתי/);
+  add(AIDE_SRC.dailyGross, daily, 'num');
+  add(AIDE_SRC.days, find(/ימי העסקה/), 'num');
+  add(AIDE_SRC.hourlyGross, hourlyG, 'num');
+  add(AIDE_SRC.hourlyCost, find(/עלות שכר שעתית/), 'num');
+  add(AIDE_SRC.hours, find(/סך שעות/), 'num');
+  return { sheetName, startRow: idHead.r + 2, layout: daily ? 'daily' : hourlyG ? 'hourly' : 'unknown', colSpecs: specs };
+}
 
 /* רשימת ברירת מחדל לתבנית בתי הספר (כשהגיליון לא נמצא) — הערכים המדויקים
    מ"סיווג התפקידים והעלויות" של תבנית תשפ"ו. אין "גננת" בבתי ספר! */
@@ -851,4 +916,5 @@ module.exports = {
   detectExpenseSheet, EXPENSE_LABEL_HE,
   STAFF_TYPES, MINISTRY_SHEET_HINT, COORD_SHEET_HINT,
   setCellsInSheetXml, resolveSheetPath, // גם להורדת דוח העלות עם השינויים הידניים (lib/costFilePatch.js)
+  detectAidesSheet, AIDE_SRC, AIDES_SHEET_HINT,
 };

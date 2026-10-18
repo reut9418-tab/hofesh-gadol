@@ -870,6 +870,8 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
     const st = staffOf(r);
     // כלל רעות 24.9: רכזת גן אינה צריכה שיוך לסמל — לא מחלקים לה גן
     if (/רכזת גן/.test(String(st || ''))) continue;
+    // סייעת רפואית/אישית (18.10) — צמודה לילד, לא נספרת באיוש הגן ולא משובצת
+    if (/רפואי|אישית/.test(String(st || ''))) continue;
     const kind = /סייע/.test(st) ? 'say' : /גננת|מוביל/.test(st) ? 'gan' : null;
     if (sym && staffed.has(sym)) { if (kind) staffed.get(sym)[kind]++; }
     else if (!sym) unassigned.push({ r, kind: kind || 'gan', st });
@@ -918,7 +920,7 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
   for (const r of fresh) {
     const sym = symbolOf(r);
     if (!sym || !staffed.has(sym)) continue;
-    if (/רכזת גן/.test(String(r.staff_type || ''))) continue;
+    if (/רכזת גן|רפואי|אישית/.test(String(r.staff_type || ''))) continue;
     const fa = fileAssignOf(r);
     if (r.role_text || (fa && fa.staffType)) {
       // מקור מוסמך — לא נוגעים בסיווג; אבל כלל 14.10 גובר: בגן שמסומן 1
@@ -1785,11 +1787,20 @@ router.get('/:id/export', ah(async (req, res) => {
   const income = await buildIncomeFill(db, report);
   // רכז רשותי — לשורה הייעודית בראש הלשונית, לא בין שורות המוסדות
   const authorityCoordRows = execRows.filter((r) => isAuthorityCoord(r[6]));
-  const schoolRows = execRows.filter((r) => !isAuthorityCoord(r[6]));
-  const filled = await fillMinistryReport(srcBuf, schoolRows, coordRows, expenses, income, authorityCoordRows);
+  // סייעות רפואיות/אישיות (גנים, רעות 18.10) — ללשונית (7) ולא לכח האדם:
+  // 15 יום: ברוטו ליום × ימי העסקה (6 ש' ליום); הרחבה: ברוטו שעתי / עלות שעתית × שעות
+  const isMedicalAide = (r) => report.framework === 'gardens' && /רפואי|אישית/.test(String(r[6] || ''));
+  const aideRows = execRows.filter(isMedicalAide).map((r) => {
+    const hours = Number(r[10]) || 0;
+    const days = Math.max(1, Math.round(hours / 6)) || 1;
+    const dailyGross = r[8] != null ? Math.round((Number(r[8]) * hours / days) * 100) / 100 : null;
+    return [r[0], null, r[2], r[3], r[4], dailyGross, days, r[8], r[9], r[10]];
+  });
+  const schoolRows = execRows.filter((r) => !isAuthorityCoord(r[6]) && !isMedicalAide(r));
+  const filled = await fillMinistryReport(srcBuf, schoolRows, coordRows, expenses, income, authorityCoordRows, aideRows);
   // "איוש עובר": התקציב במערכת מתעדכן לפי האיוש שנכתב — כמו שאקסל יחשב כשהקובץ
   // ייפתח — כדי שהמכתב ושלב 2 יתאימו לקובץ שירד (רעות 8.10). כישלון לא עוצר את הייצוא
-  try { await syncBudgetToStaffing(db, id, report, srcBuf, execRows); }
+  try { await syncBudgetToStaffing(db, id, report, srcBuf, execRows.filter((r) => !isMedicalAide(r))); }
   catch (e) { console.error(`[export ${id}] איוש עובר נכשל:`, e.message); }
   const exAuthority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
   // כשהקובץ שהועלה הוא בעצמו ייצוא קודם שלנו — לא לשרשר "דוח ביצוע ממולא" פעמיים
