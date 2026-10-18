@@ -132,13 +132,15 @@ async function salaryMatchData(db, report, client, authority, { withExec = true 
 
     // ייחוס הכרטיסים: בית ספר / פיצול לפי אסמכתא / כללי
     const ledgerBy = {};
+    const compBy = {}; // סמל → הרכב כרטסת השכר של בית הספר (רעות 18.10: "החלוקה לא ברורה")
+    const addComp = (s, part) => { (compBy[s] = compBy[s] || []).push(part); };
     const cardsOut = [];
     const general = [];
     for (const c of gCards) {
       const sp = splits.get(c.id);
       const info = { id: c.id, key: c.card_key, name: c.card_name, net: r2(c.net), basket: BASKET_HE[c.basket_type] || c.basket_type };
       if (sp && sp.isSplit) {
-        for (const [s, v] of Object.entries(sp.bySymbol)) ledgerBy[s] = (ledgerBy[s] || 0) + v;
+        for (const [s, v] of Object.entries(sp.bySymbol)) { ledgerBy[s] = (ledgerBy[s] || 0) + v; addComp(s, { key: c.card_key, name: c.card_name, amount: r2(v), how: 'פיצול לפי אסמכתא' }); }
         cardsOut.push({ ...info, attribution: 'split', parts: Object.entries(sp.bySymbol).map(([s, v]) => ({ symbol: s, name: nameOf.get(s) || '', amount: r2(v) })),
           unassigned: sp.unassignedCount ? { count: sp.unassignedCount, amount: r2(sp.unassignedNet) } : null });
         continue;
@@ -146,6 +148,7 @@ async function salaryMatchData(db, report, client, authority, { withExec = true 
       const s = symOf(c);
       if (s) {
         ledgerBy[s] = (ledgerBy[s] || 0) + (c.net || 0);
+        addComp(s, { key: c.card_key, name: c.card_name, amount: r2(c.net || 0), how: c.symbol_override ? 'שיוך ידני' : 'לפי השם' });
         cardsOut.push({ ...info, attribution: 'school', symbol: s, schoolName: nameOf.get(s) || '', method: c.symbol_override ? 'manual' : 'name' });
       } else {
         general.push(info);
@@ -195,7 +198,9 @@ async function salaryMatchData(db, report, client, authority, { withExec = true 
         else if (pattern === 'all' && x.diff < 0 && levelOf(x.diff, x.cost) !== 'ok') level = 'covered';
         else level = levelOf(x.diff, x.cost);
       }
-      return { ...x, level };
+      // הרכב הכרטסת של בית הספר + כמה מכוסה מהכרטיסים הכלליים
+      const coveredByGeneral = level === 'covered' ? r2(x.ledger === 0 ? x.cost : Math.max(0, x.cost - x.ledger)) : 0;
+      return { ...x, level, parts: compBy[x.symbol] || [], coveredByGeneral };
     });
 
     // הכרטיסים הכלליים מול מה שהם אמורים לכסות
@@ -205,7 +210,9 @@ async function salaryMatchData(db, report, client, authority, { withExec = true 
       const shared = mode === 'single' && general.length === 1 ? await sharedOf(general[0].key) : [];
       const sharedCost = r2(shared.reduce((s, o) => s + o.cost, 0));
       const diff = r2(generalTotal - expected - sharedCost);
-      generalCheck = { cards: general, total: generalTotal, expected, pattern, shared, sharedCost, diff, level: levelOf(diff, expected + sharedCost) };
+      // אילו בתי ספר הכרטיסים הכלליים מכסים ובכמה (לשקיפות החלוקה)
+      const covers = schools.filter((s) => s.coveredByGeneral > 0).map((s) => ({ symbol: s.symbol, name: s.name, amount: s.coveredByGeneral }));
+      generalCheck = { cards: general, total: generalTotal, expected, pattern, shared, sharedCost, diff, level: levelOf(diff, expected + sharedCost), covers };
     }
 
     const totalDiff = r2(directTotal + generalTotal - costTotal);
@@ -273,16 +280,18 @@ function summarize(d) {
       parts.push(t + '.');
       levels.push(...bad.map((s) => s.level));
     }
+    const fileName = (d.report && d.report.budget_file_name) || 'קובץ המשרד';
     if (g.execTotals && g.execTotals.bad.length) {
       const et = g.execTotals;
       // הפער הכולל מול דוח הביצוע כבר מדווח בבדיקה "דוח ביצוע מול דוח העלות" —
       // כאן רק ההפניה לפירוט לפי בתי ספר, בלי להחמיר את הרמה (פחות רעש)
-      parts.push(`דוח הביצוע בקובץ המשרד: פער ב-${et.bad.length} ${et.bad.length === 1 ? 'בית ספר' : 'בתי ספר'} (${et.bad.slice(0, 3).map((s) => s.name || s.symbol).join(', ')}${et.bad.length > 3 ? ` ועוד ${et.bad.length - 3}` : ''}) — פירוט בדוח ההתאמה.`);
+      const stale = g.missing && g.missing.length ? ` הקובץ השמור ישן יותר מדוח העלות (${g.missing.length} עובדים שבדוח העלות אינם בו) — זה מקור הפערים; הורדת דוח ביצוע מעודכן והעלאתו תיישר.` : '';
+      parts.push(`דוח הביצוע בקובץ המשרד השמור ("${fileName}"): פער ב-${et.bad.length} ${et.bad.length === 1 ? 'בית ספר' : 'בתי ספר'} (${et.bad.slice(0, 3).map((s) => s.name || s.symbol).join(', ')}${et.bad.length > 3 ? ` ועוד ${et.bad.length - 3}` : ''}) — פירוט בדוח ההתאמה.${stale}`);
       levels.push('warn');
     }
     if (g.missing && g.missing.length) {
       const m = g.missing;
-      parts.push(`${m.length} ${m.length === 1 ? 'עובד/ת' : 'עובדים'} מדוח העלות (₪${fmt(g.missingCost)}) לא ${m.length === 1 ? 'נמצא/ת' : 'נמצאים'} בדוח הביצוע: ${m.slice(0, 3).map((w) => `${w.name} (${w.school})`).join(', ')}${m.length > 3 ? ` ועוד ${m.length - 3}` : ''} — פירוט בדוח ההתאמה.`);
+      parts.push(`${m.length} ${m.length === 1 ? 'עובד/ת' : 'עובדים'} מדוח העלות (₪${fmt(g.missingCost)}) עדיין לא בקובץ המשרד השמור במערכת ("${fileName}"): ${m.slice(0, 3).map((w) => `${w.name} (${w.school})`).join(', ')}${m.length > 3 ? ` ועוד ${m.length - 3}` : ''} — הם ייכנסו בהורדת דוח ביצוע מעודכן. פירוט בדוח ההתאמה.`);
       levels.push('warn');
     }
     if (g.unassignedCount) {
@@ -313,9 +322,10 @@ function renderSalaryMatchHtml(d) {
     + (s.missing && s.missing.length ? ` <span class="bad" title="${esc(s.missing.map((w) => w.name).join(', '))}"><small>· ${s.missing.length} ${s.missing.length === 1 ? 'עובד/ת חסר/ה' : 'עובדים חסרים'}</small></span>` : '');
   const execBasis = [d.hasVat && 'כולל מע"מ 18%', 'אחרי תקרת ברוטו+40%'].filter(Boolean).join(', ');
   // עובדים מדוח העלות שלא נמצאו בלשונית כח האדם של קובץ הביצוע — לפי בית ספר
+  const fileName = (d.report && d.report.budget_file_name) || 'קובץ המשרד';
   const missingBlock = (g) => {
-    if (!g.missing || !g.missing.length) return d.hasFileWorkers ? '<div class="check ok">✓ כל העובדים מדוח העלות נמצאים בדוח הביצוע (לשונית כח האדם).</div>' : '';
-    return `<div class="check err">⚠ ${g.missing.length} ${g.missing.length === 1 ? 'עובד/ת מדוח העלות לא נמצא/ת' : 'עובדים מדוח העלות לא נמצאים'} בדוח הביצוע (לשונית כח האדם) — ₪${fmt(g.missingCost)} עלות מעביד${d.hasVat ? `, ₪${fmt(g.missingExpected)} כולל מע"מ` : ''}. הורדת דוח ביצוע מעודכן מהמערכת תכניס אותם.</div>
+    if (!g.missing || !g.missing.length) return d.hasFileWorkers ? `<div class="check ok">✓ כל העובדים מדוח העלות נמצאים בקובץ המשרד השמור (לשונית כח האדם של "${esc(fileName)}").</div>` : '';
+    return `<div class="check warn">⚠ ${g.missing.length} ${g.missing.length === 1 ? 'עובד/ת מדוח העלות עדיין לא נמצא/ת' : 'עובדים מדוח העלות עדיין לא נמצאים'} בקובץ המשרד השמור במערכת ("${esc(fileName)}", לשונית כח האדם) — ₪${fmt(g.missingCost)} עלות מעביד${d.hasVat ? `, ₪${fmt(g.missingExpected)} כולל מע"מ` : ''}. הקובץ השמור ישן יותר מדוח העלות; הורדת דוח ביצוע מעודכן מהמערכת (והעלאתו) תכניס אותם.</div>
     <table class="small"><thead><tr><th>בית ספר</th><th>שם העובד/ת</th><th>ת.ז</th><th>מחלקה בדוח העלות</th><th class="num">שעות</th><th class="num">עלות מעביד</th></tr></thead><tbody>
       ${g.missing.map((w, i) => `<tr${i % 2 ? ' class="z"' : ''}><td>${esc(w.school)}${w.symbol ? ` (${esc(w.symbol)})` : ''}</td><td>${esc(w.name)}</td><td>${esc(w.empId)}</td><td>${esc(w.dept)}</td><td class="num">${fmt(w.hours)}</td><td class="num">₪${fmt(w.cost)}</td></tr>`).join('')}
     </tbody></table>`;
@@ -323,9 +333,18 @@ function renderSalaryMatchHtml(d) {
   const execLine = (g) => {
     if (!g.execTotals) return missingBlock(g);
     const et = g.execTotals;
+    const staleNote = g.missing && g.missing.length ? ` הקובץ השמור ישן יותר מדוח העלות (${g.missing.length} עובדים שבדוח העלות אינם בו) — זה מקור הפערים.` : '';
     return `<div class="check ${cls(et.level === 'ok' && !et.bad.length ? 'ok' : et.level === 'ok' ? 'warn' : et.level)}">${!et.bad.length
-      ? `✓ דוח הביצוע (קובץ המשרד) ₪${fmt(et.exec)} תואם לצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) בכל בתי הספר.`
-      : `⚠ דוח הביצוע (קובץ המשרד) ₪${fmt(et.exec)} מול הצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) — פער ב-${et.bad.length} בתי ספר (מסומן בעמודה). הורדת דוח ביצוע מעודכן מהמערכת תיישר את הקובץ.`}</div>${missingBlock(g)}`;
+      ? `✓ דוח הביצוע בקובץ המשרד השמור ("${esc(fileName)}") ₪${fmt(et.exec)} תואם לצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) בכל בתי הספר.`
+      : `⚠ דוח הביצוע בקובץ המשרד השמור ("${esc(fileName)}") ₪${fmt(et.exec)} מול הצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) — פער ב-${et.bad.length} בתי ספר (בעמודה "דוח ביצוע בקובץ השמור", הסכום בסוגריים = הפער מול הצפוי).${staleNote} הורדת דוח ביצוע מעודכן מהמערכת (והעלאתו) תיישר את הקובץ.`}</div>${missingBlock(g)}`;
+  };
+  // הרכב כרטסת השכר של כל בית ספר — איזה כרטיס, כמה, ואיך שויך (רעות 18.10)
+  const compositionBlock = (g) => {
+    const withParts = g.schools.filter((s) => (s.parts && s.parts.length) || s.coveredByGeneral > 0);
+    if (!withParts.length) return '';
+    return `<details open><summary>הרכב כרטסת השכר לכל בית ספר (${withParts.length})</summary><table class="small"><thead><tr><th>בית ספר</th><th>כרטיסים שמרכיבים את "כרטסת שכר"</th><th class="num">סה"כ כרטסת</th><th>מהכרטיסים הכלליים</th></tr></thead><tbody>
+      ${withParts.map((s, i) => `<tr${i % 2 ? ' class="z"' : ''}><td>${esc(s.name)} (${esc(s.symbol)})</td><td>${s.parts.map((p) => `${esc(p.key)} ${esc(p.name)}: ₪${fmt(p.amount)} <small>(${esc(p.how)})</small>`).join('<br>') || '—'}</td><td class="num">${s.ledger ? `₪${fmt(s.ledger)}` : '—'}</td><td>${s.coveredByGeneral > 0 ? `₪${fmt(s.coveredByGeneral)}` : ''}</td></tr>`).join('')}
+    </tbody></table></details>`;
   };
 
   const groupBlocks = d.groups.map((g) => {
@@ -349,18 +368,19 @@ function renderSalaryMatchHtml(d) {
       </section>`;
     } else {
       body += `<section class="block">
-        <table><thead><tr><th>סמל מוסד</th><th>שם בית הספר</th><th class="num">כרטסת שכר</th><th class="num">דוח עלות</th><th class="num">הפרש</th>${g.execTotals ? '<th class="num">דוח ביצוע (קובץ המשרד)</th>' : ''}<th>מצב</th></tr></thead><tbody>
+        <table><thead><tr><th>סמל מוסד</th><th>שם בית הספר</th><th class="num">כרטסת שכר</th><th class="num">דוח עלות</th><th class="num">הפרש</th>${g.execTotals ? '<th class="num" title="הסכום שכתוב בקובץ המשרד השמור במערכת; בסוגריים — הפער מול הצפוי מדוח העלות">דוח ביצוע בקובץ השמור (פער מול הצפוי)</th>' : ''}<th title="כרטסת השכר מול דוח העלות — בלי קשר לעמודת דוח הביצוע">כרטסת מול דוח עלות</th></tr></thead><tbody>
           ${g.schools.map((s, i) => `<tr class="${i % 2 ? 'z ' : ''}${cls(s.level)}"><td>${esc(s.symbol)}</td><td>${esc(s.name)}</td><td class="num">${s.ledger ? `₪${fmt(s.ledger)}` : '—'}</td><td class="num">₪${fmt(s.cost)}</td><td class="num">${s.ledger ? `₪${fmt(s.diff)}` : '—'}</td>${g.execTotals ? `<td class="num">${execCell(s)}</td>` : ''}<td>${mark(s.level)}</td></tr>`).join('')}
           ${g.unassignedCount ? `<tr class="warnrow"><td>—</td><td>ללא שיוך לבית ספר (${g.unassignedCount} עובדים)</td><td class="num">—</td><td class="num">₪${fmt(g.unassignedCost)}</td><td class="num">—</td>${g.execTotals ? '<td></td>' : ''}<td>⚠ לשייך במסך ההכנה</td></tr>` : ''}
           <tr class="total"><td colspan="2">סה"כ</td><td class="num">₪${fmt(g.totals.direct)}</td><td class="num">₪${fmt(g.totals.cost)}</td><td class="num">₪${fmt(g.totals.direct - g.totals.cost)}</td>${g.execTotals ? `<td class="num">₪${fmt(g.execTotals.exec)}</td>` : ''}<td></td></tr>
         </tbody></table>
         ${execLine(g)}
-        ${g.generalCheck ? `<div class="sub2">כרטיסי שכר כלליים (לא לבית ספר מסוים): ${g.generalCheck.cards.map((c) => `${esc(c.name)} (${esc(c.key)}) ₪${fmt(c.net)}`).join(' · ')} — סה"כ <b>₪${fmt(g.generalCheck.total)}</b> מול ${coversHe(g.generalCheck)} <b>₪${fmt(g.generalCheck.expected)}</b>.</div>
+        ${g.generalCheck ? `<div class="sub2">כרטיסי שכר כלליים (לא לבית ספר מסוים): ${g.generalCheck.cards.map((c) => `${esc(c.name)} (${esc(c.key)}) ₪${fmt(c.net)}`).join(' · ')} — סה"כ <b>₪${fmt(g.generalCheck.total)}</b> מול ${coversHe(g.generalCheck)} <b>₪${fmt(g.generalCheck.expected)}</b>.${(g.generalCheck.covers || []).length ? `<br>מה הם מכסים: ${g.generalCheck.covers.map((c) => `${esc(c.name)} ₪${fmt(c.amount)}`).join(' · ')}.` : ''}</div>
         <div class="check ${cls(g.generalCheck.level)}">${g.generalCheck.level === 'ok' ? '✓ הכרטיסים הכלליים תואמים ליתרה.' : `⚠ הפרש ₪${fmt(g.generalCheck.diff)} בין הכרטיסים הכלליים ליתרה.`}</div>` : ''}
         <div class="check ${cls(levelOf(g.totals.diff, g.totals.cost))}">${levelOf(g.totals.diff, g.totals.cost) === 'ok' ? `✓ סה"כ כרטסות השכר ₪${fmt(g.totals.ledger)} מול דוח העלות ₪${fmt(g.totals.cost)} — תואם${Math.abs(g.totals.diff) > 0.5 ? ` (הפרש זניח ₪${fmt(g.totals.diff)})` : ''}.` : `⚠ סה"כ כרטסות השכר ₪${fmt(g.totals.ledger)} מול דוח העלות ₪${fmt(g.totals.cost)} — הפרש ₪${fmt(g.totals.diff)}.`}</div>
       </section>`;
     }
-    // ייחוס הכרטיסים — שקיפות: איך כל כרטיס שויך
+    // הרכב הכרטסת לכל בית ספר + ייחוס הכרטיסים — שקיפות: איך כל כרטיס שויך
+    body += compositionBlock(g);
     body += `<details><summary>איך שויך כל כרטיס (${g.cards.length})</summary><table class="small"><thead><tr><th>מפתח</th><th>כרטסת</th><th class="num">נטו</th><th>שיוך</th></tr></thead><tbody>
       ${g.cards.map((c) => `<tr><td>${esc(c.key)}</td><td>${esc(c.name)}</td><td class="num">₪${fmt(c.net)}</td><td>${c.attribution === 'school' ? `${esc(c.schoolName)} (${esc(c.symbol)}) — ${c.method === 'manual' ? 'שיוך ידני' : 'לפי השם'}`
         : c.attribution === 'split' ? `מפוצל לפי סמל באסמכתא: ${c.parts.map((p) => `${esc(p.name || p.symbol)} ₪${fmt(p.amount)}`).join(', ')}${c.unassigned ? ` · ${c.unassigned.count} תנועות ללא סמל ₪${fmt(c.unassigned.amount)}` : ''}`
@@ -489,13 +509,20 @@ function buildSalaryMatchXlsx(d) {
     // עובדים מדוח העלות שלא נמצאו בדוח הביצוע (לשונית כח האדם)
     if (g.missing && g.missing.length) {
       aoa.push([]);
-      aoa.push([cell(`⚠ ${g.missing.length} ${g.missing.length === 1 ? 'עובד/ת מדוח העלות לא נמצא/ת' : 'עובדים מדוח העלות לא נמצאים'} בדוח הביצוע (לשונית כח האדם) — ₪${fmt(g.missingCost)} עלות מעביד. הורדת דוח ביצוע מעודכן מהמערכת תכניס אותם.`, S.bad)]); mergeLast();
+      aoa.push([cell(`⚠ ${g.missing.length} ${g.missing.length === 1 ? 'עובד/ת מדוח העלות עדיין לא נמצא/ת' : 'עובדים מדוח העלות עדיין לא נמצאים'} בקובץ המשרד השמור במערכת ("${(d.report && d.report.budget_file_name) || 'קובץ המשרד'}", לשונית כח האדם) — ₪${fmt(g.missingCost)} עלות מעביד. הקובץ השמור ישן יותר מדוח העלות; הורדת דוח ביצוע מעודכן מהמערכת תכניס אותם.`, S.bad)]); mergeLast();
       aoa.push([cell('בית ספר', S.head), cell('שם העובד/ת', S.head), cell('ת.ז', S.head), cell('מחלקה בדוח העלות', S.head), cell('שעות', S.head), cell('עלות מעביד', S.head)]);
       g.missing.forEach((w, i) => aoa.push([cell(`${w.school}${w.symbol ? ` (${w.symbol})` : ''}`, S.cellR(i % 2)), cell(w.name, S.cellR(i % 2)), cell(w.empId, S.cellR(i % 2)), cell(w.dept, S.cellR(i % 2)), cell(w.hours, S.cellN(i % 2)), cell(w.cost, S.cellN(i % 2))]));
     } else if (d.hasFileWorkers) {
-      aoa.push([cell('✓ כל העובדים מדוח העלות נמצאים בדוח הביצוע (לשונית כח האדם)', S.ok)]); mergeLast();
+      aoa.push([cell('✓ כל העובדים מדוח העלות נמצאים בקובץ המשרד השמור (לשונית כח האדם)', S.ok)]); mergeLast();
     }
     aoa.push([]);
+    const comp = g.schools.filter((s) => (s.parts && s.parts.length) || s.coveredByGeneral > 0);
+    if (comp.length) {
+      aoa.push([cell('הרכב כרטסת השכר לכל בית ספר', S.sub)]); mergeLast();
+      aoa.push([cell('בית ספר', S.head), cell('כרטיסים שמרכיבים את "כרטסת שכר"', S.head), cell('סה"כ כרטסת', S.head), cell('מהכרטיסים הכלליים', S.head)]);
+      comp.forEach((s, i) => aoa.push([cell(`${s.name} (${s.symbol})`, S.cellR(i % 2)), cell(s.parts.map((p) => `${p.key} ${p.name}: ₪${fmt(p.amount)} (${p.how})`).join(' | ') || '—', S.cellR(i % 2)), cell(s.ledger || '', S.cellN(i % 2)), cell(s.coveredByGeneral || '', S.cellN(i % 2))]));
+      aoa.push([]);
+    }
     aoa.push([cell('איך שויך כל כרטיס', S.sub)]); mergeLast();
     aoa.push([cell('מפתח חשבון', S.head), cell('כרטסת', S.head), cell('נטו', S.head), cell('שיוך', S.head)]);
     g.cards.forEach((c, i) => aoa.push([cell(c.key, S.cellR(i % 2)), cell(c.name, S.cellR(i % 2)), cell(c.net, S.cellN(i % 2)),
