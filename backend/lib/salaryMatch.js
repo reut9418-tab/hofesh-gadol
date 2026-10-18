@@ -263,10 +263,16 @@ function summarize(d) {
       const okN = g.schools.filter((s) => s.level === 'ok').length;
       const covered = g.schools.filter((s) => s.level === 'covered').length;
       const states = [];
-      if (okN) states.push(`${okN} מתוך ${n} תואמים`);
+      // "2 מתוך 7 תואמים" נקרא כאילו רק 2 כרטסות שויכו (נתניה 18.10) — קודם
+      // כמה כרטסות משויכות לבתי ספר, ואז באיזה בתי ספר הסכומים תואמים
+      const assigned = g.cards.filter((c) => c.attribution === 'school' || c.attribution === 'split').length;
+      const assignedTxt = g.cards.length
+        ? (assigned === g.cards.length ? `כל ${g.cards.length} הכרטסות משויכות לבתי ספר` : `${assigned} מתוך ${g.cards.length} כרטסות משויכות לבתי ספר`)
+        : '';
+      if (okN) states.push(`הסכומים תואמים ב-${okN} מתוך ${n} בתי ספר`);
       if (covered) states.push(`${covered === n ? `כל ${n}` : covered} ${covered === 1 ? 'מכוסה' : 'מכוסים'} ע"י הכרטיסים הכלליים`);
-      if (bad.length) states.push(`פער ב-${bad.length}: ${bad.map((s) => `${s.name || s.symbol} (${s.diff > 0 ? '+' : ''}₪${fmt(s.diff)})`).join(', ')}`);
-      let t = `${pre}כרטסת שכר לפי בתי ספר: ${states.join('; ')}`;
+      if (bad.length) states.push(`פער בסכום ב-${bad.length}: ${bad.map((s) => `${s.name || s.symbol} (${s.diff > 0 ? '+' : ''}₪${fmt(s.diff)})`).join(', ')}`);
+      let t = `${pre}כרטסת שכר לפי בתי ספר: ${[assignedTxt, ...states].filter(Boolean).join('; ')}`;
       if (g.generalCheck) {
         const gc = g.generalCheck;
         t += `; כרטיסים כלליים (${listNames(gc.cards)}) ₪${fmt(gc.total)} מול ${coversHe(gc)} ₪${fmt(gc.expected)} — ${gc.level === 'ok' ? 'תואם' : `הפרש ₪${fmt(gc.diff)}`}`;
