@@ -58,7 +58,10 @@ function headerColumns(items) {
   for (const it of items) {
     const n = norm(it.s);
     if (!n) continue;
-    const kind = /^אסמ/.test(n) ? 'ref' : n === 'פרטים' ? 'details' : (n.includes('חובה') && n.includes('זכות')) ? 'amount' : 'other';
+    // פריוריטי (ביתר עילית 18.10): "חובה" ו"זכות" בעמודות נפרדות + "יתרה מצטברת"
+    const kind = /^אסמ/.test(n) ? 'ref' : n === 'פרטים' ? 'details'
+      : (n.includes('חובה') && n.includes('זכות')) ? 'amount'
+      : n === 'חובה' ? 'debit' : n === 'זכות' ? 'credit' : /^יתרה/.test(n) ? 'balance' : 'other';
     cols.push({ kind, x: it.x });
   }
   return cols.some((c) => c.kind === 'ref' || c.kind === 'details') ? cols : [];
@@ -78,6 +81,26 @@ async function parseLedgerPdf(buf) {
   for (const cells of lines) {
     if (!cells.length) continue;
     const c0 = norm(cells[0]), c1 = norm(cells[1] ?? '');
+    // פריוריטי (ביתר עילית 18.10): "חשבון: | 688-100 | , תאור: | הוצ ק.קיץ ביס | 113134"
+    // ו"סה"כ לחשבון: | 688-100 | חובה | זכות | יתרה"
+    if (/^חשבון:?$/.test(c0) && c1) {
+      if (cur && cur.key === c1) continue;
+      pushCur();
+      const descIdx = cells.findIndex((c, i) => i > 1 && /תאור/.test(norm(c)));
+      const name = norm(cells.slice(descIdx >= 0 ? descIdx + 1 : 2).join(' ').replace(/^[,\s]+/, '')) || c1;
+      cur = { key: c1, name, debit: 0, credit: 0, net: 0, txCount: 0, tx: [], priority: true };
+      continue;
+    }
+    // כותרות העמוד של פריוריטי (פרטי ההפקה, "נכון לתקופה") — לא תנועות
+    if (/^(מתאריך|נכון לתקופה|הופק באמצעות|כרטסת)$/.test(c0) || c0.startsWith('מתאריך')) continue;
+    if (/^סהכ לחשבון/.test(c0)) {
+      if (cur) {
+        const nums = cells.slice(1).map((c) => money(norm(c))).filter((v) => v !== null);
+        if (nums.length >= 2) { cur.debit = nums[0]; cur.credit = nums[1]; }
+        pushCur();
+      }
+      continue;
+    }
     // תחילת כרטיס: [שם עברי | מפתח חשבון מספרי | (קוד מיון)]
     if (/[א-ת]/.test(c0) && /^\d{3,12}$/.test(c1) && !c0.includes('סהכ') && !c0.includes('יתרת פתיחה')) {
       // המשך אותו כרטיס אחרי מעבר עמוד — הכותרת חוזרת, לא כרטיס חדש
@@ -86,8 +109,13 @@ async function parseLedgerPdf(buf) {
       cur = { key: c1, name: c0, debit: 0, credit: 0, net: 0, txCount: 0, tx: [] };
       continue;
     }
-    if (c0.includes('כותרת') || cells.some((c) => /^אסמ/.test(norm(c)))) { const hc = headerColumns(cells.items || []); if (hc.length) cols = hc; }
+    if (c0.includes('כותרת') || cells.some((c) => /^אסמ/.test(norm(c)))) {
+      const hc = headerColumns(cells.items || []);
+      if (hc.length) { cols = hc; continue; } // שורת כותרות — לא תנועה ("1"/"2" של אסמכתא נספרו כסכום)
+    }
     if (!cur) continue;
+    // בפריוריטי כל תנועה מתחילה בתאריך — שאר השורות (כותרות עמוד) אינן תנועות
+    if (cur.priority && !/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c0)) continue;
     // שורות הסיכום של הכרטיס: "חובה <סכום>" / "זכות <סכום>"
     const amt = money(norm(cells[1] ?? '')) ?? money(norm(cells[2] ?? ''));
     if (c0 === 'חובה') { if (amt != null) cur.debit = amt; continue; }
@@ -101,15 +129,22 @@ async function parseLedgerPdf(buf) {
       cur.txCount++;
       // הסכום: התא שבעמודת "חובה / זכות" לפי הכותרת; בלי כותרת — הסכום
       // הראשון שנראה כסכום כספי (עם אגורות/פסיקים, לא מספר תנועה)
-      let amt = null;
+      let amt = null, debitCol = null, creditCol = null;
       const refs = new Set(), det = [];
       for (const it of (cells.items || [])) {
         const near = cols.length ? nearestCol(cols, it.x) : null;
         const m = money(norm(it.s));
         if (near && near.kind === 'amount') { if (m !== null && amt === null) amt = m; continue; }
+        if (near && near.kind === 'debit') { if (m !== null && debitCol === null) debitCol = m; continue; }
+        if (near && near.kind === 'credit') { if (m !== null && creditCol === null) creditCol = m; continue; }
+        if (near && near.kind === 'balance') continue;
         if (!near || near.kind === 'other') continue;
         if (near.kind === 'details') det.push(it.s);
         symbolCandidates(it.s).forEach((r) => refs.add(r));
+      }
+      if (debitCol !== null || creditCol !== null) {
+        cur.tx.push({ refs: [...refs], details: det.join(' '), debit: debitCol || 0, credit: creditCol || 0 });
+        continue;
       }
       if (amt === null) amt = cells.map((c) => norm(c)).filter((c) => /[,.]\d/.test(c)).map((c) => money(c)).find((v) => v !== null) ?? amounts[0];
       cur.tx.push({ refs: [...refs], details: det.join(' '), debit: amt > 0 ? amt : 0, credit: amt < 0 ? -amt : 0 });

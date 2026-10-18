@@ -37,8 +37,9 @@ function basketForCardName(name) {
   if (/סג[נן]/.test(n)) return 'deputy'; // נו"ן רגילה וסופית — "סגן" וגם "סגני/סגנית"
   // כרטסת משולבת: גם רכז וגם מילת צוות באותו שם ("שכר מורים+רכז", "שכר גננות
   // ורכזות") — "שכר רכזים" לבדו נשאר סל ריכוז
-  if (/רכז/.test(n) && /מור|מוביל|סייע|גננ|צוות/.test(n)) return 'salary_combined';
-  if (/רכז/.test(n)) return 'coordinator';
+  // "ריכוז"/"ריכז" (ביתר עילית: "הוצאות ריכוז קיץ רשותי") = רכזים
+  if (/רכז|ריכוז|ריכז/.test(n) && /מור|מוביל|סייע|גננ|צוות/.test(n)) return 'salary_combined';
+  if (/רכז|ריכוז|ריכז/.test(n)) return 'coordinator';
   if (/שכר|משכורת|מוביל|סייע|גננ|מור/.test(n)) return 'instruction';
   return null;
 }

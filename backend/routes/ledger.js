@@ -90,6 +90,7 @@ router.post('/reports/:id/ledger-file', upload.single('file'), ah(async (req, re
   // משויכת אליו אוטומטית (אחרת נוצרת שורת "ללא משלם" בהשוואה; רעות 5.10)
   const costPayers = await reportCostPayers(db, id);
   const autoPayer = costPayers.length === 1 ? costPayers[0] : null;
+  const instSymbols = new Set((await db.prepare('SELECT symbol FROM institutions WHERE report_id = ?').all(id)).map((i) => String(i.symbol)));
   const fileId = (await db.prepare('INSERT INTO ledger_files (report_id, filename, card_count, payer) VALUES (?, ?, ?, ?)')
     .run(id, originalName, parsed.cards.length, autoPayer)).lastInsertRowid;
   // כרטסת מאוחדת לשתי התקופות (כלל רעות 15.10, אור יהודה): בדוח 15 יום כרטיסי
@@ -107,12 +108,29 @@ router.post('/reports/:id/ledger-file', upload.single('file'), ah(async (req, re
     if (learnedProg !== undefined) basket = learnedProg === 'none' ? null : learnedProg;
     else if (otherPeriod(c)) { basket = null; periodSkipped++; }
     else basket = learned !== undefined ? (learned === 'none' ? null : learned) : basketForCardName(c.name);
+    // שם כרטיס בלי מילת מפתח ("הוצ ק.קיץ ביס 113134", פריוריטי/ביתר עילית 18.10):
+    // הסל נגזר מפרטי התנועות — כשרוב החובה היא שכר (שכר/ב"ל/מס שכר/סוציאליות),
+    // הכרטיס הוא שכר; עם תנועות רכזים בתוכו — כרטסת משולבת הדרכה+ריכוז
+    if (basket == null && learned === undefined && (c.tx || []).length) {
+      const isSalary = (d) => /שכר|ב"?ל|ביטוח לאומי|סוציאל|מס שכר|גמל|פיצויים/.test(String(d || ''));
+      const totalDebit = c.tx.reduce((s, t) => s + (t.debit || 0), 0);
+      const salaryDebit = c.tx.filter((t) => isSalary(t.details)).reduce((s, t) => s + (t.debit || 0), 0);
+      if (totalDebit > 0 && salaryDebit / totalDebit >= 0.5) {
+        basket = c.tx.some((t) => /רכז/.test(String(t.details || ''))) ? 'salary_combined' : 'instruction';
+      }
+    }
     // סל שאינו ברשימת הפרויקט (למשל 'deputy' ממילת המפתח "סגן" במכינות) —
     // נשאר לא-משויך במקום ערך שהמסך לא מציג
     if (basket && !basketOptionsFor(report.framework).some((o) => o.value === basket)) basket = null;
     // שיוך לבי"ס שנבחר בעבר לאותו כרטיס (נלמד) — 'none' = כללי (פיצול יחסי)
     const ls = cardSymbols[aliasKey(report.framework, c.key)];
-    const symbolOverride = ls ? (ls === 'none' ? 'general' : ls) : null;
+    let symbolOverride = ls ? (ls === 'none' ? 'general' : ls) : null;
+    // סמל מוסד בשם הכרטיס ("הוצ ק.קיץ ביס 113134", פריוריטי/ביתר עילית 18.10) —
+    // כשאין שיוך נלמד והמספר הוא מוסד של הדוח, הכרטיס משויך אליו אוטומטית
+    if (!symbolOverride && instSymbols.size) {
+      const m = String(c.name || '').match(/(?:^|\D)(\d{5,7})(?!\d)/);
+      if (m && instSymbols.has(m[1])) symbolOverride = m[1];
+    }
     const cardId = (await db.prepare(
       'INSERT INTO ledger_cards (ledger_file_id, report_id, card_key, card_name, debit, credit, net, basket_type, symbol_override) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(fileId, id, c.key, c.name, c.debit, c.credit, c.net, basket, symbolOverride)).lastInsertRowid;
