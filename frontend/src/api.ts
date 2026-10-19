@@ -90,6 +90,7 @@ export type ClientNode = {
   id: number;
   name: string;
   has_vat: boolean;
+  enrich_split?: 'children' | 'headroom' | null; // פיצול כרטסת העשרה כללית (19.10): headroom = 75% לכולם והיתרה למיצוי
   cluster_number: number | null;
   notes: string | null;
   stage?: string;

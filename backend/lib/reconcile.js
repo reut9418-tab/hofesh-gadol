@@ -239,7 +239,7 @@ async function ledgerReconcile(db, report, client) {
           id: 'enrich_fill',
           title: 'העשרה — כרטסת מול דוח הביצוע',
           level: 'ok',
-          text: `כרטסות ההעשרה (₪${fmtN(enrichNet)} נטו) ממולאות בלשונית "דוח הוצאות בפועל" בייצוא${hasVat ? ` בסך ₪${fmtN(enrichGross)} כולל מע"מ` : ''} — ${report.framework === 'gardens' ? 'במרוכז לכל הגנים' : `בחלוקה למוסדות (כרטסת תואמת-שם למוסד שלה, כללית — יחסית לילדים)`}. הפירוט ב"דוח התאמת העשרה".`,
+          text: `כרטסות ההעשרה (₪${fmtN(enrichNet)} נטו) ממולאות בלשונית "דוח הוצאות בפועל" בייצוא${hasVat ? ` בסך ₪${fmtN(enrichGross)} כולל מע"מ` : ''} — ${report.framework === 'gardens' ? 'במרוכז לכל הגנים' : `בחלוקה למוסדות (כרטסת תואמת-שם למוסד שלה; כללית — ${client && client.enrich_split === 'headroom' ? '75% מסל ההעשרה לכל בי"ס והיתרה היכן שתוכר' : 'יחסית לילדים'})`}. הפירוט ב"דוח התאמת העשרה".`,
           a: enrichNet, b: enrichGross, diff: 0,
         }
       : {

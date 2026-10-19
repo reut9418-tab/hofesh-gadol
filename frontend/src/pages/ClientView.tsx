@@ -215,6 +215,15 @@ export default function ClientView({ clientId, go }: { clientId: number; go: (n:
               onChange={async (e) => { await updateClient(clientId, { name: client.name, has_vat: e.target.checked, cluster_number: client.cluster_number, notes: client.notes || undefined }); load(); }} />
             לקוח חייב מע"מ (18%)
           </label>
+          {/* פיצול כרטסת העשרה כללית (רעות 19.10, לביא): 75% מסל ההעשרה לכל בי"ס והיתרה היכן שתוכר; כבוי = יחסית לילדים */}
+          <label title='כרטסת העשרה בלי שם בית ספר: מסומן — 75% מסל ההעשרה לכל בית ספר, והיתרה במקומות שבהם תוכר (השלמה ל-100% ויתרת הסל הגמיש). לא מסומן — פיצול יחסי לכמות הילדים'
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, cursor: 'pointer',
+            background: client.enrich_split === 'headroom' ? T.amberBg : T.paper, borderRadius: 6, padding: '4px 10px',
+            color: client.enrich_split === 'headroom' ? T.amber : T.inkSoft, fontWeight: 600 }}>
+            <input type="checkbox" checked={client.enrich_split === 'headroom'}
+              onChange={async (e) => { await updateClient(clientId, { name: client.name, enrich_split: e.target.checked ? 'headroom' : 'children' }); load(); }} />
+            העשרה כללית: 75% לכולם והיתרה למיצוי
+          </label>
         </div>
       </section>
 

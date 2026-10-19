@@ -26,9 +26,38 @@ async function enrichMatchData(db, report, client, authority) {
   // כרטיס מאוחד עם סמל באסמכתא של כל תנועה — מתפצל לפי התנועות (רעות 7.10)
   const splits = report.framework !== 'gardens' && insts.length ? await cardSplits(db, cards, insts) : new Map();
 
+  // כרטסות כלליות (בלי שם בי"ס ובלי סמל באסמכתא) — כלל רעות 19.10: 75% מסל
+  // ההעשרה לכולם והיתרה היכן שתוכר (lib/enrichAlloc.js), במשותף לכל הכרטסות
+  // הכלליות; כל כרטסת מציגה את חלקה היחסי מהפיצול המשותף
+  const isGeneral = (c) => report.framework !== 'gardens' && !(splits.get(c.id) && splits.get(c.id).isSplit) && !symOf(c);
+  const generalCards = cards.filter(isGeneral);
+  const generalGross = generalCards.reduce((s, c) => s + c.net * vat, 0);
+  let generalAlloc = null;
+  if (generalCards.length && generalGross > 0 && insts.length) {
+    const { allocateGeneralEnrichment, enrichUnits } = require('./enrichAlloc');
+    generalAlloc = allocateGeneralEnrichment(insts, generalGross, await enrichUnits(db, report, client, authority), client && client.enrich_split);
+  }
+
   const perCard = cards.map((c) => {
     const gross = r2(c.net * vat);
     const sp = splits.get(c.id);
+    if (generalAlloc && isGeneral(c)) {
+      const share = gross / generalGross;
+      const rows = generalAlloc.rows.map((r) => ({
+        symbol: r.symbol, name: r.name, children: r.children,
+        budget: r2(r.budget), floor: r2(r.floor * share), extra: r2((r.fill + r.flex + r.rest) * share),
+        amount: r2(r.amount * share),
+      })).filter((r) => r.amount > 0 || r.budget > 0);
+      // סגירת עיגול — הסה"כ שווה בדיוק לכרטסת
+      const diff = r2(gross - rows.reduce((s, r) => s + r.amount, 0));
+      if (diff !== 0 && rows.length) { const big = rows.reduce((a, b) => (b.amount > a.amount ? b : a)); big.amount = r2(big.amount + diff); big.extra = r2(big.extra + diff); }
+      return {
+        cardKey: c.card_key, cardName: c.card_name, net: r2(c.net), gross,
+        method: generalAlloc.method === 'headroom' ? 'headroom' : 'children',
+        shared: generalCards.length > 1 ? generalCards.length : 0,
+        rows,
+      };
+    }
     if (sp && sp.isSplit) {
       const rows = Object.entries(sp.bySymbol).map(([symbol, net]) => {
         const inst = insts.find((i) => String(i.symbol) === String(symbol));
@@ -92,25 +121,30 @@ function renderEnrichMatchHtml(d) {
   const methodHe = {
     aggregate: 'כל הגנים במרוכז',
     name: 'שיוך לפי שם הכרטסת',
+    manual: 'שיוך ידני',
+    ref: 'לפי סמל המוסד באסמכתא של כל תנועה',
     children: 'פיצול יחסי לפי כמות הילדים בכל מוסד',
     budget: 'פיצול יחסי לפי תקציב כל מוסד',
+    headroom: '75% מסל ההעשרה לכל בית ספר, והיתרה היכן שתוכר (השלמה ל-100% ויתרת הסל הגמיש בבתי ספר ללא חריגת שכר לא מכוסה)',
   };
 
   const cardBlocks = d.perCard.map((c) => {
+    const extraCols = c.method === 'headroom' ? 3 : c.method === 'children' ? 1 : 0;
     const rows = c.rows.map((r, i) => `<tr${i % 2 ? ' class="z"' : ''}>
       <td>${r.symbol ? esc(r.symbol) : '—'}</td>
       <td>${esc(r.name)}</td>
       ${c.method === 'children' ? `<td class="num">${fmt(r.children)}</td>` : ''}
+      ${c.method === 'headroom' ? `<td class="num">₪${fmt(r.budget)}</td><td class="num">₪${fmt(r.floor)}</td><td class="num">${r.extra > 0 ? `₪${fmt(r.extra)}` : '—'}</td>` : ''}
       <td class="num">₪${fmt(r.amount)}</td>
     </tr>`).join('');
     const total = c.rows.reduce((s, r) => s + r.amount, 0);
     return `<section class="cardblock">
       <h2>כרטסת ${esc(c.cardKey)} — ${esc(c.cardName)}</h2>
-      <div class="meta">סכום הכרטסת (נטו): <b>₪${fmt(c.net)}</b>${d.hasVat ? ` · מדווח בדוח הביצוע כולל מע"מ 18%: <b>₪${fmt(c.gross)}</b>` : ''} · אופן הייחוס: ${methodHe[c.method]}</div>
+      <div class="meta">סכום הכרטסת (נטו): <b>₪${fmt(c.net)}</b>${d.hasVat ? ` · מדווח בדוח הביצוע כולל מע"מ 18%: <b>₪${fmt(c.gross)}</b>` : ''} · אופן הייחוס: ${methodHe[c.method]}${c.shared ? ` · ${c.shared} כרטסות כלליות מתחלקות יחד — כאן חלקה של כרטסת זו` : ''}</div>
       <table>
-        <thead><tr><th>סמל מוסד</th><th>${d.report.framework === 'gardens' ? 'מסגרת' : 'שם בית הספר'}</th>${c.method === 'children' ? '<th class="num">ילדים</th>' : ''}<th class="num">העשרה שיוחסה</th></tr></thead>
+        <thead><tr><th>סמל מוסד</th><th>${d.report.framework === 'gardens' ? 'מסגרת' : 'שם בית הספר'}</th>${c.method === 'children' ? '<th class="num">ילדים</th>' : ''}${c.method === 'headroom' ? '<th class="num">סל העשרה</th><th class="num">75% מהסל</th><th class="num">תוספת מיצוי</th>' : ''}<th class="num">העשרה שיוחסה</th></tr></thead>
         <tbody>${rows}
-          <tr class="total"><td colspan="${c.method === 'children' ? 3 : 2}">סה"כ</td><td class="num">₪${fmt(total)}</td></tr>
+          <tr class="total"><td colspan="${2 + extraCols}">סה"כ</td><td class="num">₪${fmt(total)}</td></tr>
         </tbody>
       </table>
       <div class="check">${c.unassigned
@@ -179,7 +213,7 @@ function buildEnrichMatchXlsx(d) {
     ok: { font: { bold: true, sz: 10, color: { rgb: '4C7A45' } }, alignment: { horizontal: 'right' } },
   };
   const cell = (v, s) => ({ v: v == null ? '' : v, t: typeof v === 'number' ? 'n' : 's', s });
-  const methodHe = { aggregate: 'כל הגנים במרוכז', name: 'שיוך לפי שם הכרטסת', manual: 'שיוך ידני', ref: 'לפי סמל המוסד באסמכתא של כל תנועה', children: 'פיצול יחסי לפי כמות הילדים', budget: 'פיצול יחסי לפי התקציב' };
+  const methodHe = { aggregate: 'כל הגנים במרוכז', name: 'שיוך לפי שם הכרטסת', manual: 'שיוך ידני', ref: 'לפי סמל המוסד באסמכתא של כל תנועה', children: 'פיצול יחסי לפי כמות הילדים', budget: 'פיצול יחסי לפי התקציב', headroom: '75% מסל ההעשרה לכל בי"ס, והיתרה היכן שתוכר' };
 
   const isGardens = d.report.framework === 'gardens';
   const aoa = [
@@ -191,23 +225,29 @@ function buildEnrichMatchXlsx(d) {
 
   for (const c of d.perCard) {
     const withKids = c.method === 'children';
+    const withHead = c.method === 'headroom'; // סל / 75% / תוספת מיצוי
+    const extraN = withKids ? 1 : withHead ? 3 : 0;
     aoa.push([cell(`כרטסת ${c.cardKey} — ${c.cardName}`, S.cardTitle)]);
     merges.push({ s: { r: aoa.length - 1, c: 0 }, e: { r: aoa.length - 1, c: 3 } });
-    aoa.push([cell(`סכום הכרטסת (נטו): ₪${Math.round(c.net).toLocaleString('he-IL')}${d.hasVat ? ` · כולל מע"מ: ₪${Math.round(c.gross).toLocaleString('he-IL')}` : ''} · אופן הייחוס: ${methodHe[c.method]}`, S.meta)]);
+    aoa.push([cell(`סכום הכרטסת (נטו): ₪${Math.round(c.net).toLocaleString('he-IL')}${d.hasVat ? ` · כולל מע"מ: ₪${Math.round(c.gross).toLocaleString('he-IL')}` : ''} · אופן הייחוס: ${methodHe[c.method]}${c.shared ? ` · ${c.shared} כרטסות כלליות מתחלקות יחד` : ''}`, S.meta)]);
     merges.push({ s: { r: aoa.length - 1, c: 0 }, e: { r: aoa.length - 1, c: 3 } });
     aoa.push([
       cell('סמל מוסד', S.head), cell(isGardens ? 'מסגרת' : 'שם בית הספר', S.head),
-      ...(withKids ? [cell('ילדים', S.head)] : []), cell('העשרה שיוחסה', S.head),
+      ...(withKids ? [cell('ילדים', S.head)] : []),
+      ...(withHead ? [cell('סל העשרה', S.head), cell('75% מהסל', S.head), cell('תוספת מיצוי', S.head)] : []),
+      cell('העשרה שיוחסה', S.head),
     ]);
     c.rows.forEach((r, i) => {
       const z = i % 2 === 1;
       aoa.push([
         cell(r.symbol || '—', S.cellR(z)), cell(r.name, S.cellR(z)),
-        ...(withKids ? [cell(r.children || 0, S.cellN(z))] : []), cell(r.amount, S.cellN(z)),
+        ...(withKids ? [cell(r.children || 0, S.cellN(z))] : []),
+        ...(withHead ? [cell(r.budget || 0, S.cellN(z)), cell(r.floor || 0, S.cellN(z)), cell(r.extra || 0, S.cellN(z))] : []),
+        cell(r.amount, S.cellN(z)),
       ]);
     });
     const total = c.rows.reduce((s, r) => s + r.amount, 0);
-    aoa.push([cell('סה"כ', S.totalR), cell('', S.totalR), ...(withKids ? [cell('', S.totalR)] : []), cell(Math.round(total * 100) / 100, S.total)]);
+    aoa.push([cell('סה"כ', S.totalR), cell('', S.totalR), ...Array.from({ length: extraN }, () => cell('', S.totalR)), cell(Math.round(total * 100) / 100, S.total)]);
     aoa.push([cell(Math.abs(total - c.gross) < 1 ? `✓ הסה"כ תואם לסך הכרטסת${d.hasVat ? ' (בתוספת מע"מ)' : ''}` : `⚠ הסה"כ שונה מסך הכרטסת (₪${Math.round(c.gross).toLocaleString('he-IL')})`, S.ok)]);
     merges.push({ s: { r: aoa.length - 1, c: 0 }, e: { r: aoa.length - 1, c: 3 } });
     aoa.push([]);
@@ -220,7 +260,7 @@ function buildEnrichMatchXlsx(d) {
   }
 
   const ws = XLSXS.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [{ wch: 13 }, { wch: 34 }, { wch: 11 }, { wch: 16 }];
+  ws['!cols'] = [{ wch: 13 }, { wch: 34 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 16 }];
   ws['!merges'] = merges;
   const wb = XLSXS.utils.book_new();
   wb.Workbook = { Views: [{ RTL: true }] };

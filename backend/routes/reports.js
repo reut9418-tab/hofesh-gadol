@@ -1362,6 +1362,19 @@ async function buildExpenseFill(db, report, client) {
     const mb = mgmtBudget.get(String(inst.symbol)) || 0;
     if (mb > 0) rows.push([inst.symbol, EXPENSE_HE.management, round2(mb), mgmtCards, OPERATION_SOURCE]);
   }
+  // כרטסות העשרה כלליות (בלי בי"ס ובלי סמל באסמכתא): כלל רעות 19.10 — 75% מסל
+  // ההעשרה לכולם, והיתרה היכן שתוכר (lib/enrichAlloc.js); כמה כרטסות כלליות
+  // מתחלקות יחד, וכל בי"ס מקבל מכל כרטסת לפי חלקה בסך
+  const isGeneral = (c) => !(splits.get(c.id) && splits.get(c.id).isSplit) && !symOfCard(c);
+  const generalEnrich = cards.filter((c) => c.basket_type === 'enrichment' && isGeneral(c));
+  const enrichAlloc = new Map(); // symbol → סכום כולל (ברוטו) מכל הכרטסות הכלליות
+  const generalEnrichGross = generalEnrich.reduce((s, c) => s + c.net * vat, 0);
+  if (generalEnrich.length && generalEnrichGross > 0) {
+    const { allocateGeneralEnrichment, enrichUnits } = require('../lib/enrichAlloc');
+    const authority = report.authority_id ? await db.prepare('SELECT * FROM authorities WHERE id = ?').get(report.authority_id) : null;
+    const alloc = allocateGeneralEnrichment(insts, generalEnrichGross, await enrichUnits(db, report, client, authority), client && client.enrich_split);
+    for (const r of alloc.rows) if (r.amount > 0) enrichAlloc.set(String(r.symbol), r.amount);
+  }
   cards.forEach((c) => {
     if (c.basket_type === 'management') return; // טופל מהתקציב למעלה
     const label = EXPENSE_HE[c.basket_type];
@@ -1374,6 +1387,17 @@ async function buildExpenseFill(db, report, client) {
     const sym = symOfCard(c);
     if (sym) {
       rows.push([sym, label, r2(c.net), c.card_key, OPERATION_SOURCE]);
+    } else if (c.basket_type === 'enrichment' && enrichAlloc.size) {
+      const share = (c.net * vat) / generalEnrichGross;
+      const list = [...enrichAlloc].filter(([, v]) => v > 0);
+      let allocated = 0;
+      list.forEach(([s, v], idx) => {
+        const part = idx === list.length - 1
+          ? Math.round((c.net * vat - allocated) * 100) / 100
+          : Math.round(v * share * 100) / 100;
+        allocated += part;
+        if (part > 0) rows.push([s, label, part, c.card_key, OPERATION_SOURCE]);
+      });
     } else if (totalChildren > 0) {
       let allocated = 0;
       const gross = c.net * vat;
@@ -1887,8 +1911,11 @@ router.get('/:id/export', ah(async (req, res) => {
   // שנכתבו נרשמים במערכת מיד — בלי להעלות את הקובץ חזרה. העלאת הקובץ הסופי
   // נשארת רק לסכומי התשלום שהאקסל מחשב (נוסחאות המשרד)
   // סייעות רפואיות (לשונית 7) נספרות בשכר הביצוע כמו בקובץ המשרד; רכז רשותי — שורת הרשות, לא בסלי המוסד
-  try { await recordExport(db, id, report, exMd, execRows, execRows.filter((r) => !isAuthorityCoord(r[6]))); }
-  catch (e) { console.error(`[export ${id}] רישום הייצוא נכשל:`, e.message); }
+  // שער הרגרסיה מייצא את כל הדוחות לבדיקה בלבד — לא רושם (רעות 19.10: "אל תשנה שום דוח")
+  if (process.env.EXPORT_READONLY !== '1') {
+    try { await recordExport(db, id, report, exMd, execRows, execRows.filter((r) => !isAuthorityCoord(r[6]))); }
+    catch (e) { console.error(`[export ${id}] רישום הייצוא נכשל:`, e.message); }
+  }
   const exAuthority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
   // כשהקובץ שהועלה הוא בעצמו ייצוא קודם שלנו — לא לשרשר "דוח ביצוע ממולא" פעמיים
   const exBase = (report.budget_file_name || 'report.xlsx').replace(/\.xlsx?$/i, '').replace(/^(דוח ביצוע ממולא - )+/, '');

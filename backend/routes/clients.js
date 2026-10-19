@@ -8,6 +8,8 @@ const { reportHealth, reportAlerts, dashboardStatus, deriveClientStage, CLIENT_S
 const clientSchema = z.object({
   name: z.string().min(1, 'שם לקוח נדרש'),
   has_vat: z.boolean().optional(),
+  // פיצול כרטסת העשרה כללית: 'headroom' = 75% מהסל לכל בי"ס והיתרה למיצוי (רעות 19.10, לביא); ריק = יחסית לילדים
+  enrich_split: z.enum(['children', 'headroom']).nullable().optional(),
   cluster_number: z.number().int().min(1).max(10).nullable().optional(),
   notes: z.string().optional(),
   manage_status: z.enum(['no_material', 'material', 'in_treatment', 'done']).nullable().optional(),
@@ -221,10 +223,11 @@ router.put('/:id', ah(async (req, res) => {
   const id = parseInt(req.params.id);
   const cur = await db.prepare('SELECT * FROM clients WHERE id = ?').get(id);
   if (!cur) return res.status(404).json({ error: 'לקוח לא נמצא' });
-  await db.prepare('UPDATE clients SET name = ?, has_vat = ?, cluster_number = ?, notes = ?, manage_status = ?, manage_notes = ?, manage_data = ? WHERE id = ?')
+  await db.prepare('UPDATE clients SET name = ?, has_vat = ?, enrich_split = ?, cluster_number = ?, notes = ?, manage_status = ?, manage_notes = ?, manage_data = ? WHERE id = ?')
     .run(
       data.name,
       data.has_vat != null ? (data.has_vat ? 1 : 0) : cur.has_vat,
+      data.enrich_split !== undefined ? data.enrich_split : cur.enrich_split,
       data.cluster_number !== undefined ? data.cluster_number : cur.cluster_number,
       data.notes !== undefined ? data.notes : cur.notes,
       data.manage_status !== undefined ? data.manage_status : cur.manage_status,

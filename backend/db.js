@@ -200,6 +200,7 @@ async function migrate(db) {
   await add('clients', 'manage_notes TEXT');
   // צ'ק-ליסט הניהול המלא (JSON): הצעת מחיר/חשבון/מייל/חומר/מי מטפל/אנשי קשר...
   await add('clients', 'manage_data TEXT');
+  await add('clients', 'enrich_split TEXT'); // פיצול כרטסת העשרה כללית: 'headroom' = 75% לכולם והיתרה למיצוי (רעות 19.10, לביא)
   // שם הגן/בי"ס כפי שמופיע בשורת העובד בדוח העלות — לשיוך סמל אוטומטי מול ההרשמה
   await add('cost_rows', 'inst_name TEXT');
   // ניוד בין פרויקטים (15 יום ↔ הרחבה באותה רשות): מקור + דחיית המלצה

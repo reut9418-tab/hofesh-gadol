@@ -47,7 +47,14 @@ async function cardSplits(db, cards, institutions) {
     });
     // שיוך ידני של הכרטיס כולו לבית ספר אחד גובר על הפיצול
     const wholeCardManual = c.symbol_override && c.symbol_override !== 'general' && valid.has(String(c.symbol_override));
-    const isSplit = !wholeCardManual && valid.size > 0 && txOut.some((t) => t.method === 'ref');
+    // כרטיס "מפוצל לפי אסמכתא" רק כשחלק ממשי מהתנועות נושא סמל מוסד (≥20% מהתנועות
+    // או מהסכום) — מספר אסמכתא בודד שנראה כסמל (לביא: תנועה אחת מתוך 2,199) אינו
+    // הופך כרטיס כללי למפוצל שכל שאר תנועותיו "ללא סמל"
+    const refTx = txOut.filter((t) => t.method === 'ref');
+    const manualTx = txOut.filter((t) => t.method === 'manual');
+    const absNet = (arr) => arr.reduce((s, t) => s + Math.abs(t.net), 0);
+    const refShare = txOut.length ? Math.max(refTx.length / txOut.length, absNet(txOut) > 0 ? absNet(refTx) / absNet(txOut) : 0) : 0;
+    const isSplit = !wholeCardManual && valid.size > 0 && (manualTx.length > 0 || (refTx.length > 0 && refShare >= 0.2));
     const bySymbol = {};
     let unassignedNet = 0, unassignedCount = 0;
     if (isSplit) {

@@ -46,7 +46,7 @@ const r0 = (n) => Math.round(Number(n) || 0);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function startServer() {
-  const proc = spawn(process.execPath, ['server.js'], { cwd: BACKEND, env: { ...process.env, PORT: String(PORT) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn(process.execPath, ['server.js'], { cwd: BACKEND, env: { ...process.env, PORT: String(PORT), EXPORT_READONLY: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   proc.stdout.on('data', (d) => { log += d; });
   proc.stderr.on('data', (d) => { log += d; });

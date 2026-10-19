@@ -406,26 +406,42 @@ async function fillMinistryReport(buf, rows, coordRows = null, expenses = null, 
           }
           exml = setCellsInSheetXml(exml, writes);
         } else if (expDet.mode === 'perSchool' && expenses.perSchool) {
-          // אי-דריסה: קוראים את הרשומות הקיימות; כותבים רק צירופי (סמל, מהות)
-          // חסרים — בשורות הפנויות שאחרי הקיימות
+          // אי-דריסה של מה שמולא ידנית: קוראים את הרשומות הקיימות; צירוף (סמל, מהות)
+          // שקיים בקובץ עם כרטיס אחר/ריק נשאר כפי שהוא. שורה שנכתבה על ידינו בייצוא
+          // קודם (אותו סמל, מהות וכרטיס — הקובץ שהועלה הוא ייצוא קודם) מתעדכנת
+          // לסכום החדש (רעות 19.10: הפיצול השתנה — הקובץ חייב לשקף אותו), ושורה
+          // שלנו שאין לה יותר הקצאה מתאפסת
           const wbe = XLSX.read(buf, { type: 'buffer', sheetRows: expDet.startRow + 450 });
           const dataE = XLSX.utils.sheet_to_json(wbe.Sheets[expDet.sheetName], { header: 1, defval: null });
           const colIdxOf = (src) => XLSX.utils.decode_col(expDet.colSpecs.find((c) => c.src === src).col);
-          const cSym = colIdxOf(0), cEss = colIdxOf(1), cAmt = colIdxOf(2);
-          const existing = new Set();
+          const cSym = colIdxOf(0), cEss = colIdxOf(1), cAmt = colIdxOf(2), cCard = colIdxOf(3);
+          const amtCol = expDet.colSpecs.find((c) => c.src === 2).col;
+          const ourCards = new Set(expenses.perSchool.map((row) => norm(row[3] ?? '')).filter(Boolean));
+          const foreign = new Set(); // סמל|מהות — שורות שלא נכתבו מהכרטסות שלנו (ידני / מקור אחר)
+          const ours = new Map(); // סמל|מהות|כרטיס → מספר שורה (1-based) של שורה שנכתבה על ידינו
           let lastUsed = expDet.startRow - 1; // 1-based: השורה האחרונה שבשימוש
           for (let r = expDet.startRow - 1; r < dataE.length; r++) {
             const row = dataE[r] || [];
             const sym = norm(row[cSym] ?? '').replace(/\D/g, '');
             const ess = norm(row[cEss] ?? '');
             const amt = row[cAmt];
+            const card = norm(row[cCard] ?? '');
             if (!sym && !ess && (amt == null || amt === '')) continue;
-            if (sym || ess) existing.add(`${sym}|${ess}`);
+            if (sym && ess && card && ourCards.has(card)) ours.set(`${sym}|${ess}|${card}`, r + 1);
+            else if (sym || ess) foreign.add(`${sym}|${ess}`);
             lastUsed = r + 1;
           }
-          const toWrite = expenses.perSchool.filter((row) => !existing.has(`${String(row[0])}|${norm(row[1])}`));
           const writes = [];
-          toWrite.forEach((row, i) => {
+          const touched = new Set();
+          const toAppend = [];
+          for (const row of expenses.perSchool) {
+            const k3 = `${String(row[0])}|${norm(row[1])}|${norm(row[3] ?? '')}`;
+            if (ours.has(k3)) { touched.add(k3); writes.push({ row: ours.get(k3), col: amtCol, kind: 'num', value: row[2] }); continue; }
+            if (foreign.has(`${String(row[0])}|${norm(row[1])}`)) continue; // מולא בקובץ ממקור אחר — לא דורסים
+            toAppend.push(row);
+          }
+          for (const [k3, rowNum] of ours) if (!touched.has(k3)) writes.push({ row: rowNum, col: amtCol, kind: 'num', value: 0 });
+          toAppend.forEach((row, i) => {
             const rowNum = lastUsed + 1 + i;
             expDet.colSpecs.forEach(({ src, col, kind }) => {
               const v = row[src];
