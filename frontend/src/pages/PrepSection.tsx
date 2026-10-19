@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { T } from '../theme';
 import { btn, card, input } from '../ui';
 import { getReportPrep, saveReportPrep, exportReportUrl, downloadExport, stage1DocUrl, costMatchDocUrl, downloadCostMatchXlsx, downloadCostAssignedXlsx, downloadTargetsXlsx, applyMove, applyBumps, autoAssign, deleteCostRow, deleteCostRows, addWorker, setHourTransfer, NewWorker, PrepData, Assignment } from '../api';
@@ -66,8 +66,27 @@ export default function PrepSection({ reportId }: { reportId: number }) {
 
   if (!data || data.rows.length === 0) return null;
 
-  const set = (rowId: number, patch: Partial<Assignment>) =>
+  // שמירה אוטומטית של סמל/איש צוות/תפקיד (רעות 19.10, נתניה צפון: שיוכים "חזרו אחורה" —
+  // עריכה שלא נשמרה ב"שמירת שיוכים" נמחקה ברענון המסך / מעבר לשוניות / קליטת קובץ).
+  // תעריפים ידניים, ת.ז והסבר עדיין נשמרים רק בכפתור (הקלדה חלקית אסור שתישמר)
+  const assignRef = useRef(assign);
+  useEffect(() => { assignRef.current = assign; }, [assign]);
+  const autoTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const autoSave = (rowIds: number[]) => {
+    const key = rowIds.join(',');
+    clearTimeout(autoTimers.current[key]);
+    autoTimers.current[key] = setTimeout(async () => {
+      const body: Record<string, Assignment> = {};
+      for (const id of rowIds) { const a = assignRef.current[id]; if (a) body[id] = { symbol: a.symbol ?? null, staffType: a.staffType ?? null, role: a.role ?? null }; }
+      if (!Object.keys(body).length) return;
+      try { await saveReportPrep(reportId, body); setMsg('✓ השיוך נשמר אוטומטית.'); }
+      catch { setMsg('השמירה האוטומטית נכשלה — לחצי "שמירת שיוכים".'); }
+    }, 700);
+  };
+  const set = (rowId: number, patch: Partial<Assignment>) => {
     setAssign((p) => ({ ...p, [rowId]: { ...p[rowId], ...patch } }));
+    if ('symbol' in patch || 'staffType' in patch || 'role' in patch) autoSave([rowId]);
+  };
 
   const applyBulk = () => {
     setAssign((p) => {
@@ -86,6 +105,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
       });
       return next;
     });
+    autoSave(shown.map((r) => r.rowId)); // שיוך קבוצתי נשמר מיד
   };
 
   const toggleRow = (rowId: number) =>
