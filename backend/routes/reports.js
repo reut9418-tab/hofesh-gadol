@@ -1894,12 +1894,14 @@ router.get('/:id/export', ah(async (req, res) => {
   const authorityCoordRows = execRows.filter((r) => isAuthorityCoord(r[6]));
   // סייעות רפואיות/אישיות (גנים, רעות 18.10) — ללשונית (7) ולא לכח האדם:
   // 15 יום: ברוטו ליום × ימי העסקה (6 ש' ליום); הרחבה: ברוטו שעתי / עלות שעתית × שעות
-  const isMedicalAide = (r) => report.framework === 'gardens' && /רפואי|אישית/.test(String(r[6] || ''));
+  // גם בתבנית בתי הספר יש לשונית (7) לסייעות רפואיות/אישיות (קדימה צורן 19.10 — סייעות 75 ₪ ליום של הרשות)
+  const isMedicalAide = (r) => /רפואי|אישית/.test(String(r[6] || ''));
   const aideRows = execRows.filter(isMedicalAide).map((r) => {
     const hours = Number(r[10]) || 0;
     const days = Math.max(1, Math.round(hours / 6)) || 1;
     const dailyGross = r[8] != null ? Math.round((Number(r[8]) * hours / days) * 100) / 100 : null;
-    return [r[0], null, r[2], r[3], r[4], dailyGross, days, r[8], r[9], r[10]];
+    // [10] שכבת גיל — בתבנית בתי הספר (התכנית לכיתות א-ג); בגנים העמודה לא קיימת ולא נכתבת
+    return [r[0], null, r[2], r[3], r[4], dailyGross, days, r[8], r[9], r[10], report.framework === 'gardens' ? null : 'א-ג'];
   });
   const schoolRows = execRows.filter((r) => !isAuthorityCoord(r[6]) && !isMedicalAide(r));
   const filled = await fillMinistryReport(srcBuf, schoolRows, coordRows, expenses, income, authorityCoordRows, aideRows);

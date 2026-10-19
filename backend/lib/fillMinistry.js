@@ -745,7 +745,7 @@ const STAFF_TYPES = [
    שעתי" / "עלות שכר שעתית" × "סך שעות" (רעות 18.10: "ב-15 יום ברוטו, בהרחבה עלות").
    עמודות הקלט מזוהות לפי הכותרות; "מעמד" ושאר העמודות הן נוסחאות של המשרד. */
 const AIDES_SHEET_HINT = 'סייעות רפואיות';
-const AIDE_SRC = { symbol: 0, student: 1, id: 2, first: 3, last: 4, dailyGross: 5, days: 6, hourlyGross: 7, hourlyCost: 8, hours: 9 };
+const AIDE_SRC = { symbol: 0, student: 1, id: 2, first: 3, last: 4, dailyGross: 5, days: 6, hourlyGross: 7, hourlyCost: 8, hours: 9, grade: 10 }; // grade — תבנית בתי הספר: "שכבת גיל (א-ג, ד-ו)"
 function detectAidesSheet(buf) {
   const wb = asWb(buf);
   const sheetName = wb.SheetNames.find((n) => n.includes(AIDES_SHEET_HINT));
@@ -770,6 +770,7 @@ function detectAidesSheet(buf) {
   add(AIDE_SRC.hourlyGross, hourlyG, 'num');
   add(AIDE_SRC.hourlyCost, find(/עלות שכר שעתית/), 'num');
   add(AIDE_SRC.hours, find(/סך שעות/), 'num');
+  add(AIDE_SRC.grade, find(/שכבת גיל/), 'text'); // בתי ספר בלבד (קדימה 19.10)
   return { sheetName, startRow: idHead.r + 2, layout: daily ? 'daily' : hourlyG ? 'hourly' : 'unknown', colSpecs: specs };
 }
 
