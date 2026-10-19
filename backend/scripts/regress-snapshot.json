@@ -1,5 +1,5 @@
 {
-  "savedAt": "2026-10-19T05:55:50.121Z",
+  "savedAt": "2026-10-19T06:33:38.881Z",
   "db": {
     "unrouted_rows": 1226,
     "totals_like_rows": 0,
@@ -33,7 +33,7 @@
       "stage1_has_total": true,
       "ledger_status": 200,
       "ledger_cards": 24,
-      "ledger_checks": "enrich_fill:ok exec_vs_cost:err income_vs_ledger:err ledger_vs_cost:err school_salary_match:err",
+      "ledger_checks": "enrich_fill:ok exec_vs_cost:ok income_vs_ledger:err ledger_vs_cost:err school_salary_match:err",
       "export_status": 200,
       "export_kb": 2048,
       "export_rows": 71,
@@ -41,7 +41,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 30194
+      "ms": 23072
     },
     "70": {
       "label": "קריית מוצקין גנים 15 יום",
@@ -57,8 +57,8 @@
         "סייעת ממשיכה": 71
       },
       "prep_dup_workers": 0,
-      "file_missing": null,
-      "file_extra": null,
+      "file_missing": 0,
+      "file_extra": 0,
       "salary_overflow": 328364,
       "salary_unfunded": 203660,
       "stage1_status": 200,
@@ -66,7 +66,7 @@
       "stage1_has_total": true,
       "ledger_status": 200,
       "ledger_cards": 25,
-      "ledger_checks": "enrich_fill:ok ledger_vs_cost:מתנ\"ס:err ledger_vs_cost:רשות:err",
+      "ledger_checks": "enrich_fill:ok exec_vs_cost:ok ledger_vs_cost:מתנ\"ס:err ledger_vs_cost:רשות:err",
       "export_status": 200,
       "export_kb": 2013,
       "export_rows": 230,
@@ -74,7 +74,7 @@
       "export_no_symbol": 230,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 18441
+      "ms": 13157
     },
     "87": {
       "label": "נבון חבל יבנה גנים הרחבה",
@@ -91,7 +91,7 @@
         "סייעת חדשה": 9
       },
       "prep_dup_workers": 0,
-      "file_missing": 12,
+      "file_missing": 0,
       "file_extra": 0,
       "salary_overflow": 0,
       "salary_unfunded": 0,
@@ -100,7 +100,7 @@
       "stage1_has_total": true,
       "ledger_status": 200,
       "ledger_cards": 6,
-      "ledger_checks": "enrich_fill:ok exec_vs_cost:err ledger_vs_cost:ok",
+      "ledger_checks": "enrich_fill:ok exec_vs_cost:ok ledger_vs_cost:ok",
       "export_status": 200,
       "export_kb": 1995,
       "export_rows": 45,
@@ -108,7 +108,7 @@
       "export_no_symbol": 45,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 22379
+      "ms": 22863
     },
     "88": {
       "label": "נבון יואב גנים 15 יום",
@@ -124,8 +124,8 @@
         "רכזת גן": 1
       },
       "prep_dup_workers": 0,
-      "file_missing": null,
-      "file_extra": null,
+      "file_missing": 0,
+      "file_extra": 0,
       "salary_overflow": 5278,
       "salary_unfunded": 1246,
       "stage1_status": 200,
@@ -141,7 +141,7 @@
       "export_no_symbol": 6,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 19660
+      "ms": 19787
     },
     "92": {
       "label": "עכו בתי ספר 15 יום",
@@ -174,7 +174,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 28304
+      "ms": 27853
     },
     "105": {
       "label": "מעלה אדומים בתי ספר 15 יום",
@@ -207,7 +207,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 28430
+      "ms": 23476
     },
     "114": {
       "label": "לביא גנים 15 יום",
@@ -240,7 +240,7 @@
       "export_no_symbol": 1442,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 38186
+      "ms": 34425
     },
     "115": {
       "label": "לביא גנים הרחבה",
@@ -256,8 +256,8 @@
         "רכזת גן": 35
       },
       "prep_dup_workers": 0,
-      "file_missing": null,
-      "file_extra": null,
+      "file_missing": 0,
+      "file_extra": 0,
       "salary_overflow": 108301,
       "salary_unfunded": 0,
       "stage1_status": 200,
@@ -265,7 +265,7 @@
       "stage1_has_total": true,
       "ledger_status": 200,
       "ledger_cards": 2,
-      "ledger_checks": "enrich_fill:ok ledger_vs_cost:err",
+      "ledger_checks": "enrich_fill:ok exec_vs_cost:ok ledger_vs_cost:err",
       "export_status": 200,
       "export_kb": 3863,
       "export_rows": 1258,
@@ -273,7 +273,7 @@
       "export_no_symbol": 1258,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 35021
+      "ms": 36362
     },
     "116": {
       "label": "לביא בתי ספר 15 יום",
@@ -298,7 +298,7 @@
       "stage1_has_total": true,
       "ledger_status": 200,
       "ledger_cards": 2,
-      "ledger_checks": "enrich_fill:ok exec_vs_cost:warn ledger_vs_cost:אביב:err ledger_vs_cost:לביא:err split_unassigned:1094:warn split_unassigned:1095:warn",
+      "ledger_checks": "enrich_fill:ok exec_vs_cost:ok ledger_vs_cost:אביב:err ledger_vs_cost:לביא:err split_unassigned:1094:warn split_unassigned:1095:warn",
       "export_status": 200,
       "export_kb": 5096,
       "export_rows": 2261,
@@ -306,7 +306,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 161749
+      "ms": 172259
     },
     "117": {
       "label": "לביא בתי ספר הרחבה",
@@ -339,7 +339,7 @@
       "export_no_symbol": 0,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 91715
+      "ms": 86777
     },
     "127": {
       "label": "קדימה גנים 15 יום",
@@ -357,8 +357,8 @@
         "סייעת ממשיכה": 34
       },
       "prep_dup_workers": 0,
-      "file_missing": null,
-      "file_extra": null,
+      "file_missing": 0,
+      "file_extra": 0,
       "salary_overflow": 13217,
       "salary_unfunded": 0,
       "stage1_status": 200,
@@ -374,7 +374,7 @@
       "export_no_symbol": 85,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 20498
+      "ms": 25863
     },
     "136": {
       "label": "אלקנה גנים 15 יום",
@@ -391,8 +391,8 @@
         "סייעת ממשיכה": 17
       },
       "prep_dup_workers": 0,
-      "file_missing": 2,
-      "file_extra": 9,
+      "file_missing": 0,
+      "file_extra": 0,
       "salary_overflow": 22431,
       "salary_unfunded": 0,
       "stage1_status": 200,
@@ -408,7 +408,7 @@
       "export_no_symbol": 46,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 22313
+      "ms": 21992
     },
     "137": {
       "label": "אלקנה גנים הרחבה",
@@ -426,7 +426,7 @@
         "סייעת ממשיכה": 3
       },
       "prep_dup_workers": 0,
-      "file_missing": 4,
+      "file_missing": 0,
       "file_extra": 0,
       "salary_overflow": 1958,
       "salary_unfunded": 0,
@@ -443,7 +443,7 @@
       "export_no_symbol": 23,
       "export_short_ids": 0,
       "salary_match_status": 200,
-      "ms": 21323
+      "ms": 21163
     }
   }
 }

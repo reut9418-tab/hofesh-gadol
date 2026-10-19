@@ -374,19 +374,37 @@ async function recordExport(db, id, report, exMd, execRows, schoolRows) {
   const r2 = (n) => Math.round(n * 100) / 100;
   const bySym = new Map();
   for (const r of schoolRows) {
+    // שורה בלי סמל (רכז/ת גן — אינה צריכה שיוך, כלל 24.9) נכתבת לקובץ ונספרת במוסד המצרפי
     const sym = String(r[0] || '');
-    if (!sym) continue;
     const hourly = Number(r[9]) || 0, hours = Number(r[10]) || 0;
     bySym.set(sym, (bySym.get(sym) || 0) + r2(hourly) * hours);
   }
   const insts = await db.prepare('SELECT id, symbol FROM institutions WHERE report_id = ?').all(id);
+  const instSyms = new Set(insts.map((i) => String(i.symbol)));
+  // סמל הפעילות שאליו הופנו השורות (בתי ספר מאוחדים) → המוסד הרשמי שבמסד
+  const backToOfficial = new Map();
+  for (const [official, activity] of exMd.redirect || []) {
+    if (instSyms.has(String(activity))) continue;
+    backToOfficial.set(String(activity), backToOfficial.has(String(activity)) ? null : String(official)); // כמה רשמיים → לא חד-משמעי
+  }
+  const totals = new Map();
+  const grandTotal = [...bySym.values()].reduce((s, v) => s + v, 0);
+  if (insts.length === 1) {
+    // גני רשות: קובץ המשרד מתקצב את כל הגנים כמוסד מצרפי אחד (סמל מוטב) — כל השכר אליו
+    totals.set(String(insts[0].symbol), grandTotal);
+  } else {
+    for (const [sym, v] of bySym) {
+      const target = instSyms.has(sym) ? sym : backToOfficial.get(sym);
+      if (target) totals.set(target, (totals.get(target) || 0) + v);
+    }
+  }
   let matched = 0;
   for (const i of insts) {
-    const v = r2(bySym.get(String(i.symbol)) || 0);
+    const v = r2(totals.get(String(i.symbol)) || 0);
     if (v > 0) matched++;
     await db.prepare('UPDATE institutions SET salary_actual = ? WHERE id = ?').run(v, i.id);
   }
-  const unknown = [...bySym.keys()].filter((s) => !insts.some((i) => String(i.symbol) === s));
+  const unknown = insts.length === 1 ? [] : [...bySym.keys()].filter((s) => s && !instSyms.has(s) && !backToOfficial.get(s));
   if (unknown.length) console.warn(`[export ${id}] שכר שנכתב לסמלים שאינם מוסדות הדוח: ${unknown.join(', ')}`);
 
   // רשימת העובדים שנכתבו — באותו מבנה של extractWorkerAssignments (השורה הראשונה קובעת)
@@ -405,7 +423,7 @@ async function recordExport(db, id, report, exMd, execRows, schoolRows) {
   }
   await db.prepare('UPDATE reports SET exported_at = ? WHERE id = ?').run(new Date().toISOString(), id);
   require('../lib/status').bustHealthCache([id]);
-  console.log(`[export ${id}] דוח ביצוע הופק: שכר ל-${matched} מוסדות (${r2([...bySym.values()].reduce((s, v) => s + v, 0))} ₪), ${Object.keys(workerSyms).length} עובדים`);
+  console.log(`[export ${id}] דוח ביצוע הופק: שכר ל-${matched} מוסדות (${r2(grandTotal)} ₪), ${Object.keys(workerSyms).length} עובדים`);
 }
 
 /* ---------- העלאת דוח הביצוע של המשרד → בניית התקציב אוטומטית (§9) ---------- */
@@ -1868,7 +1886,8 @@ router.get('/:id/export', ah(async (req, res) => {
   // הדוח שהופק הוא דוח הביצוע (רעות 19.10, ביתר): השכר לפי מוסד ורשימת העובדים
   // שנכתבו נרשמים במערכת מיד — בלי להעלות את הקובץ חזרה. העלאת הקובץ הסופי
   // נשארת רק לסכומי התשלום שהאקסל מחשב (נוסחאות המשרד)
-  try { await recordExport(db, id, report, exMd, execRows, schoolRows); }
+  // סייעות רפואיות (לשונית 7) נספרות בשכר הביצוע כמו בקובץ המשרד; רכז רשותי — שורת הרשות, לא בסלי המוסד
+  try { await recordExport(db, id, report, exMd, execRows, execRows.filter((r) => !isAuthorityCoord(r[6]))); }
   catch (e) { console.error(`[export ${id}] רישום הייצוא נכשל:`, e.message); }
   const exAuthority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
   // כשהקובץ שהועלה הוא בעצמו ייצוא קודם שלנו — לא לשרשר "דוח ביצוע ממולא" פעמיים
