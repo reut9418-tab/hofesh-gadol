@@ -291,12 +291,13 @@ function AuthorityEstimateSection({ rep, onChange }: { rep: any; onChange: () =>
 
 /* הורדת דוח הביצוע הממולא גם משלב 2 — אחרי העלאת כרטסות (ההוצאות בפועל
    מהכרטסות נכתבות לקובץ) בלי לחזור לשלב 1 (בקשת רעות 5.10) */
-function Stage2ExportButton({ reportId }: { reportId: number }) {
+function Stage2ExportButton({ reportId, onChange }: { reportId: number; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const run = async () => {
     setBusy(true); setMsg(null);
-    try { await downloadExport(reportId); setMsg('✓ הקובץ ירד לתיקיית ההורדות.'); }
+    // הדוח שהופק הוא דוח הביצוע (רעות 19.10): השכר לפי מוסד ובדיקות שלב 2 מתעדכנים לפיו מיד
+    try { await downloadExport(reportId); setMsg('✓ הקובץ ירד לתיקיית ההורדות. בדיקות שלב 2 ודוח ההתאמה עודכנו לפי הדוח שהופק.'); onChange(); }
     catch (e: any) {
       // שגיאה מהשרת מגיעה כ-blob (responseType) — קוראים את הטקסט
       let text = 'ההורדה נכשלה — נסי שוב.';
@@ -332,7 +333,9 @@ function FinalFileUpload({ rep, onChange }: { rep: any; onChange: () => void }) 
     } catch (e: any) { setMsg({ ok: false, text: e?.response?.data?.error || 'העלאת הדוח נכשלה.' }); }
     finally { setBusy(false); if (ref.current) ref.current.value = ''; }
   };
-  const when = rep.final_file_at ? new Date(rep.final_file_at).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
+  const fmtWhen = (iso: string) => new Date(iso).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const when = rep.final_file_at ? fmtWhen(rep.final_file_at) : null;
+  const exported = rep.exported_at ? fmtWhen(rep.exported_at) : null;
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${T.line}` }}>
       <input ref={ref} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={(e) => pick(e.target.files)} />
@@ -341,7 +344,8 @@ function FinalFileUpload({ rep, onChange }: { rep: any; onChange: () => void }) 
         {busy ? 'קולט…' : '⬆ העלאת דוח ביצוע סופי'}
       </button>
       <span style={{ fontSize: 11.5, color: when ? T.green : T.inkSoft }}>
-        {when ? `✓ דוח סופי הועלה ב-${when} — סכומי התשלום נלקחים ממנו` : 'מורידים את הדוח הממולא ← פותחים ושומרים באקסל ← מעלים כאן. סכומי התשלום במכתבים יילקחו ממנו.'}
+        {exported ? `✓ דוח ביצוע הופק ב-${exported} — השכר לפי מוסד ובדיקות שלב 2 מעודכנים לפיו. ` : ''}
+        {when ? `✓ דוח סופי הועלה ב-${when} — סכומי התשלום נלקחים ממנו` : 'רק לסכומי התשלום (נוסחאות המשרד שמחשב אקסל): פותחים את הדוח שירד באקסל ← שומרים ← מעלים כאן.'}
       </span>
       {msg && <div style={{ flexBasis: '100%', fontSize: 12.5, color: msg.ok ? T.green : T.amber, background: msg.ok ? T.greenBg : T.amberBg, borderRadius: 8, padding: '6px 10px' }}>{msg.text}</div>}
     </div>
@@ -366,6 +370,7 @@ export default function ReportView({ reportId, clientId, go }: { reportId: numbe
   const [rep, setRep] = useState<any>(null);
   // שלב 1 — הכנה, בדיקות ומכתב; שלב 2 — כרטסות והצלבה (אחרי שהלקוח שלח כרטסות)
   const [stage, setStage] = useState<1 | 2>(1);
+  const [ledgerRefresh, setLedgerRefresh] = useState(0); // רענון הכרטסות אחרי הורדת דוח ביצוע
   const load = () => getReport(reportId).then(setRep).catch(() => setRep(null));
   useEffect(() => { load(); setStage(1); }, [reportId]);
 
@@ -465,7 +470,7 @@ export default function ReportView({ reportId, clientId, go }: { reportId: numbe
       </>}
 
       {stage === 2 && <>
-        <LedgerSection reportId={reportId} onChange={load} />
+        <LedgerSection reportId={reportId} onChange={load} refreshKey={ledgerRefresh} />
         <section style={card}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, fontSize: 14 }}>הפלט של שלב 2</span>
@@ -477,7 +482,7 @@ export default function ReportView({ reportId, clientId, go }: { reportId: numbe
               <button onClick={() => window.open(stage2DetailDocUrl(reportId), '_blank')}
                 title="דוח הבקרות המפורט (פנימי): פערים, השוואה פר משלם, ניצול מול תקציב ופירוט ההכרה"
                 style={btn('ghost')}>📋 פירוט בקרות</button>
-              <Stage2ExportButton reportId={reportId} />
+              <Stage2ExportButton reportId={reportId} onChange={() => { load(); setLedgerRefresh((k) => k + 1); }} />
             </span>
           </div>
           <FinalFileUpload rep={rep} onChange={load} />

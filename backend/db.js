@@ -184,7 +184,9 @@ async function migrate(db) {
   for (const c of ['authority_estimate REAL DEFAULT 0', 'authority_estimate_basket TEXT',
     'authority_estimate_note TEXT', 'authority_estimate_split TEXT',
     // מתי הועלה דוח הביצוע הסופי (אחרי שלב 2, נשמר באקסל) — ממנו סכומי התשלום
-    'final_file_at TEXT']) await add('reports', c);
+    'final_file_at TEXT',
+    // מתי הופק דוח הביצוע מהמערכת (ייצוא) — השכר לפי מוסד ובדיקות שלב 2 מעודכנים לפיו (רעות 19.10)
+    'exported_at TEXT']) await add('reports', c);
   for (const c of ['symbol_override TEXT', 'staff_type TEXT', 'role TEXT',
     'moved_from_dept TEXT', 'moved_from_symbol TEXT', 'move_declined INTEGER DEFAULT 0']) await add('cost_rows', c);
   await add('cost_files', 'payer TEXT');

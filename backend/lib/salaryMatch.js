@@ -291,7 +291,7 @@ function summarize(d) {
       const et = g.execTotals;
       // הפער הכולל מול דוח הביצוע כבר מדווח בבדיקה "דוח ביצוע מול דוח העלות" —
       // כאן רק ההפניה לפירוט לפי בתי ספר, בלי להחמיר את הרמה (פחות רעש)
-      const stale = g.missing && g.missing.length ? ` הקובץ השמור ישן יותר מדוח העלות (${g.missing.length} עובדים שבדוח העלות אינם בו) — זה מקור הפערים; הורדת דוח ביצוע מעודכן והעלאתו תיישר.` : '';
+      const stale = g.missing && g.missing.length ? ` הקובץ השמור ישן יותר מדוח העלות (${g.missing.length} עובדים שבדוח העלות אינם בו) — זה מקור הפערים; הורדת דוח ביצוע מעודכן מהמערכת תיישר.` : '';
       parts.push(`דוח הביצוע בקובץ המשרד השמור ("${fileName}"): פער ב-${et.bad.length} ${et.bad.length === 1 ? 'בית ספר' : 'בתי ספר'} (${et.bad.slice(0, 3).map((s) => s.name || s.symbol).join(', ')}${et.bad.length > 3 ? ` ועוד ${et.bad.length - 3}` : ''}) — פירוט בדוח ההתאמה.${stale}`);
       levels.push('warn');
     }
@@ -331,7 +331,7 @@ function renderSalaryMatchHtml(d) {
   const fileName = (d.report && d.report.budget_file_name) || 'קובץ המשרד';
   const missingBlock = (g) => {
     if (!g.missing || !g.missing.length) return d.hasFileWorkers ? `<div class="check ok">✓ כל העובדים מדוח העלות נמצאים בקובץ המשרד השמור (לשונית כח האדם של "${esc(fileName)}").</div>` : '';
-    return `<div class="check warn">⚠ ${g.missing.length} ${g.missing.length === 1 ? 'עובד/ת מדוח העלות עדיין לא נמצא/ת' : 'עובדים מדוח העלות עדיין לא נמצאים'} בקובץ המשרד השמור במערכת ("${esc(fileName)}", לשונית כח האדם) — ₪${fmt(g.missingCost)} עלות מעביד${d.hasVat ? `, ₪${fmt(g.missingExpected)} כולל מע"מ` : ''}. הקובץ השמור ישן יותר מדוח העלות; הורדת דוח ביצוע מעודכן מהמערכת (והעלאתו) תכניס אותם.</div>
+    return `<div class="check warn">⚠ ${g.missing.length} ${g.missing.length === 1 ? 'עובד/ת מדוח העלות עדיין לא נמצא/ת' : 'עובדים מדוח העלות עדיין לא נמצאים'} בקובץ המשרד השמור במערכת ("${esc(fileName)}", לשונית כח האדם) — ₪${fmt(g.missingCost)} עלות מעביד${d.hasVat ? `, ₪${fmt(g.missingExpected)} כולל מע"מ` : ''}. הקובץ השמור ישן יותר מדוח העלות; הורדת דוח ביצוע מעודכן מהמערכת תכניס אותם.</div>
     <table class="small"><thead><tr><th>בית ספר</th><th>שם העובד/ת</th><th>ת.ז</th><th>מחלקה בדוח העלות</th><th class="num">שעות</th><th class="num">עלות מעביד</th></tr></thead><tbody>
       ${g.missing.map((w, i) => `<tr${i % 2 ? ' class="z"' : ''}><td>${esc(w.school)}${w.symbol ? ` (${esc(w.symbol)})` : ''}</td><td>${esc(w.name)}</td><td>${esc(w.empId)}</td><td>${esc(w.dept)}</td><td class="num">${fmt(w.hours)}</td><td class="num">₪${fmt(w.cost)}</td></tr>`).join('')}
     </tbody></table>`;
@@ -342,7 +342,7 @@ function renderSalaryMatchHtml(d) {
     const staleNote = g.missing && g.missing.length ? ` הקובץ השמור ישן יותר מדוח העלות (${g.missing.length} עובדים שבדוח העלות אינם בו) — זה מקור הפערים.` : '';
     return `<div class="check ${cls(et.level === 'ok' && !et.bad.length ? 'ok' : et.level === 'ok' ? 'warn' : et.level)}">${!et.bad.length
       ? `✓ דוח הביצוע בקובץ המשרד השמור ("${esc(fileName)}") ₪${fmt(et.exec)} תואם לצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) בכל בתי הספר.`
-      : `⚠ דוח הביצוע בקובץ המשרד השמור ("${esc(fileName)}") ₪${fmt(et.exec)} מול הצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) — פער ב-${et.bad.length} בתי ספר (בעמודה "דוח ביצוע בקובץ השמור", הסכום בסוגריים = הפער מול הצפוי).${staleNote} הורדת דוח ביצוע מעודכן מהמערכת (והעלאתו) תיישר את הקובץ.`}</div>${missingBlock(g)}`;
+      : `⚠ דוח הביצוע בקובץ המשרד השמור ("${esc(fileName)}") ₪${fmt(et.exec)} מול הצפוי מדוח העלות ₪${fmt(et.expected)} (${execBasis}) — פער ב-${et.bad.length} בתי ספר (בעמודה "דוח ביצוע בקובץ השמור", הסכום בסוגריים = הפער מול הצפוי).${staleNote} הורדת דוח ביצוע מעודכן מהמערכת תיישר.`}</div>${missingBlock(g)}`;
   };
   // הרכב כרטסת השכר של כל בית ספר — איזה כרטיס, כמה, ואיך שויך (רעות 18.10)
   const compositionBlock = (g) => {
@@ -425,7 +425,7 @@ function renderSalaryMatchHtml(d) {
 </style></head><body>
 <div class="letterhead"><span><b>גוטליב את ביטון, רו"ח</b></span><span>${today}</span></div>
 <h1>דוח התאמת שכר לבתי ספר — כרטסת השכר מול דוח העלות${d.hasExec ? ' ודוח הביצוע' : ''}</h1>
-<div class="sub">${esc(who)} · ${esc(label)} · כרטסת ודוח עלות נטו (עלות מעביד בספרים), לפי סמל מוסד — כבדיקת משרד החינוך.${d.hasExec ? ` דוח הביצוע = מה שכתוב בקובץ המשרד שהועלה (${execBasis}).` : ''}</div>
+<div class="sub">${esc(who)} · ${esc(label)} · כרטסת ודוח עלות נטו (עלות מעביד בספרים), לפי סמל מוסד — כבדיקת משרד החינוך.${d.hasExec ? ` דוח הביצוע = הדוח שהופק מהמערכת, או קובץ המשרד שהועלה (${execBasis}).` : ''}</div>
 ${!d.applicable ? '<p>בגנים הדיווח מרוכז לכל הגנים — אין התאמה לפי מוסד.</p>'
   : !d.hasCards ? '<p>לא נקלטו כרטסות שכר לדוח זה — מעלים כרטסת בלשונית שלב 2 והדוח ייבנה אוטומטית.</p>'
   : `<div class="summary ${cls(d.summary.level)}">${d.summary.level === 'ok' ? '✓' : '⚠'} ${esc(d.summary.text)}</div>${groupBlocks}`}

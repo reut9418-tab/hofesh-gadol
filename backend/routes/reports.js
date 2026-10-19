@@ -365,6 +365,49 @@ async function syncBudgetToStaffing(db, id, report, buf, execRows) {
   return { before, after };
 }
 
+/* הדוח שהופק = דוח הביצוע (רעות 19.10): אחרי כל ייצוא נרשמים במערכת (א) שכר
+   הביצוע לפי מוסד — בדיוק מה שנכתב ללשונית כח האדם (עלות שעתית מעוגלת × שעות,
+   כמו נוסחת עמודת "עלות שכר לתקופה"), (ב) העובדים שנכתבו (ת"ז → סמל/תפקיד) —
+   כך בדיקות שלב 2 ודוח ההתאמה לבתי ספר משקפים את הדוח שירד, בלי להעלותו חזרה.
+   סכומי התשלום (נוסחאות המשרד) עדיין נלקחים רק מהקובץ הסופי שנשמר באקסל. */
+async function recordExport(db, id, report, exMd, execRows, schoolRows) {
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const bySym = new Map();
+  for (const r of schoolRows) {
+    const sym = String(r[0] || '');
+    if (!sym) continue;
+    const hourly = Number(r[9]) || 0, hours = Number(r[10]) || 0;
+    bySym.set(sym, (bySym.get(sym) || 0) + r2(hourly) * hours);
+  }
+  const insts = await db.prepare('SELECT id, symbol FROM institutions WHERE report_id = ?').all(id);
+  let matched = 0;
+  for (const i of insts) {
+    const v = r2(bySym.get(String(i.symbol)) || 0);
+    if (v > 0) matched++;
+    await db.prepare('UPDATE institutions SET salary_actual = ? WHERE id = ?').run(v, i.id);
+  }
+  const unknown = [...bySym.keys()].filter((s) => !insts.some((i) => String(i.symbol) === s));
+  if (unknown.length) console.warn(`[export ${id}] שכר שנכתב לסמלים שאינם מוסדות הדוח: ${unknown.join(', ')}`);
+
+  // רשימת העובדים שנכתבו — באותו מבנה של extractWorkerAssignments (השורה הראשונה קובעת)
+  const workerSyms = {};
+  for (const r of execRows) {
+    const wid = String(r[2] || '').replace(/\D/g, '');
+    if (!wid || workerSyms[wid]) continue;
+    workerSyms[wid] = { symbol: String(r[0] || ''), staffType: r[6] || null, role: r[7] || null, note: r[13] || null };
+  }
+  exMd.workerSyms = workerSyms; // מטמון הייצוא/ההכנה
+  try { (await warmLetterMeta(db, report)).workerSyms = workerSyms; } catch { /* מטמון המכתב ייבנה מחדש */ }
+  const fn = report.budget_file_name || '';
+  for (const mode of ['ministry', 'letter']) {
+    const stored = await loadFileMeta(db, id, mode, fn);
+    if (stored) await saveFileMeta(db, id, mode, fn, { ...stored, workerSyms });
+  }
+  await db.prepare('UPDATE reports SET exported_at = ? WHERE id = ?').run(new Date().toISOString(), id);
+  require('../lib/status').bustHealthCache([id]);
+  console.log(`[export ${id}] דוח ביצוע הופק: שכר ל-${matched} מוסדות (${r2([...bySym.values()].reduce((s, v) => s + v, 0))} ₪), ${Object.keys(workerSyms).length} עובדים`);
+}
+
 /* ---------- העלאת דוח הביצוע של המשרד → בניית התקציב אוטומטית (§9) ---------- */
 router.post('/:id/budget-file', upload.single('file'), ah(async (req, res) => {
   const db = getDB();
@@ -1822,6 +1865,11 @@ router.get('/:id/export', ah(async (req, res) => {
   // ייפתח — כדי שהמכתב ושלב 2 יתאימו לקובץ שירד (רעות 8.10). כישלון לא עוצר את הייצוא
   try { await syncBudgetToStaffing(db, id, report, srcBuf, execRows.filter((r) => !isMedicalAide(r))); }
   catch (e) { console.error(`[export ${id}] איוש עובר נכשל:`, e.message); }
+  // הדוח שהופק הוא דוח הביצוע (רעות 19.10, ביתר): השכר לפי מוסד ורשימת העובדים
+  // שנכתבו נרשמים במערכת מיד — בלי להעלות את הקובץ חזרה. העלאת הקובץ הסופי
+  // נשארת רק לסכומי התשלום שהאקסל מחשב (נוסחאות המשרד)
+  try { await recordExport(db, id, report, exMd, execRows, schoolRows); }
+  catch (e) { console.error(`[export ${id}] רישום הייצוא נכשל:`, e.message); }
   const exAuthority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
   // כשהקובץ שהועלה הוא בעצמו ייצוא קודם שלנו — לא לשרשר "דוח ביצוע ממולא" פעמיים
   const exBase = (report.budget_file_name || 'report.xlsx').replace(/\.xlsx?$/i, '').replace(/^(דוח ביצוע ממולא - )+/, '');

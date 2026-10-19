@@ -11,7 +11,7 @@ const fmt = (n: number | null | undefined, d = 0) =>
 
 /* כרטסות (צעד 6): קליטה, שיוך כרטיס→סל לפי שם (נלמד), והתאמה מול דוח העלות
    ודוח הביצוע — כולל כלל המע"מ (18%) ללקוחות חייבים. */
-export default function LedgerSection({ reportId, onChange }: { reportId: number; onChange: () => void }) {
+export default function LedgerSection({ reportId, onChange, refreshKey = 0 }: { reportId: number; onChange: () => void; refreshKey?: number }) {
   const [data, setData] = useState<LedgerData | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -19,7 +19,7 @@ export default function LedgerSection({ reportId, onChange }: { reportId: number
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = () => getReportLedger(reportId).then(setData).catch(() => setData(null));
-  useEffect(() => { load(); }, [reportId]);
+  useEffect(() => { load(); }, [reportId, refreshKey]); // refreshKey — אחרי הורדת דוח ביצוע (הבדיקות מתעדכנות לפיו)
 
   const onPick = async (files: FileList | null) => {
     if (!files || !files.length) return;
