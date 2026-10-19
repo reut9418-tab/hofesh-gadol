@@ -490,11 +490,14 @@ function readWorkbookSheets(buf) {
       rows: XLSX.utils.sheet_to_json(clampSheetRef(wb.Sheets[n]), { header: 1, defval: null }),
     })).filter((s) => s.rows.some((r) => r && r.some((c) => c !== null && c !== '')));
 
-  let sheets = extract(XLSX.read(buf, { type: 'buffer' }));
+  // תקרת שורות: קובץ שעוצב עד סוף הגיליון (מרחבים 19.10 — 62 עובדים, טווח עד שורה
+  // 1,048,576, 98MB XML) נקרא 40 שניות ונופל בענן; דוח עלות אמיתי לא מתקרב לזה
+  const READ_OPTS = { sheetRows: 50000 };
+  let sheets = extract(XLSX.read(buf, { type: 'buffer', ...READ_OPTS }));
   if (sheets.some((s) => hasMojibake(s.rows))) {
     try {
       const text = new TextDecoder('windows-1255').decode(buf);
-      const retry = extract(XLSX.read(text, { type: 'string' }));
+      const retry = extract(XLSX.read(text, { type: 'string', ...READ_OPTS }));
       if (retry.length && !retry.some((s) => hasMojibake(s.rows))) sheets = retry;
     } catch { /* נשארים עם הקריאה הראשונה */ }
   }
