@@ -32,6 +32,10 @@ export default function PrepSection({ reportId }: { reportId: number }) {
   const [exporting, setExporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set()); // שורות מסומנות למחיקה קבוצתית
+  // שמירה אוטומטית — ה-hooks לפני כל return מוקדם (React #310)
+  const assignRef = useRef(assign);
+  useEffect(() => { assignRef.current = assign; }, [assign]);
+  const autoTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   // הוספת עובד/ת ידנית (למשל עובד/ת בחשבונית) — כלל רעות 24.9
   const [addOpen, setAddOpen] = useState(false);
   const emptyWorker: NewWorker = { name: '', empId: '', symbol: null, staffType: null, role: null };
@@ -69,9 +73,6 @@ export default function PrepSection({ reportId }: { reportId: number }) {
   // שמירה אוטומטית של סמל/איש צוות/תפקיד (רעות 19.10, נתניה צפון: שיוכים "חזרו אחורה" —
   // עריכה שלא נשמרה ב"שמירת שיוכים" נמחקה ברענון המסך / מעבר לשוניות / קליטת קובץ).
   // תעריפים ידניים, ת.ז והסבר עדיין נשמרים רק בכפתור (הקלדה חלקית אסור שתישמר)
-  const assignRef = useRef(assign);
-  useEffect(() => { assignRef.current = assign; }, [assign]);
-  const autoTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const autoSave = (rowIds: number[]) => {
     const key = rowIds.join(',');
     clearTimeout(autoTimers.current[key]);
