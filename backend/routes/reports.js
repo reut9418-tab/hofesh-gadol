@@ -602,8 +602,11 @@ router.get('/:id/prep', ah(async (req, res) => {
   const execOnlySet = new Set(execOnlyGardens);
   const toActivity = (s) => (s ? (md.redirect.get(String(s)) || s) : s);
 
-  // התאמות ברוטו אוטומטיות (עד 20 ₪ לשעה) — לפני טעינת השורות, כך שהמסך
-  // והבקרות כבר משקפים את הברוטו שייכתב
+  // בקרת שעות (רעות 20.10): מעל תקרת התפקיד — קיצוץ לתקרה, הסה"כ נשמר והתעריפים
+  // השעתיים מחושבים מחדש; ואז התאמות ברוטו אוטומטיות (עד 10 ₪ לשעה) — לפני
+  // טעינת השורות, כך שהמסך והבקרות כבר משקפים את מה שייכתב
+  try { await autoApplyHourCaps(db, report, { coordBudgets: await coordBudgetBySymbol(db, report.id), symbolOf: (r) => r.symbol_override || r.inst_symbol }); }
+  catch (e) { console.error(`[prep ${id}] בקרת שעות נכשלה:`, e.message); }
   const bumpClient = await db.prepare('SELECT has_vat FROM clients WHERE id = ?').get(report.client_id);
   await autoApplyBumps(db, id, bumpClient && bumpClient.has_vat ? 1.18 : 1);
   const rawRows = await db.prepare(
@@ -727,7 +730,7 @@ router.get('/:id/prep', ah(async (req, res) => {
     console.log(`[prep ${id}] ${Date.now() - t0}ms סה"כ | קובץ משרד ${tMinistry - t0}ms | שורות ${tRows - tMinistry}ms | בדיקות ${Date.now() - tRows}ms`);
   }
 
-  // התאמות הברוטו (עד 20 ₪ לשעה, אוטומטיות): העלות המוכרת חורגת מ-140% מהברוטו,
+  // התאמות הברוטו (עד 10 ₪ לשעה, אוטומטיות): העלות המוכרת חורגת מ-140% מהברוטו,
   // והגדלת הברוטו מיישרת את בקרת המשרד בלי לוותר על הכרה בעלות — לתצוגה
   const vatF = client && client.has_vat ? 1.18 : 1;
   const bumps = rawRows
@@ -1022,7 +1025,10 @@ router.post('/:id/auto-assign', ah(async (req, res) => {
   // חריגה של עד 6 שעות מהתקן — השעות מעודכנות לתקן כתעריף ידני (התעריפים
   // השעתיים נשמרים, המקור ניתן לשחזור ב-↺); מעבר לזה — נשארת ומסומנת כחריגה
   for (const rowId of capFixes) {
-    try { if (await applyManualRates(db, id, rowId, { hours: capHours })) capped++; }
+    // רעות 20.10: הקיצוץ שומר את הסה"כ — התעריפים השעתיים = ברוטו/עלות ÷ התקן
+    const cr = await db.prepare('SELECT gross, cost FROM cost_rows WHERE id = ?').get(rowId);
+    const r2 = (n) => Math.round(n * 100) / 100;
+    try { if (await applyManualRates(db, id, rowId, { hours: capHours, hourlyGross: cr && cr.gross != null ? r2(cr.gross / capHours) : undefined, hourlyCost: cr && cr.cost != null ? r2(cr.cost / capHours) : undefined })) capped++; }
     catch (e) { console.error('עדכון שעות לתקן נכשל לשורה ' + rowId + ':', e.message); }
   }
   // הזיכרון הידני (worker_assign) מתעדכן בהתאם — אחרת החלפת קובץ תחזיר את הישן
@@ -1169,7 +1175,7 @@ router.post('/:id/cost-rows/delete-many', ah(async (req, res) => {
 }));
 
 /* אישור התאמות ברוטו: מגדיל את הברוטו השעתי בדיוק כדי לעמוד בתקרת ה-140%
-   (עד 5 ₪ לשעה — מעבר לזה דורש בדיקה מעמיקה, לא מוצע אוטומטית) */
+   (עד 10 ₪ לשעה — מעבר לזה דורש בדיקה מעמיקה, לא מוצע אוטומטית) */
 router.post('/:id/apply-bumps', ah(async (req, res) => {
   const db = getDB();
   const id = parseInt(req.params.id);
@@ -1210,6 +1216,7 @@ const prepSchema = z.object({
    מכתב, בקרות, ייצוא — רואה אותו), והמקור נשמר ב-manual_rates לשחזור.
    שלושת השדות null = ביטול העריכה ושחזור ערכי דוח העלות. */
 const { applyManualRates } = require('../lib/manualRates');
+const { autoApplyHourCaps } = require('../lib/hourCaps');
 
 /* ניוד שעות של עובד/ת מדוח 15 יום לדוח ההרחבה (רעות 13.10, אלקנה) — נשמר
    ללקוח ומוחל מחדש אחרי כל קליטה/ניתוב של דוח עלות */
@@ -1800,7 +1807,9 @@ router.get('/:id/export', ah(async (req, res) => {
   const authority = report.authority_id ? await db.prepare('SELECT name FROM authorities WHERE id = ?').get(report.authority_id) : null;
   const employer = (authority && authority.name) || (client && client.name) || '';
 
-  // התאמות ברוטו אוטומטיות (עד 20 ₪ לשעה) — הברוטו שנכתב עומד בבקרת ה-140%
+  // בקרת שעות (רעות 20.10) ואז התאמות ברוטו אוטומטיות (עד 10 ₪ לשעה) — הברוטו שנכתב עומד בבקרת ה-140%
+  try { await autoApplyHourCaps(db, report, { coordBudgets: await coordBudgetBySymbol(db, report.id), symbolOf: (r) => r.symbol_override || r.inst_symbol }); }
+  catch (e) { console.error(`[export ${id}] בקרת שעות נכשלה:`, e.message); }
   await autoApplyBumps(db, id, client && client.has_vat ? 1.18 : 1);
   // מפעילי/ות חוג (לפי התפקיד בדוח השכר) אינם מדווחים בדוח הביצוע (רעות 5.10),
   // וגם עובד/ת בלי עלות מעביד (0 או חסרה) — אין שורה בקובץ (רעות 7-8.10)
@@ -1837,7 +1846,7 @@ router.get('/:id/export', ah(async (req, res) => {
   // ההפרש מול דוח העלות מוסבר ב"דוח ההתאמה לדוח עלות".
   const vatFactor = client && client.has_vat ? 1.18 : 1;
   const execRows = rows.map((r) => {
-    // הברוטו המדווח כולל התאמת ברוטו שאושרה (עד 5 ₪ לשעה) — מעלה את תקרת ה-140%
+    // הברוטו המדווח כולל התאמת ברוטו שאושרה (עד 10 ₪ לשעה) — מעלה את תקרת ה-140%
     const hourlyGross = r.gross != null && r.hours ? effectiveGross(r) / r.hours : null;
     const rawHourlyCost = r.cost != null && r.hours ? (r.cost / r.hours) * rowVatFactor(r, vatFactor) : null;
     const cap140 = hourlyGross != null && hourlyGross > 0 ? hourlyGross * COST_MARKUP_LIMIT : null;

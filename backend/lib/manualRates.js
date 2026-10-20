@@ -10,8 +10,11 @@ async function applyManualRates(db, reportId, rowId, a) {
   const clearing = a.hours == null && a.hourlyGross == null && a.hourlyCost == null;
   if (clearing) {
     if (!prev) return false;
-    await db.prepare('UPDATE cost_rows SET gross = ?, cost = ?, hours = ?, manual_rates = NULL WHERE id = ?')
-      .run(orig.gross, orig.cost, orig.hours, r.id);
+    // שחזור של קיצוץ אוטומטי לתקרה (↺) — נרשם כביטול מפורש, אחרת בקרת השעות
+    // תקצץ שוב בטעינה הבאה (lib/hourCaps.js מדלג על auto שאינו 'cap')
+    const keep = prev.auto === 'cap' ? JSON.stringify({ orig, auto: 'cap-off' }) : null;
+    await db.prepare('UPDATE cost_rows SET gross = ?, cost = ?, hours = ?, manual_rates = ? WHERE id = ?')
+      .run(orig.gross, orig.cost, orig.hours, keep, r.id);
     return true;
   }
   // ברירת המחדל לכל ערך שלא נערך — התעריף הנוכחי בשורה (שעתי מהמקור)

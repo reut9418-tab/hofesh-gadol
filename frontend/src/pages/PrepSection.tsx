@@ -640,7 +640,7 @@ export default function PrepSection({ reportId }: { reportId: number }) {
                       <td key={field} style={{ padding: '5px 4px' }}>
                         <input type="number" min={0} step="0.01" value={shown ?? ''} placeholder="—"
                           onChange={(e) => set(r.rowId, { [field]: e.target.value === '' ? undefined : parseFloat(e.target.value) } as any)}
-                          title={r.manualRates ? 'נערך ידנית — ערך דוח העלות המקורי זמין בכפתור השחזור' : 'עריכה קובעת את הערך במערכת ובקובץ'}
+                          title={r.manualRates?.auto === 'cap' ? `קוצץ אוטומטית לתקרת השעות (היו ${r.manualRates.capFrom} שעות) — הסה"כ נשמר והתעריפים השעתיים חושבו מחדש; ↺ משחזר את המקור` : r.manualRates ? 'נערך ידנית — ערך דוח העלות המקורי זמין בכפתור השחזור' : 'עריכה קובעת את הערך במערכת ובקובץ'}
                           style={{ ...input, padding: '3px 5px', fontSize: 11.5, width: '100%', textAlign: 'center',
                             borderColor: edited || r.manualRates ? T.amber : T.line,
                             background: r.manualRates ? '#FDF6EC' : undefined }} />
