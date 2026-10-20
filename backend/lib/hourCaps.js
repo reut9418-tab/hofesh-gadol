@@ -13,7 +13,6 @@ const { explicitStaff, schoolsRoleByHours, projectDays, coordHoursCapFor, isCoor
 const DEPUTY_HOURS_PER_DAY = 6.2; // 93 ÷ 15
 const WORKER_HOURS_PER_DAY = 6;
 const MAX_HOURLY_GROSS = 120; // תקרת המשרד לברוטו שעתי (רעות 20.10)
-const MAX_HOURLY_COST = 120 * 1.38; // 165.6 — תקרת העלות השעתית
 
 /* opts.demoted / opts.sibling — כמו במסך ההכנה ובייצוא: מסווג/ת-שעות עודף/ת יורד/ת
    למורה (תקרה 6 ליום), שורה-אחות של רכז/ת היא רכז/ת */
@@ -54,18 +53,19 @@ async function autoApplyHourCaps(db, report, { coordBudgets = new Map(), symbolO
     if (mr && mr.auto !== 'cap') continue; // עריכה ידנית / ניוד שעות — לא נוגעים
     const cap = capForRow(report, r, coordBudgets.get(String(symbolOf(r) || '')), { demoted, sibling });
     if (!(cap > 0)) continue;
-    // רעות 20.10: השעות עד התקרה; הברוטו השעתי עד 120 ₪ (בלי קשר לדוח העלות) והעלות
-    // השעתית עד 120×1.38 = 165.6 ₪. בלי עיגול מעבר לתקרות — חיתוך כלפי מטה לאגורה
-    const floor2 = (n) => Math.floor(n * 100 + 1e-9) / 100;
+    // רעות 20.10: השעות עד התקרה; העלות לעובד/ת לא משתנה לעולם (התעריף השעתי = עלות ÷ שעות);
+    // הברוטו השעתי עד 120 ₪ בלי קשר לדוח העלות (אז הברוטו לתקופה = 120 × שעות). בלי עיגול
+    // מעבר ל-120 — התעריפים נשמרים בדיוק מלא והסה"כ מחושב מהם
     const hours = Math.min(r.hours, cap);
     const curHG = r.gross != null ? r.gross / r.hours : null;
     const curHC = r.cost != null ? r.cost / r.hours : null;
     // התעריפים מחושבים מהסה"כ המקורי של דוח העלות (לא מערכים שכבר קוצצו) — בלי סחיפה בין הרצות
     const og = mr && mr.orig ? mr.orig : r;
-    const hg = og.gross != null ? floor2(Math.min(og.gross / hours, MAX_HOURLY_GROSS)) : undefined;
-    const hc = og.cost != null ? floor2(Math.min(og.cost / hours, MAX_HOURLY_COST)) : undefined;
+    const hg = og.gross != null ? Math.min(og.gross / hours, MAX_HOURLY_GROSS) : undefined;
+    const hc = og.cost != null ? og.cost / hours : undefined; // העלות נשמרת בדיוק
     const hoursChange = r.hours > cap + 0.001;
-    const rateChange = (curHG != null && curHG > MAX_HOURLY_GROSS + 0.0001) || (curHC != null && curHC > MAX_HOURLY_COST + 0.0001);
+    const rateChange = curHG != null && curHG > MAX_HOURLY_GROSS + 0.0001;
+    void curHC;
     if (!hoursChange && !rateChange) continue;
     try {
       const ok = await applyManualRates(db, report.id, r.id, { hours, hourlyGross: hg, hourlyCost: hc });
