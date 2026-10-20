@@ -200,7 +200,7 @@ export type PrepRow = {
   gross: number | null; cost: number | null; hours: number | null; hourlyGross: number | null; hourlyCost: number | null;
   movedFromReport?: number | null; // שורה שנוצרה מניוד שעות מדוח אחר
   transferHours?: number; // שעות שנוידו מהשורה הזו לדוח ההרחבה
-  manualRates?: { orig: { gross: number | null; cost: number | null; hours: number | null }; auto?: 'cap' | 'cap-off'; capFrom?: number } | null;
+  manualRates?: { orig: { gross: number | null; cost: number | null; hours: number | null }; auto?: 'cap' | 'cap-off'; capFrom?: number; rateCapped?: boolean } | null;
 };
 export type StaffType = { type: string; roles: string[] };
 export type SalaryItem = { type: string; label: string; budget: number; actual: number; over: number; under: number };

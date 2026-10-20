@@ -12,6 +12,8 @@ const { explicitStaff, schoolsRoleByHours, projectDays, coordHoursCapFor, isCoor
 
 const DEPUTY_HOURS_PER_DAY = 6.2; // 93 ÷ 15
 const WORKER_HOURS_PER_DAY = 6;
+const MAX_HOURLY_GROSS = 120; // תקרת המשרד לברוטו שעתי (רעות 20.10)
+const MAX_HOURLY_COST = 120 * 1.38; // 165.6 — תקרת העלות השעתית
 
 /* opts.demoted / opts.sibling — כמו במסך ההכנה ובייצוא: מסווג/ת-שעות עודף/ת יורד/ת
    למורה (תקרה 6 ליום), שורה-אחות של רכז/ת היא רכז/ת */
@@ -51,21 +53,31 @@ async function autoApplyHourCaps(db, report, { coordBudgets = new Map(), symbolO
     let mr = null; try { mr = r.manual_rates ? JSON.parse(r.manual_rates) : null; } catch { mr = null; }
     if (mr && mr.auto !== 'cap') continue; // עריכה ידנית / ניוד שעות — לא נוגעים
     const cap = capForRow(report, r, coordBudgets.get(String(symbolOf(r) || '')), { demoted, sibling });
-    if (!(cap > 0) || r.hours <= cap + 0.01) continue;
-    const r2 = (n) => Math.round(n * 100) / 100;
-    const hg = r.gross != null ? r2(r.gross / cap) : undefined;
-    const hc = r.cost != null ? r2(r.cost / cap) : undefined;
+    if (!(cap > 0)) continue;
+    // רעות 20.10: השעות עד התקרה; הברוטו השעתי עד 120 ₪ (בלי קשר לדוח העלות) והעלות
+    // השעתית עד 120×1.38 = 165.6 ₪. בלי עיגול מעבר לתקרות — חיתוך כלפי מטה לאגורה
+    const floor2 = (n) => Math.floor(n * 100 + 1e-9) / 100;
+    const hours = Math.min(r.hours, cap);
+    const curHG = r.gross != null ? r.gross / r.hours : null;
+    const curHC = r.cost != null ? r.cost / r.hours : null;
+    // התעריפים מחושבים מהסה"כ המקורי של דוח העלות (לא מערכים שכבר קוצצו) — בלי סחיפה בין הרצות
+    const og = mr && mr.orig ? mr.orig : r;
+    const hg = og.gross != null ? floor2(Math.min(og.gross / hours, MAX_HOURLY_GROSS)) : undefined;
+    const hc = og.cost != null ? floor2(Math.min(og.cost / hours, MAX_HOURLY_COST)) : undefined;
+    const hoursChange = r.hours > cap + 0.001;
+    const rateChange = (curHG != null && curHG > MAX_HOURLY_GROSS + 0.0001) || (curHC != null && curHC > MAX_HOURLY_COST + 0.0001);
+    if (!hoursChange && !rateChange) continue;
     try {
-      const ok = await applyManualRates(db, report.id, r.id, { hours: cap, hourlyGross: hg, hourlyCost: hc });
+      const ok = await applyManualRates(db, report.id, r.id, { hours, hourlyGross: hg, hourlyCost: hc });
       if (!ok) continue;
       // סימון שהקיצוץ אוטומטי (לתצוגה ולהרצה חוזרת), בלי לאבד את המקור
       const row = await db.prepare('SELECT manual_rates FROM cost_rows WHERE id = ?').get(r.id);
-      const j = JSON.parse(row.manual_rates); j.auto = 'cap'; j.capFrom = r.hours;
+      const j = JSON.parse(row.manual_rates); j.auto = 'cap'; j.capFrom = r.hours; if (rateChange) j.rateCapped = true;
       await db.prepare('UPDATE cost_rows SET manual_rates = ? WHERE id = ?').run(JSON.stringify(j), r.id);
-      capped++; done.push({ id: r.id, name: r.emp_name, from: r.hours, to: cap });
+      capped++; done.push({ id: r.id, name: r.emp_name, from: r.hours, to: hours, hg, hc });
     } catch (e) { console.error(`[hourCaps ${report.id}] קיצוץ לתקרה נכשל לשורה ${r.id}:`, e.message); }
   }
-  if (capped) console.log(`[hourCaps ${report.id}] קוצצו לתקרה ${capped} שורות: ${done.slice(0, 5).map((d) => `${d.name} ${d.from}→${d.to}`).join(' | ')}${done.length > 5 ? ' ...' : ''}`);
+  if (capped) console.log(`[hourCaps ${report.id}] קוצצו לתקרה ${capped} שורות: ${done.slice(0, 5).map((d) => `${d.name} ${d.from}→${d.to} (${d.hg}/${d.hc})`).join(' | ')}${done.length > 5 ? ' ...' : ''}`);
   return capped;
 }
 
