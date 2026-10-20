@@ -206,6 +206,9 @@ async function migrate(db) {
   // ניוד בין פרויקטים (15 יום ↔ הרחבה באותה רשות): מקור + דחיית המלצה
   await add('cost_rows', 'moved_from_report INTEGER');
   await add('cost_rows', 'cross_declined INTEGER DEFAULT 0');
+  // סייעות רפואיות/אישיות (תל מונד 20.10): ת.ז תלמיד וימי העסקה מדוח העלות → לשונית (7)
+  await add('cost_rows', 'student_id TEXT');
+  await add('cost_rows', 'days REAL');
   // התאמת ברוטו שעתי (עד 5 ₪) שאושרה — כדי שבקרת ה-140% של המשרד תעבור
   await add('cost_rows', 'gross_bump REAL DEFAULT 0');
   // תעריפים ידניים (כלל רעות 22.9): שעות/ברוטו-שעתי/עלות-שעתית שנקבעו במסך

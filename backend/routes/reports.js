@@ -1879,6 +1879,8 @@ router.get('/:id/export', ah(async (req, res) => {
       null,
       roleByFormula, // [12] — כשעמודת התפקיד בתבנית היא נוסחה: להשאיר אותה בשורה זו
       r.exp_note || null, // [13] — "הסבר במידה ולא תקין"
+      r.student_id || null, // [14] — ת.ז תלמיד (סייעת רפואית/אישית, לשונית 7)
+      r.days || null, // [15] — ימי העסקה מדוח העלות (סייעות רפואיות)
     ];
   });
 
@@ -1898,10 +1900,12 @@ router.get('/:id/export', ah(async (req, res) => {
   const isMedicalAide = (r) => /רפואי|אישית/.test(String(r[6] || ''));
   const aideRows = execRows.filter(isMedicalAide).map((r) => {
     const hours = Number(r[10]) || 0;
-    const days = Math.max(1, Math.round(hours / 6)) || 1;
-    const dailyGross = r[8] != null ? Math.round((Number(r[8]) * hours / days) * 100) / 100 : null;
+    // ימי העסקה — מדוח העלות כשיש (תל מונד 20.10), אחרת 6 שעות ליום
+    const days = (Number(r[15]) > 0 ? Number(r[15]) : Math.max(1, Math.round(hours / 6))) || 1;
+    const dailyGross = r[8] != null && hours > 0 ? Math.round((Number(r[8]) * hours / days) * 100) / 100 : null;
     // [10] שכבת גיל — בתבנית בתי הספר (התכנית לכיתות א-ג); בגנים העמודה לא קיימת ולא נכתבת
-    return [r[0], null, r[2], r[3], r[4], dailyGross, days, r[8], r[9], r[10], report.framework === 'gardens' ? null : 'א-ג'];
+    // [1] ת.ז תלמיד — מדוח העלות כשיש (כמה ילדים — מופרדים בפסיק)
+    return [r[0], r[14] ? String(r[14]).replace(/,/g, ', ') : null, r[2], r[3], r[4], dailyGross, days, r[8], r[9], r[10], report.framework === 'gardens' ? null : 'א-ג'];
   });
   const schoolRows = execRows.filter((r) => !isAuthorityCoord(r[6]) && !isMedicalAide(r));
   const filled = await fillMinistryReport(srcBuf, schoolRows, coordRows, expenses, income, authorityCoordRows, aideRows);

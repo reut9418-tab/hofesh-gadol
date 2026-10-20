@@ -8,6 +8,8 @@ const { GROSS_CAP } = require('./domain');
 
 /* ---------- מילוני זיהוי עמודות (לב המתאם האוניברסלי) ---------- */
 const FIELD_DEFS = [
+  // סייעות רפואיות/אישיות (תל מונד 20.10): ת.ז התלמיד נכתבת ללשונית (7) — חייב לבוא לפני 'id' ("תז ילד" מכיל "תז")
+  { key: 'studentId', label: 'ת.ז תלמיד (סייעת רפואית/אישית)', syn: ['ת.ז תלמיד', 'תז תלמיד', 'ת.ז. תלמיד', 'זהות תלמיד', 'ת.ז ילד', 'תז ילד', 'ת.ז. ילד', 'זהות ילד', 'ת.ז הילד', 'תז הילד'] },
   { key: 'id', label: 'תעודת זהות', syn: ['מספר זהות', 'תעודת זהות', 'ת.ז', 'ת"ז', 'ת.ז.', "מס' זהות", 'תז', 'ת.ז. עובד', 'זהות'] },
   { key: 'lastName', label: 'שם משפחה', syn: ['שם משפחה', 'משפחה'] },
   { key: 'firstName', label: 'שם פרטי', syn: ['שם פרטי', 'פרטי'] },
@@ -17,6 +19,9 @@ const FIELD_DEFS = [
   { key: 'component', label: 'שם רכיב שכר', syn: ['שם רכיב שכר', 'רכיב שכר', 'שם רכיב', 'תאור רכיב', 'תיאור רכיב', 'סוג רכיב', 'קוד רכיב', 'רכיב תשלום', 'רכיב'] },
   { key: 'roleText', label: 'תפקיד (בדוח השכר)', syn: ['תפקיד'] },
   { key: 'instName', label: 'שם גן/מוסד (בדוח השכר)', syn: ['שם מוסד', 'שם הגן', 'שם גן', 'שם בית ספר', 'שם בית הספר', 'שם ביס', 'שם מקום פעילות'] },
+  // ברוטו ליום × ימי העסקה (קובץ סייעות רפואיות של הרשות): לפני 'gross' כדי ש"שכר ברוטו ליום" לא ייתפס כסה"כ ברוטו
+  { key: 'dailyGross', label: 'שכר ברוטו ליום', syn: ['שכר ברוטו ליום', 'ברוטו ליום', 'תעריף ליום', 'תעריף יומי', 'שכר יומי'] },
+  { key: 'days', label: 'ימי העסקה', syn: ['ימי העסקה', "מס' ימי העסקה", 'מספר ימי העסקה', 'מספר ימים', 'כמות ימים', 'ימים בפרויקט', 'ימי עבודה'] },
   { key: 'gross', label: 'סה"כ ברוטו', syn: ['סה"כ ברוטו', 'סהכ ברוטו', 'סה"כ סכום', 'סהכ סכום', 'ברוטו', 'שכר ברוטו', 'ריכוז תשלומים', 'ריכוז  תשלומים'] },
   // קובץ דו-מחזורי (נבון): "מחזור א" = 15 הימים, "מחזור ב" = ההרחבה — עמודות
   // התקופה קודמות לסה"כ, והקליטה מפצלת כל עובד לשתי תקופות (רעות 12.10)
@@ -279,7 +284,14 @@ function normalizeRows(rows, headerIdx, mapping, defaultDept) {
       ? norm(get('fullName'))
       : [norm(get('firstName')), norm(get('lastName'))].filter(Boolean).join(' ');
     if (/[א-ת]/.test(idRaw) || /^(סהכ|סיכום|סה"כ|total)/i.test(firstCell) || (idStr.length < 5 && !nameRaw)) continue;
-    const hours = num(get('hours'));
+    let hours = num(get('hours'));
+    // ברוטו ליום × ימי העסקה (סייעות רפואיות, תל מונד 20.10): הברוטו לתקופה = יומי × ימים;
+    // בלי עמודת שעות — 6 שעות ליום (כלל רעות לסייעות)
+    const dailyGross = num(get('dailyGross'));
+    const days = num(get('days'));
+    let grossV = gross;
+    if (dailyGross != null && days != null && grossV == null) grossV = dailyGross * days;
+    if (hours == null && days != null && days > 0) hours = days * 6;
     const name = mapping.fullName !== undefined
       ? norm(get('fullName'))
       : [norm(get('firstName')), norm(get('lastName'))].filter(Boolean).join(' ');
@@ -292,7 +304,9 @@ function normalizeRows(rows, headerIdx, mapping, defaultDept) {
       instName: norm(get('instName')) || null, // שם הגן/בי"ס בשורה — לשיוך סמל מול ההרשמה
       instSymbol: String(get('instSymbol') ?? '').replace(/\D/g, '') || null,
       dept: norm(get('dept')) || norm(defaultDept) || 'ללא מחלקה',
-      gross, cost, hours,
+      gross: grossV, cost, hours,
+      studentId: String(get('studentId') ?? '').replace(/\D/g, '') || null, // ת.ז תלמיד — ללשונית הסייעות הרפואיות
+      days: days != null && days > 0 ? days : null, // ימי העסקה — "מס' ימי העסקה" בלשונית (7)
       extCost: num(get('extPortion')), // עלות ימי ההרחבה (לפיצול תקופות)
       extHours: num(get('extHours')),  // שעות ימי ההרחבה (כשיש עמודה מפורשת)
     });
@@ -331,6 +345,9 @@ function aggregateComponents(recs) {
       if (!cur.name && r.name) cur.name = r.name;
       if (r.component && !cur.componentNames.includes(r.component)) cur.componentNames.push(r.component);
       if (!cur.instSymbol && r.instSymbol) cur.instSymbol = r.instSymbol;
+      // סייעת עם כמה ילדים באותו מוסד — ת.ז התלמידים מצטרפות, הימים מצטברים
+      if (r.studentId && !(cur.studentId || '').split(',').includes(r.studentId)) cur.studentId = cur.studentId ? `${cur.studentId},${r.studentId}` : r.studentId;
+      if (r.days != null) cur.days = (cur.days || 0) + r.days;
     }
   });
   return [...m.values()].map((r) => ({

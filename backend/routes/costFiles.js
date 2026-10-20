@@ -113,13 +113,14 @@ router.post('/clients/:clientId/cost-files', upload.single('file'), ah(async (re
     const staff = staffFromRoleText(r.roleText) || staffFromDeptTag(r.dept); // תפקיד מעמודת תפקיד, ואם אין — מתגית המחלקה ("...^רכז", לביא 11.10)
     return [fileId, clientId, null, r.id, r.name || null, r.firstName, r.lastName, r.dept,
       r.instSymbol, r.instName || null, JSON.stringify(r.componentNames || []), r.gross, r.cost, r.hours,
-      staff ? staff.staffType : null, staff ? staff.role : null, r.roleText ? String(r.roleText).trim() : (deptRoleTag(r.dept) || null)];
+      staff ? staff.staffType : null, staff ? staff.role : null, r.roleText ? String(r.roleText).trim() : (deptRoleTag(r.dept) || null),
+      r.studentId || null, r.days || null];
   });
   for (let i = 0; i < values.length; i += 50) {
     const chunk = values.slice(i, i + 50);
-    const ph = chunk.map(() => `(${Array(17).fill('?').join(',')})`).join(',');
+    const ph = chunk.map(() => `(${Array(19).fill('?').join(',')})`).join(',');
     await db.prepare(
-      `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept, inst_symbol, inst_name, component_names, gross, cost, hours, staff_type, role, role_text)
+      `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept, inst_symbol, inst_name, component_names, gross, cost, hours, staff_type, role, role_text, student_id, days)
        VALUES ${ph}`
     ).run(...chunk.flat());
   }
@@ -466,14 +467,14 @@ router.post('/cost-files/:fileId/remap', ah(async (req, res) => {
       old && !r.instSymbol ? old.symbol_override : null, old ? old.gross_bump : 0,
       old ? old.moved_from_dept : null, old ? old.moved_from_symbol : null, old ? old.move_declined : 0,
       old ? old.moved_from_report : null, old ? old.cross_declined : 0,
-      r.roleText ? String(r.roleText).trim() : (deptRoleTag(r.dept) || null)];
+      r.roleText ? String(r.roleText).trim() : (deptRoleTag(r.dept) || null), r.studentId || null, r.days || null];
   });
   for (let i = 0; i < vals2.length; i += 50) {
     const chunk = vals2.slice(i, i + 50);
-    const ph = chunk.map(() => `(${Array(24).fill('?').join(',')})`).join(',');
+    const ph = chunk.map(() => `(${Array(26).fill('?').join(',')})`).join(',');
     await db.prepare(
       `INSERT INTO cost_rows (cost_file_id, client_id, report_id, emp_id, emp_name, first_name, last_name, dept, inst_symbol, inst_name, component_names, gross, cost, hours,
-         staff_type, role, symbol_override, gross_bump, moved_from_dept, moved_from_symbol, move_declined, moved_from_report, cross_declined, role_text)
+         staff_type, role, symbol_override, gross_bump, moved_from_dept, moved_from_symbol, move_declined, moved_from_report, cross_declined, role_text, student_id, days)
        VALUES ${ph}`
     ).run(...chunk.flat());
   }
