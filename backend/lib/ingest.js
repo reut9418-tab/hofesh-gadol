@@ -563,6 +563,62 @@ function inferMissingColumns(rows, det) {
   return det;
 }
 
+/* קבוצות לפי מוסד עם שורת סיכום (גדרה 21.10): העובדים מסודרים בבלוקים, ובסוף
+   כל בלוק שורה [קוד מחלקה | שם בית הספר | סמל | | סה"כ עלות] — בלי שעות, והעלות
+   שלה = סכום עלויות העובדים שמעליה. שורה כזו אינה עובד/ת: היא נמחקת, וכל
+   השורות מעליה (עד הסיכום/הכותרת הקודמים) מקבלות את הסמל ושם המוסד שלה
+   בעמודות וירטואליות. מופעל רק כשאין עמודת סמל מוסד ממופה. */
+function applyBlockSubtotals(rows, headerIdx, mapping) {
+  if (mapping.instSymbol !== undefined || mapping.cost === undefined || mapping.id === undefined) return { rows, mapping };
+  const costOf = (r) => { const v = Number(String((r || [])[mapping.cost] ?? '').replace(/,/g, '')); return Number.isFinite(v) ? v : null; };
+  const hoursOf = (r) => { const v = (r || [])[mapping.hours]; return v == null || v === '' ? null : Number(v); };
+  const isHeaderRow = (r) => (r || []).some((c) => typeof c === 'string' && /ת\.?ז|תעודת זהות|מספר זהות/.test(c));
+  const symbolIn = (r) => {
+    // הסמל: מספר של 5-7 ספרות בעמודה שאינה עמודת הת"ז (שם משפחה/פרטי/מחלקה)
+    for (let c = 0; c < (r || []).length; c++) {
+      if (c === mapping.id || c === mapping.cost || c === mapping.gross || c === mapping.hours) continue;
+      const s = String(r[c] ?? '').trim();
+      if (/^\d{5,7}$/.test(s)) return { col: c, symbol: s };
+    }
+    return null;
+  };
+  const nameIn = (r, symCol) => {
+    const parts = [];
+    for (let c = 0; c < (r || []).length; c++) {
+      if (c === symCol || c === mapping.id || c === mapping.cost || c === mapping.gross || c === mapping.hours) continue;
+      const s = String(r[c] ?? '').trim();
+      if (s && /[א-ת]/.test(s)) parts.push(s);
+    }
+    return parts.join(' ');
+  };
+  const subtotals = [];
+  let blockStart = headerIdx + 1, blockSum = 0, blockRows = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i] || [];
+    if (!r.some((c) => c != null && c !== '')) continue;
+    if (isHeaderRow(r)) { blockStart = i + 1; blockSum = 0; blockRows = []; continue; }
+    const cost = costOf(r), hrs = hoursOf(r), sym = symbolIn(r);
+    const idDigits = String(r[mapping.id] ?? '').replace(/\D/g, '');
+    const looksSubtotal = sym && cost != null && cost > 0 && (hrs == null || hrs === 0) && (idDigits.length < 7 || !idDigits);
+    if (looksSubtotal && blockRows.length && Math.abs(cost - blockSum) <= Math.max(2, cost * 0.01)) {
+      subtotals.push({ row: i, from: blockStart, rows: blockRows.slice(), symbol: sym.symbol, name: nameIn(r, sym.col) });
+      blockStart = i + 1; blockSum = 0; blockRows = [];
+      continue;
+    }
+    if (cost != null) blockSum += cost;
+    blockRows.push(i);
+  }
+  if (!subtotals.length) return { rows, mapping };
+  const width = Math.max(...rows.map((r) => (r || []).length));
+  const symCol = width, nameCol = width + 1;
+  const out = rows.map((r) => (r ? r.slice() : []));
+  for (const s of subtotals) {
+    for (const i of s.rows) { out[i][symCol] = s.symbol; out[i][nameCol] = s.name || null; }
+    out[s.row] = []; // שורת הסיכום אינה עובד/ת
+  }
+  return { rows: out, mapping: { ...mapping, instSymbol: symCol, instName: nameCol }, subtotals: subtotals.length };
+}
+
 function parseCostFile(buf, learned = {}) {
   const sheets = readWorkbookSheets(buf);
   let detected = sheets.map((s) => ({ ...s, det: inferMissingColumns(s.rows, detectStructure(s.rows, learned)) }));
@@ -590,7 +646,9 @@ function parseCostFile(buf, learned = {}) {
     if (s.det.rowIdx < 0) return;
     sheetsUsed.push(s.sheetName);
     if (!software && s.det.software && !s.det.software.startsWith('מבנה לא מוכר')) software = s.det.software;
-    const recs = normalizeRows(s.rows, s.det.rowIdx, s.det.mapping, s.sheetName);
+    // בלוקים לפי מוסד עם שורת סיכום (גדרה) — הסמל ושם המוסד מהסיכום לכל עובדי הבלוק
+    const blk = applyBlockSubtotals(s.rows, s.det.rowIdx, s.det.mapping);
+    const recs = normalizeRows(blk.rows, s.det.rowIdx, blk.mapping, s.sheetName);
     // כשעמודת העלות שמופתה היא כבר פר-תקופה ("עבור 15 יום") — היא אינה
     // כוללת את ההרחבה ואין לחסר ממנה (כלל רעות 16.9: "רק העמודות של
     // 15 יום והרחבה"); כשהיא סה"כ כללי — ההרחבה מחוסרת ממנה כמו קודם
