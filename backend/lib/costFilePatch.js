@@ -66,7 +66,11 @@ async function patchCostFile(buf, { learned = {}, rows = [], idFixes = {}, sheet
         writes.push({ row: rowNumOf(i), col: colOf(m.id), kind: /^0/.test(fixed) ? 'text' : 'num', value: fixed });
         counts.id++;
       }
-      if (r.manual_rates && m.hours !== undefined) {
+      // שעות — רק עריכה ידנית של המשתמשת; קיצוץ אוטומטי לתקרה (manual_rates.auto)
+      // הוא נגזרת של התוכנה ולא נכתב לקובץ הלקוח
+      let manualHours = false;
+      if (r.manual_rates) { try { manualHours = !JSON.parse(r.manual_rates).auto; } catch { manualHours = false; } }
+      if (manualHours && m.hours !== undefined) {
         const sameWorkerRows = cands.filter((x) => digits(x.inst_symbol) === digits(r.inst_symbol)).length;
         const fileRowsOfWorker = aoa.slice(det.rowIdx + 1).filter((rr) => rr && digits(rr[m.id]) === fid && (symCol === undefined || digits(rr[symCol]) === fileSym)).length;
         const fileHours = Number(row[m.hours]);
@@ -78,6 +82,7 @@ async function patchCostFile(buf, { learned = {}, rows = [], idFixes = {}, sheet
     }
     if (addedSymCol) writes.push({ row: rowNumOf(det.rowIdx), col: colOf(symCol), kind: 'text', value: 'סמל מוסד' });
     if (writes.length) { writesBySheet.set(sheetName, writes); counts.sheets++; }
+    if (addedSymCol) writes.newLastCol = colOf(symCol); // להרחבת טווח הגיליון (dimension) — אחרת העמודה "מחוץ לטווח"
   }
 
   if (!writesBySheet.size) return { buffer: buf, patched: counts };
@@ -89,6 +94,13 @@ async function patchCostFile(buf, { learned = {}, rows = [], idFixes = {}, sheet
     if (!path || !zip.file(path)) continue;
     let xml = await zip.file(path).async('string');
     xml = setCellsInSheetXml(xml, writes);
+    if (writes.newLastCol) {
+      // <dimension ref="A1:I140"/> → עד העמודה החדשה, כדי שקוראי אקסל יראו אותה
+      xml = xml.replace(/<dimension ref="([A-Z]+\d+):([A-Z]+)(\d+)"\s*\/>/, (all, from, endCol, endRow) => {
+        const colNum = (s) => s.split('').reduce((n, ch) => n * 26 + (ch.charCodeAt(0) - 64), 0);
+        return colNum(writes.newLastCol) > colNum(endCol) ? `<dimension ref="${from}:${writes.newLastCol}${endRow}"/>` : all;
+      });
+    }
     zip.file(path, xml);
   }
   const out = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
