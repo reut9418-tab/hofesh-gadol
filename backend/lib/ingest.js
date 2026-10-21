@@ -569,14 +569,17 @@ function inferMissingColumns(rows, det) {
    השורות מעליה (עד הסיכום/הכותרת הקודמים) מקבלות את הסמל ושם המוסד שלה
    בעמודות וירטואליות. מופעל רק כשאין עמודת סמל מוסד ממופה. */
 function applyBlockSubtotals(rows, headerIdx, mapping) {
-  if (mapping.instSymbol !== undefined || mapping.cost === undefined || mapping.id === undefined) return { rows, mapping };
+  if (mapping.cost === undefined || mapping.id === undefined) return { rows, mapping };
+  // גם כשיש עמודת סמל (הקובץ "עם סמל מוסד" שהתוכנה מייצרת — גדרה 21.10): שורות
+  // הסיכום עדיין נמחקות; הסמל מהסיכום משלים רק שורות שהעמודה ריקה בהן
+  const hasSymCol = mapping.instSymbol !== undefined;
   const costOf = (r) => { const v = Number(String((r || [])[mapping.cost] ?? '').replace(/,/g, '')); return Number.isFinite(v) ? v : null; };
   const hoursOf = (r) => { const v = (r || [])[mapping.hours]; return v == null || v === '' ? null : Number(v); };
   const isHeaderRow = (r) => (r || []).some((c) => typeof c === 'string' && /ת\.?ז|תעודת זהות|מספר זהות/.test(c));
   const symbolIn = (r) => {
     // הסמל: מספר של 5-7 ספרות בעמודה שאינה עמודת הת"ז (שם משפחה/פרטי/מחלקה)
     for (let c = 0; c < (r || []).length; c++) {
-      if (c === mapping.id || c === mapping.cost || c === mapping.gross || c === mapping.hours) continue;
+      if (c === mapping.id || c === mapping.cost || c === mapping.gross || c === mapping.hours || c === mapping.instSymbol) continue;
       const s = String(r[c] ?? '').trim();
       if (/^\d{5,7}$/.test(s)) return { col: c, symbol: s };
     }
@@ -610,10 +613,14 @@ function applyBlockSubtotals(rows, headerIdx, mapping) {
   }
   if (!subtotals.length) return { rows, mapping };
   const width = Math.max(...rows.map((r) => (r || []).length));
-  const symCol = width, nameCol = width + 1;
+  const symCol = hasSymCol ? mapping.instSymbol : width;
+  const nameCol = mapping.instName !== undefined ? mapping.instName : width + 1;
   const out = rows.map((r) => (r ? r.slice() : []));
   for (const s of subtotals) {
-    for (const i of s.rows) { out[i][symCol] = s.symbol; out[i][nameCol] = s.name || null; }
+    for (const i of s.rows) {
+      if (out[i][symCol] == null || out[i][symCol] === '') out[i][symCol] = s.symbol;
+      if (out[i][nameCol] == null || out[i][nameCol] === '') out[i][nameCol] = s.name || null;
+    }
     out[s.row] = []; // שורת הסיכום אינה עובד/ת
   }
   return { rows: out, mapping: { ...mapping, instSymbol: symCol, instName: nameCol }, subtotals: subtotals.length };

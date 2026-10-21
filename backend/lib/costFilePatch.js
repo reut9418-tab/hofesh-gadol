@@ -39,6 +39,8 @@ async function patchCostFile(buf, { learned = {}, rows = [], idFixes = {}, sheet
     const rowNumOf = (i) => range.s.r + i + 1; // אינדקס במערך → מספר שורה בגיליון (1-based)
     const colOf = (c) => numToCol(range.s.c + c);
     const writes = [];
+    const seq = new Map(); // מונה שורות לעובד/ת בגיליון הזה (להתאמה לפי סדר)
+    const seqKey = (k) => `${sheetName}|${k}`;
     // עמודת סמל: קיימת — או נוספת בסוף (רק עמודה נוספת, בלי לגעת בשאר)
     let symCol = m.instSymbol;
     let addedSymCol = false;
@@ -52,9 +54,16 @@ async function patchCostFile(buf, { learned = {}, rows = [], idFixes = {}, sheet
       const cands = byWorker.get(key) || [];
       if (!cands.length) continue;
       const fileSym = symCol !== undefined ? digits(row[symCol]) : '';
-      // השורה בתוכנה שמתאימה לשורת הקובץ: לפי סמל הקובץ, ואם אין — היחידה
+      // השורה בתוכנה שמתאימה לשורת הקובץ: לפי סמל הקובץ, ואם אין — היחידה;
+      // עובד/ת עם כמה שורות בקובץ בלי עמודת סמל (גדרה: בלוקים לפי בית ספר) —
+      // לפי הסדר: שורות התוכנה נוצרו בסדר הקובץ
       let r = cands.find((x) => fileSym && digits(x.inst_symbol) === fileSym) || (cands.length === 1 ? cands[0] : null);
-      if (!r && fileSym === '') r = cands.find((x) => !x.inst_symbol) || cands[0];
+      if (!r && fileSym === '') {
+        const sorted = cands.slice().sort((a, b) => a.id - b.id);
+        const k = seqKey(key);
+        r = sorted[Math.min(seq.get(k) || 0, sorted.length - 1)];
+        seq.set(k, (seq.get(k) || 0) + 1);
+      }
       if (!r) continue;
       const finalSym = digits(r.symbol_override || r.inst_symbol || '');
       if (finalSym && finalSym !== fileSym) {
