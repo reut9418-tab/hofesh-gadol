@@ -116,6 +116,15 @@ async function measure(rep) {
       // ת.ז קצרה בלי הסבר בעמודת "הסבר במידה ולא תקין" — עם הסבר (דרכון/אזרחות זרה) היא לגיטימית (רעות 15.10)
       const expc = head.findIndex((x) => typeof x === 'string' && /הסבר/.test(x));
       m.export_short_ids = rows.filter((r) => String(r[idc] ?? '').replace(/\D/g, '').length < 5 && !(expc >= 0 && String(r[expc] ?? '').trim())).length;
+      // סייעות רפואיות/אישיות נכתבות ללשונית (7) ולא לכח האדם — נספרות בנפרד (קדימה 23.10)
+      const an = wb.SheetNames.find((n) => /רפואיות/.test(n));
+      m.export_aides = 0;
+      if (an) {
+        const a2 = XLSX.utils.sheet_to_json(wb.Sheets[an], { header: 1, defval: null });
+        const ah = a2.findIndex((r) => r && r.some((c) => typeof c === 'string' && /ת\.?ז\.? סייעת/.test(c)));
+        const aid = (a2[ah] || []).findIndex((x) => typeof x === 'string' && /ת\.?ז\.? סייעת/.test(x));
+        if (ah >= 0 && aid >= 0) m.export_aides = a2.slice(ah + 1).filter((r) => r && String(r[aid] ?? '').replace(/\D/g, '')).length;
+      }
     } catch (e) { m.export_parse_error = e.message; }
   }
   // דוח התאמת שכר לבתי ספר (לא בגנים)
@@ -182,7 +191,7 @@ function diffObj(prev, cur, prefix, diffs) {
     for (const k of ['prep_status', 'stage1_status', 'ledger_status', 'export_status']) if (m[k] !== 200) hard.push(`${id}: ${k} = ${m[k]}`);
     if (m.export_parse_error) hard.push(`${id}: הייצוא לא נקרא — ${m.export_parse_error}`);
     if (m.export_short_ids) hard.push(`${id}: ${m.export_short_ids} שורות בייצוא עם ת.ז קצרה (שורת סיכום?)`);
-    if (m.prep_rows != null && m.export_rows != null && m.prep_rows - m.prep_zero_cost - m.export_rows > 2) hard.push(`${id}: ${m.prep_rows - m.prep_zero_cost} שורות במסך אבל ${m.export_rows} בייצוא`);
+    if (m.prep_rows != null && m.export_rows != null && m.prep_rows - m.prep_zero_cost - m.export_rows - (m.export_aides || 0) > 2) hard.push(`${id}: ${m.prep_rows - m.prep_zero_cost} שורות במסך אבל ${m.export_rows + (m.export_aides || 0)} בייצוא (כולל ${m.export_aides || 0} סייעות בלשונית 7)`);
   }
   if (results.db.totals_like_rows) hard.push(`מסד: ${results.db.totals_like_rows} שורות שנראות כשורת סיכום (בלי שם / ת.ז קצרה)`);
   if (results.db.rls_tables_off) hard.push(`אבטחה: RLS כבוי ב-${results.db.rls_tables_off} טבלאות`);
