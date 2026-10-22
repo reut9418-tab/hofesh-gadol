@@ -39,9 +39,11 @@ function buildTargetsXlsx(d) {
   const instrLabel = isGardens ? 'שכר הדרכה (מובילות/סייעות)' : 'שכר הדרכה (מורים)';
   const coordLabel = isGardens ? 'שכר ריכוז (רכזות גנים)' : 'שכר ריכוז (רכז/ת וסגן/ית)';
 
+  // סייעות רפואיות/אישיות — עמודה נפרדת (רעות 23.10): הכרטסת שלהן מול לשונית (7)
+  const anyAides = d.units.some((u) => u.targets.salaryAides > 0);
   const head = [
     isGardens ? 'מסגרת' : 'בית ספר',
-    instrLabel, coordLabel, `סה"כ ${salaryLabel} — כרטסת משולבת`,
+    instrLabel, coordLabel, ...(anyAides ? ['שכר סייעות רפואיות/אישיות (לשונית 7)'] : []), `סה"כ ${salaryLabel} — כרטסת משולבת`,
     ...(multiPayer ? d.payers.map((p) => `${salaryLabel} — ${p}`) : []),
     ...(anyBreakfast ? ['ארוחת בוקר'] : []),
     ...(anyShift ? ['העשרה — מומלץ', 'בסיס ההמלצה', 'העשרה — חלופה: 100%'] : d.units.length > 1 ? ['העשרה — מומלץ', 'בסיס ההמלצה'] : ['העשרה']),
@@ -53,6 +55,7 @@ function buildTargetsXlsx(d) {
     cell(u.symbol ? `${u.name} (${u.symbol})` : u.name, S.cellR(z)),
     cell(num(u.targets.salaryInstr), S.cellN(z)),
     cell(num(u.targets.salaryCoord), S.cellN(z)),
+    ...(anyAides ? [cell(num(u.targets.salaryAides), S.cellN(z))] : []),
     cell(num(u.targets.salary), S.cellN(z)),
     ...(multiPayer ? d.payers.map((p) => cell(num(u.targets.salaryByPayer[p]), S.cellN(z))) : []),
     ...(anyBreakfast ? [cell(num(u.targets.breakfast), S.cellN(z))] : []),
@@ -67,6 +70,7 @@ function buildTargetsXlsx(d) {
     cell('סה"כ', S.totalR),
     cell(num(sum((u) => u.targets.salaryInstr)), S.total),
     cell(num(sum((u) => u.targets.salaryCoord)), S.total),
+    ...(anyAides ? [cell(num(sum((u) => u.targets.salaryAides)), S.total)] : []),
     cell(num(sum((u) => u.targets.salary)), S.total),
     ...(multiPayer ? d.payers.map((p) => cell(num(sum((u) => u.targets.salaryByPayer[p])), S.total)) : []),
     ...(anyBreakfast ? [cell(num(sum((u) => u.targets.breakfast)), S.total)] : []),
@@ -78,6 +82,7 @@ function buildTargetsXlsx(d) {
 
   const noteText = [
     `שכר — יעד הכרטסת זהה לדוח העלות, בפיצול להדרכה ולריכוז (ללקוח עם כרטסות נפרדות) ובסה"כ (ללקוח עם כרטסת שכר משולבת)${multiPayer ? ', ובהפרדה לפי המשלם' : ''}.`,
+    anyAides ? 'סייעות רפואיות/אישיות — עמודה נפרדת (מדווחות בלשונית 7 של המשרד, מחוץ לסל ההדרכה); הסה"כ כולל אותן.' : '',
     anyBreakfast ? 'ארוחת בוקר — התקציב בתוספת יתרת הסל הגמיש (בהנחת אופציה א\').' : '',
     'העשרה — ההמלצה לכל מוסד לפי מצבו: תת-ביצוע בשכר → העמסת יתרת השכר (עד 25% מסל השכר); חריגה שאינה מכוסה בסל הגמיש → 75% מהתקציב; אחרת → תקציב הבסיס.',
     anyShift ? 'למוסדות עם חריגה מוצגת גם חלופת 100% מהתקציב.' : '',

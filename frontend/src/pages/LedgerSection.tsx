@@ -15,6 +15,7 @@ export default function LedgerSection({ reportId, onChange, refreshKey = 0 }: { 
   const [data, setData] = useState<LedgerData | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [openSplit, setOpenSplit] = useState<Set<number>>(new Set()); // כרטיסים מאוחדים שפירוט התנועות שלהם פתוח
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -25,8 +26,11 @@ export default function LedgerSection({ reportId, onChange, refreshKey = 0 }: { 
     if (!files || !files.length) return;
     setBusy(true); setErr(null);
     try {
-      for (const f of Array.from(files)) await uploadLedgerFile(reportId, f);
+      let filtered = 0, year = 0;
+      for (const f of Array.from(files)) { const r = await uploadLedgerFile(reportId, f); filtered += r?.yearFiltered || 0; year = r?.year || year; }
       await load(); onChange();
+      // כרטסת רב-שנתית (PDF לכל השנים): הסכומים נלקחו רק מתנועות שנת הדוח
+      setInfo(filtered > 0 ? `${filtered} כרטיסים כללו תנועות מכמה שנים — נספרו רק תנועות ${year} (בלי יתרות פתיחה/סגירה).` : null);
     } catch (e: any) { setErr(e?.response?.data?.error || 'העלאת הכרטסת נכשלה.'); }
     finally { setBusy(false); if (inputRef.current) inputRef.current.value = ''; }
   };
@@ -96,6 +100,7 @@ export default function LedgerSection({ reportId, onChange, refreshKey = 0 }: { 
         </span>
       </div>
       {err && <div style={{ fontSize: 12.5, color: T.red, marginBottom: 8 }}>{err}</div>}
+      {info && <div style={{ fontSize: 12.5, color: T.amber, marginBottom: 8 }}>{info}</div>}
       {!data?.cards.length && !err && (
         <div style={{ fontSize: 13, color: T.inkSoft }}>
           טרם הועלו כרטסות. מעלים את כרטסות השכר/ההעשרה של התקופה, והמערכת משייכת כל כרטיס לסל ובודקת התאמה מול דוח העלות ודוח הביצוע.

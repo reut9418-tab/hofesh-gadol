@@ -69,7 +69,17 @@ function headerColumns(items) {
 const nearestCol = (cols, x) => cols.reduce((best, c) => (!best || Math.abs(c.x - x) < Math.abs(best.x - x) ? c : best), null);
 const { symbolCandidates } = require('./ledger');
 
-async function parseLedgerPdf(buf) {
+/* opts.year — שנת הדוח: כרטסת שהופקה לכל השנים (מצפה רמון 21.10: 2023–2026 עם
+   "יתרת סגירה" שנתית) — כרטיס שתנועותיו חוצות שנים נסכם מחדש רק מתנועות
+   השנה הזו (בלי שורות יתרת פתיחה/סגירה); כרטיס של שנה אחת נשאר כפי שסוכם בקובץ */
+const DATE_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/;
+const txYear = (cells) => {
+  for (const c of cells) { const m = DATE_RE.exec(norm(c)); if (m) { const y = Number(m[3]); return y < 100 ? 2000 + y : y; } }
+  return null;
+};
+const BALANCE_RE = /יתרת (סגירה|פתיחה)/;
+
+async function parseLedgerPdf(buf, opts = {}) {
   const lines = await pdfLines(buf);
   const cards = [];
   let cur = null;
@@ -142,12 +152,14 @@ async function parseLedgerPdf(buf) {
         if (near.kind === 'details') det.push(it.s);
         symbolCandidates(it.s).forEach((r) => refs.add(r));
       }
+      const year = txYear(cells);
+      const balance = BALANCE_RE.test(det.join(' ')) || cells.some((c) => BALANCE_RE.test(norm(c)));
       if (debitCol !== null || creditCol !== null) {
-        cur.tx.push({ refs: [...refs], details: det.join(' '), debit: debitCol || 0, credit: creditCol || 0 });
+        cur.tx.push({ refs: [...refs], details: det.join(' '), debit: debitCol || 0, credit: creditCol || 0, year, balance });
         continue;
       }
       if (amt === null) amt = cells.map((c) => norm(c)).filter((c) => /[,.]\d/.test(c)).map((c) => money(c)).find((v) => v !== null) ?? amounts[0];
-      cur.tx.push({ refs: [...refs], details: det.join(' '), debit: amt > 0 ? amt : 0, credit: amt < 0 ? -amt : 0 });
+      cur.tx.push({ refs: [...refs], details: det.join(' '), debit: amt > 0 ? amt : 0, credit: amt < 0 ? -amt : 0, year, balance });
     }
   }
   pushCur();
@@ -161,7 +173,22 @@ async function parseLedgerPdf(buf) {
     if (c.debit || c.credit) { prev.debit = c.debit; prev.credit = c.credit; }
     prev.net = prev.debit - prev.credit;
   }
-  return { cards: [...byKey.values()] };
+  const out = [...byKey.values()];
+  let yearFiltered = 0;
+  for (const c of out) {
+    const dated = (c.tx || []).filter((t) => t.year && !t.balance);
+    const years = new Set(dated.map((t) => t.year));
+    if (!opts.year || years.size <= 1 || !years.has(opts.year)) continue;
+    const mine = dated.filter((t) => t.year === opts.year);
+    c.debit = Math.round(mine.reduce((s, t) => s + (t.debit || 0), 0) * 100) / 100;
+    c.credit = Math.round(mine.reduce((s, t) => s + (t.credit || 0), 0) * 100) / 100;
+    c.net = Math.round((c.debit - c.credit) * 100) / 100;
+    c.tx = mine;
+    c.txCount = mine.length;
+    c.yearFiltered = true;
+    yearFiltered++;
+  }
+  return { cards: out, yearFiltered };
 }
 
 const isPdfBuffer = (buf) => Buffer.isBuffer(buf) && buf.slice(0, 5).toString('latin1') === '%PDF-';

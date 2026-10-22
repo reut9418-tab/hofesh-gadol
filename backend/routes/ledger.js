@@ -76,7 +76,9 @@ router.post('/reports/:id/ledger-file', upload.single('file'), ah(async (req, re
   // כרטסת PDF (בקשת רעות 23.9) — אותו מבנה חשבשבת, מחולץ מהטקסט של הקובץ
   const pdf = isPdfBuffer(req.file.buffer);
   let parsed;
-  try { parsed = pdf ? await parseLedgerPdf(req.file.buffer) : parseLedgerFile(req.file.buffer); }
+  // שנת הדוח — לסינון כרטסת PDF רב-שנתית (ראו ledgerPdf.js)
+  const reportYear = (report.created_at && new Date(report.created_at).getFullYear()) || new Date().getFullYear();
+  try { parsed = pdf ? await parseLedgerPdf(req.file.buffer, { year: reportYear }) : parseLedgerFile(req.file.buffer); }
   catch { return res.status(422).json({ error: 'לא הצלחתי לקרוא את קובץ הכרטסת.' }); }
   if (!parsed.cards.length) {
     return res.status(422).json({ error: pdf
@@ -145,7 +147,7 @@ router.post('/reports/:id/ledger-file', upload.single('file'), ah(async (req, re
     }
   }
   await refreshLedgerFlag(db, id);
-  res.status(201).json({ ok: true, fileId, cards: parsed.cards.length, periodSkipped });
+  res.status(201).json({ ok: true, fileId, cards: parsed.cards.length, periodSkipped, yearFiltered: parsed.yearFiltered || 0, year: reportYear });
 }));
 
 /* ---------- כרטסות הדוח + התאמה ---------- */
