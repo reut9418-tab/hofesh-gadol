@@ -31,6 +31,10 @@ const FIELD_DEFS = [
   // תקופה ("עבור 15 יום"/"עבור 6 ימים") — הקליטה מפצלת כל שורה לשתי תקופות
   { key: 'extPortion', label: 'עלות ימי ההרחבה (עבור X ימים)', syn: ['עבור 6 ימים', 'עלות מחזור ב'] },
   { key: 'extHours', label: 'שעות ימי ההרחבה', syn: ['הרחבה שעות', 'שעות הרחבה', 'שעות מחזור ב'] },
+  // עמודת שיוך ידני לדוח שרעות מוסיפה לקובץ (גבעת זאב 25.10: "גנים 15 יום" /
+  // "בתי ספר הרחבה"): מצטרפת למחלקה כתגית ("09-גנים [גנים 15 יום]") — וכך כל
+  // תת-קבוצה מנותבת לדוח שלה, וההצעה האוטומטית נגזרת מהטקסט (מסגרת + תקופה)
+  { key: 'reportHint', label: 'שיוך לדוח (גנים/בתי ספר, 15 יום/הרחבה)', syn: ['שיוך לדוח', 'דוח יעד', 'שיוך דוח'] },
 ];
 
 const norm = (s) => String(s ?? '').replace(/["'״׳]/g, '').replace(/\s+/g, ' ').trim();
@@ -41,6 +45,7 @@ const SOFTWARE_SIGNATURES = [
   { name: 'דוח רכיבי שכר (לשונית לכל עיר)', must: ['מספר עובד', 'סה"כ סכום', 'ברוטו לשעה', 'תפקיד'] },
   { name: 'שקלולית', must: ['עלות מעביד', 'שם עובד'] },
   { name: 'עוקץ / מיכפל', must: ['עלות כוללת', "מס' זהות"] },
+  { name: 'דוח עלות עבודה — טבלה לכל מחלקה', must: ['עובד', 'ברוטו', 'בל מעביד', 'סה"כ עלות'] },
 ];
 
 const EMPLOYER_FACTOR = 1.38; // מקדם עלות מעביד (ברוטו → עלות)
@@ -309,6 +314,7 @@ function normalizeRows(rows, headerIdx, mapping, defaultDept) {
       days: days != null && days > 0 ? days : null, // ימי העסקה — "מס' ימי העסקה" בלשונית (7)
       extCost: num(get('extPortion')), // עלות ימי ההרחבה (לפיצול תקופות)
       extHours: num(get('extHours')),  // שעות ימי ההרחבה (כשיש עמודה מפורשת)
+      reportHint: norm(get('reportHint')) || null, // "שיוך לדוח" שנכתב בקובץ — תגית למחלקה
     });
   }
   return out;
@@ -626,6 +632,54 @@ function applyBlockSubtotals(rows, headerIdx, mapping) {
   return { rows: out, mapping: { ...mapping, instSymbol: symCol, instName: nameCol }, subtotals: subtotals.length };
 }
 
+/* קובץ "טבלה לכל מחלקה" (גבעת זאב 25.10): אין עמודת מחלקה — הגיליון בנוי מבלוקים:
+   שורת-כותרת של הבלוק עם תא יחיד ("דו"ח עלות עבודה 7/26-7/26 - 09-גנים קיטנה החופש
+   הגדול"), שורת כותרות העמודות (חוזרת בכל בלוק), שורות העובדים ושורת סה"כ. שם הבלוק
+   הוא המחלקה של כל השורות שמתחתיו — בעמודה וירטואלית. הקידומת המשותפת לכל
+   הכותרות ("דו"ח עלות עבודה 7/26-7/26 - ") נחתכת. מופעל רק כשאין עמודת מחלקה ממופה
+   ושורת הכותרות חוזרת לפחות פעמיים */
+function applySectionTitles(rows, headerIdx, mapping) {
+  if (mapping.dept !== undefined || headerIdx < 0) return { rows, mapping };
+  const sigOf = (r) => (r || []).map(norm).filter(Boolean).join('|');
+  const sig = sigOf(rows[headerIdx]);
+  if (!sig) return { rows, mapping };
+  const headerRows = [];
+  rows.forEach((r, i) => { if (i >= headerIdx && sigOf(r) === sig) headerRows.push(i); });
+  if (headerRows.length < 2) return { rows, mapping };
+  // כותרת הבלוק: השורה הלא-ריקה הקרובה מעל שורת הכותרות (עד 4 שורות), ובה תא טקסט יחיד
+  const titleFor = (h) => {
+    for (let i = h - 1; i >= Math.max(0, h - 4); i--) {
+      const cells = (rows[i] || []).filter((c) => c != null && String(c).trim() !== '');
+      if (!cells.length) continue;
+      return cells.length === 1 && /[א-ת]/.test(String(cells[0])) ? norm(cells[0]) : null;
+    }
+    return null;
+  };
+  const titles = headerRows.map(titleFor);
+  const found = titles.filter(Boolean);
+  if (found.length < 2) return { rows, mapping };
+  // קידומת משותפת — נחתכת עד המפריד האחרון שבתוכה (" - " / ": ")
+  let prefix = found[0];
+  for (const t of found) while (prefix && !t.startsWith(prefix)) prefix = prefix.slice(0, -1);
+  const sep = Math.max(prefix.lastIndexOf(' - '), prefix.lastIndexOf(' – '), prefix.lastIndexOf(': '));
+  prefix = sep >= 0 ? prefix.slice(0, sep + 3).replace(/\s+$/, ' ') : '';
+  const clean = (t) => (t && prefix && t.startsWith(prefix) && t.length > prefix.length ? t.slice(prefix.length).trim() : t);
+  const width = Math.max(...rows.map((r) => (r || []).length));
+  const deptCol = width;
+  const out = rows.map((r) => (r ? r.slice() : []));
+  headerRows.forEach((h, k) => {
+    const title = clean(titles[k]);
+    if (!title) return;
+    const end = k + 1 < headerRows.length ? headerRows[k + 1] : rows.length;
+    // שורות סה"כ וכותרת-הבלוק-הבא מסומנות גם הן — הנרמול מדלג עליהן (אין ת.ז)
+    for (let i = h + 1; i < end; i++) {
+      if (!out[i].some((c) => c != null && c !== '')) continue;
+      out[i][deptCol] = title;
+    }
+  });
+  return { rows: out, mapping: { ...mapping, dept: deptCol }, sections: found.length };
+}
+
 function parseCostFile(buf, learned = {}) {
   const sheets = readWorkbookSheets(buf);
   let detected = sheets.map((s) => ({ ...s, det: inferMissingColumns(s.rows, detectStructure(s.rows, learned)) }));
@@ -654,8 +708,13 @@ function parseCostFile(buf, learned = {}) {
     sheetsUsed.push(s.sheetName);
     if (!software && s.det.software && !s.det.software.startsWith('מבנה לא מוכר')) software = s.det.software;
     // בלוקים לפי מוסד עם שורת סיכום (גדרה) — הסמל ושם המוסד מהסיכום לכל עובדי הבלוק
-    const blk = applyBlockSubtotals(s.rows, s.det.rowIdx, s.det.mapping);
+    // טבלה לכל מחלקה (גבעת זאב) — שם הבלוק הוא המחלקה כשאין עמודת מחלקה
+    const sec = applySectionTitles(s.rows, s.det.rowIdx, s.det.mapping);
+    const blk = applyBlockSubtotals(sec.rows, s.det.rowIdx, sec.mapping);
     const recs = normalizeRows(blk.rows, s.det.rowIdx, blk.mapping, s.sheetName);
+    // "שיוך לדוח" שנכתב בקובץ מצטרף למחלקה כתגית — ניתוב נפרד לכל תת-קבוצה
+    // (רכז/ת שחלקם בבתי ספר וחלקם בגנים הרחבה), ושורה בלי שיוך נשארת על שם הבלוק
+    recs.forEach((r) => { if (r.reportHint) r.dept = `${r.dept} [${r.reportHint}]`; });
     // כשעמודת העלות שמופתה היא כבר פר-תקופה ("עבור 15 יום") — היא אינה
     // כוללת את ההרחבה ואין לחסר ממנה (כלל רעות 16.9: "רק העמודות של
     // 15 יום והרחבה"); כשהיא סה"כ כללי — ההרחבה מחוסרת ממנה כמו קודם
