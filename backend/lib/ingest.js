@@ -77,12 +77,18 @@ function detectStructure(rows, learned = {}) {
     const mapping = {};
     const learnedFields = new Set();
     let score = 0;
+    // כותרת שמופיעה בכמה עמודות ("עובד | עובד" = ת.ז ושם, גבעת זאב 25.10) —
+    // שיוך שנלמד לפי הטקסט שלה דו-משמעי ולא מוחל (שיוך לפי מיקום "#N" כן);
+    // הזיהוי לפי הנתונים (ספרת ביקורת / טקסט עברי) משלים את העמודות האלה
+    const headerCount = new Map();
+    row.forEach((cell) => { const n = norm(cell); if (n) headerCount.set(n, (headerCount.get(n) || 0) + 1); });
+    const ambiguous = (cellN) => (headerCount.get(cellN) || 0) > 1;
     // מעבר 1: השיוך הידני של המשתמשת — תמיד מנצח, בלי תלות בסדר העמודות
     // (קודם לכן עמודה מוקדמת שזוהתה אוטומטית "תפסה" את השדה, והבחירה
     // הידנית בעמודה מאוחרת יותר נדחתה — "עלות מס שכר" גברה על "סכום כולל עלות")
     row.forEach((cell, c) => {
       const cellN = norm(cell);
-      if (!cellN) return;
+      if (!cellN || ambiguous(cellN)) return;
       const learnedKey = learned[cellN];
       if (learnedKey && learnedKey !== 'none' && FIELD_DEFS.some((f) => f.key === learnedKey) && mapping[learnedKey] === undefined) {
         mapping[learnedKey] = c; learnedFields.add(learnedKey); score += 2;
@@ -94,7 +100,7 @@ function detectStructure(rows, learned = {}) {
       if (!cellN) return;
       const learnedKey = learned[cellN];
       if (learnedKey === 'none') return; // המשתמשת סימנה: לא להשתמש בעמודה הזו
-      if (learnedKey && FIELD_DEFS.some((f) => f.key === learnedKey)) return; // כבר טופל במעבר 1
+      if (learnedKey && !ambiguous(cellN) && FIELD_DEFS.some((f) => f.key === learnedKey)) return; // כבר טופל במעבר 1
       if (unreportedHeader(cellN)) return; // "צהרונים - שעות (לא מדווח)" — לא עמודת שכר של התכנית
       if (Object.values(mapping).includes(c)) return;
       for (const f of FIELD_DEFS) {

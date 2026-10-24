@@ -356,14 +356,19 @@ router.get('/cost-files/:fileId/columns', ah(async (req, res) => {
   const sample = best.s.rows.slice(best.det.rowIdx + 1, best.det.rowIdx + 30);
   const colCount = Math.max(headerRow.length, ...sample.map((r) => (r || []).length));
   const headers = [];
+  // כותרת שחוזרת בכמה עמודות ("עובד | עובד", גבעת זאב 25.10): שיוך ידני לפי הטקסט
+  // היה נלמד לשתיהן יחד (ת.ז ושם) — עמודות כאלה נלמדות לפי מיקום ("#N")
+  const textCount = new Map();
+  for (let c = 0; c < colCount; c++) { const t = norm(headerRow[c]); if (t) textCount.set(t, (textCount.get(t) || 0) + 1); }
   for (let c = 0; c < colCount; c++) {
     const text = norm(headerRow[c]);
     const samples = sample.map((r) => (r || [])[c]).filter((v) => v != null && String(v).trim() !== '').slice(0, 3);
     if (!text && !samples.length) continue; // עמודה ריקה לגמרי
+    const dup = text && textCount.get(text) > 1;
     headers.push({
       index: c,
-      key: text || `#${c}`, // עמודה בלי כותרת — מפתח לפי מיקום
-      label: text || `עמודה ${c + 1} (ללא כותרת)`,
+      key: text && !dup ? text : `#${c}`, // עמודה בלי כותרת / כותרת כפולה — מפתח לפי מיקום
+      label: text ? (dup ? `${text} (עמודה ${c + 1})` : text) : `עמודה ${c + 1} (ללא כותרת)`,
       samples: samples.map((v) => String(v).slice(0, 24)),
     });
   }
