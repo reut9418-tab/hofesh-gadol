@@ -215,6 +215,31 @@ function applyRowsToSheetXml(xml, colSpecs, startRow, rows, clearBelow = 500, un
       if (rc[col] && /<f[\s>]/.test(rc[col].full)) formulaCols.add(col);
     }
   }
+  // נוסחה שהוקלדה ידנית בתא (אורנית 25.10: תבנית שהורדה מהפורטל עם 36 שורות
+  // ישנות ו-K16 "=3811.2/L16") אינה עמודת-נוסחה של המשרד — אבל עד כה גרמה
+  // לעמודת "עלות שכר שעתית" להיחשב נוסחה ולא להיכתב כלל (ערכים ישנים של עובדים
+  // אחרים נשארו, והשורות החדשות יצאו בלי עלות). נוסחת משרד נמשכת לאורך כל
+  // הגיליון; נוסחה ידנית — בשורות הנתונים הישנות בלבד. עמודה נשארת "נוסחה" רק
+  // כשרוב השורות במדגם (200 השורות מתחת לכותרת) נושאות בה נוסחה
+  if (formulaCols.size) {
+    const sdO = xml.indexOf('<sheetData>'), sdC = xml.indexOf('</sheetData>');
+    const sampleBody = sdO >= 0 && sdC >= 0 ? xml.slice(sdO, sdC) : '';
+    const sRe = /<row r="(\d+)"[^>]*?(?:\/>|>([\s\S]*?)<\/row>)/g;
+    const stat = {};
+    for (const col of formulaCols) stat[col] = 0;
+    let sampled = 0, sm;
+    while ((sm = sRe.exec(sampleBody)) !== null) {
+      const n = parseInt(sm[1]);
+      if (n < startRow || n >= startRow + 200) continue;
+      sampled++;
+      const rc = parseRowCells(sm[2] || '');
+      for (const col of formulaCols) if (rc[col] && /<f[\s>]/.test(rc[col].full)) stat[col]++;
+    }
+    // עמודת התפקיד (overrideFormula) לא נבדקת — יש לה טיפול משלה: נוסחת המשרד
+    // נשארת בשורות שהיא מכסה, גם כשהתבנית מלאה בחלקה (מעלה אדומים 105)
+    const ownHandling = new Set(colSpecs.filter((s) => s.overrideFormula).map((s) => s.col));
+    if (sampled >= 10) for (const col of [...formulaCols]) if (!ownHandling.has(col) && stat[col] < sampled * 0.6) formulaCols.delete(col);
+  }
   // עמודות נוסחה מותרות לדריסה (תפקיד): מפרקים את הנוסחה המשותפת לפר-תא,
   // ודורסים רק תאים שיש להם ערך; השאר שומרים על נוסחת המשרד
   const overrideCols = new Set(colSpecs.filter((s) => s.overrideFormula && formulaCols.has(s.col)).map((s) => s.col));
